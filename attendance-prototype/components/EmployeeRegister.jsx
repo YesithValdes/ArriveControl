@@ -1,0 +1,285 @@
+'use client';
+
+/**
+ * components/EmployeeRegister.jsx
+ * Registro de empleados (solo administrador): POR FOTO, con nombre y cédula.
+ *
+ * Flujo: datos → foto (galería o cámara del teléfono) → análisis facial
+ * automático → registrar. La foto NUNCA se guarda: solo el vector de 128
+ * floats, que es lo que usa el kiosco para la identificación 1:N.
+ *
+ * Los pesos de face-api ya están en /public/models (los mismos del kiosco).
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { listPeople, addPerson, removePerson } from '../services/rosterService.js';
+import { OFFICE_LOCATIONS } from '../utils/haversine.js';
+
+const FACEAPI_MODEL_URL = '/models';
+
+export default function EmployeeRegister() {
+  const faceapiRef = useRef(null);
+  const fileRef = useRef(null);
+
+  const [ready, setReady] = useState(false);
+  const [status, setStatus] = useState('Cargando el modelo facial…');
+  const [name, setName] = useState('');
+  const [cedula, setCedula] = useState('');
+  const [expectedEntry, setExpectedEntry] = useState('08:00');
+  const [sede, setSede] = useState(OFFICE_LOCATIONS[0]?.name || '');
+  const [photo, setPhoto] = useState(null);      // { previewUrl, descriptor } | null
+  const [analyzing, setAnalyzing] = useState(false);
+  const [people, setPeople] = useState([]);
+  const [toast, setToast] = useState(null);
+
+  const refresh = () => setPeople(listPeople());
+  useEffect(refresh, []);
+
+  // Carga de face-api (solo las 3 redes necesarias).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const faceapi = await import('@vladmandic/face-api');
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(FACEAPI_MODEL_URL),
+          faceapi.nets.faceLandmark68Net.loadFromUri(FACEAPI_MODEL_URL),
+          faceapi.nets.faceRecognitionNet.loadFromUri(FACEAPI_MODEL_URL),
+        ]);
+        if (cancelled) return;
+        faceapiRef.current = faceapi;
+        setReady(true);
+        setStatus('Completa los datos y sube la foto del empleado.');
+      } catch (err) {
+        setStatus(`No se pudo cargar el modelo: ${err?.message || err}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2800); };
+
+  // Analiza la foto apenas se selecciona: detecta el rostro y extrae el vector.
+  const handlePhoto = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !faceapiRef.current) return;
+
+    setAnalyzing(true);
+    setPhoto(null);
+    setStatus('Analizando la foto…');
+    try {
+      const faceapi = faceapiRef.current;
+      const img = await faceapi.bufferToImage(file);
+      const det = await faceapi
+        .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+
+      if (!det) {
+        setStatus('❌ No se detectó un rostro claro. Usa una foto frontal, con buena luz y sin accesorios que tapen la cara.');
+        setAnalyzing(false);
+        return;
+      }
+      setPhoto({ previewUrl: URL.createObjectURL(file), descriptor: Array.from(det.descriptor) });
+      setStatus('✅ Rostro detectado. Verifica los datos y registra.');
+    } catch (err) {
+      setStatus(`❌ Error procesando la foto: ${err?.message || err}`);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const canRegister = ready && !analyzing && name.trim().length >= 3 && cedula.trim().length >= 5 && photo;
+
+  const handleRegister = () => {
+    const result = addPerson(name, photo.descriptor, cedula, expectedEntry, sede);
+    if (result.error) {
+      setStatus(`❌ ${result.error}`);
+      return;
+    }
+    showToast(`${result.name} registrado correctamente`);
+    setName('');
+    setCedula('');
+    if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
+    setPhoto(null);
+    setStatus('Empleado registrado. Puedes agregar otro.');
+    refresh();
+  };
+
+  const handleDelete = (p) => {
+    if (!confirm(`¿Eliminar a ${p.name}? Ya no podrá marcar asistencia en el kiosco.`)) return;
+    removePerson(p.id);
+    refresh();
+    showToast(`${p.name} eliminado`);
+  };
+
+  return (
+    <div className="reg-root">
+      <style>{CSS}</style>
+
+      <header className="app-header">
+        <Link href="/admin" className="back">‹ Panel</Link>
+        <div>
+          <div className="brand">ArriveControl</div>
+          <h1>Registrar empleado</h1>
+        </div>
+      </header>
+
+      <p className="status" role="status">{status}</p>
+
+      <section className="card">
+        <div className="field">
+          <label htmlFor="r-nombre">Nombre completo</label>
+          <input id="r-nombre" type="text" placeholder="Ej.: Carlos Gómez" value={name}
+            onChange={(e) => setName(e.target.value)} autoComplete="off" />
+        </div>
+        <div className="field">
+          <label htmlFor="r-cedula">Cédula</label>
+          <input id="r-cedula" type="text" inputMode="numeric" placeholder="Ej.: 1085312456" value={cedula}
+            onChange={(e) => setCedula(e.target.value.replace(/\D/g, ''))} autoComplete="off" />
+        </div>
+
+        <div className="field">
+          <label htmlFor="r-sede">Sede asignada</label>
+          <select id="r-sede" value={sede} onChange={(e) => setSede(e.target.value)}>
+            {OFFICE_LOCATIONS.map((o) => (
+              <option key={o.name} value={o.name}>{o.name}</option>
+            ))}
+          </select>
+          <small className="field-hint">El empleado solo podrá fichar por GPS dentro del radio de SU sede.</small>
+        </div>
+
+        <div className="field">
+          <label htmlFor="r-hora">Hora esperada de entrada</label>
+          <input id="r-hora" type="time" value={expectedEntry} onChange={(e) => setExpectedEntry(e.target.value)} />
+          <small className="field-hint">Se usa para avisar a RRHH si su primera marcación del día es mucho más tarde de lo normal.</small>
+        </div>
+
+        <div className="field">
+          <label>Foto del rostro</label>
+          {/* En el celular, este input ofrece cámara o galería. */}
+          <input ref={fileRef} type="file" accept="image/*" hidden onChange={handlePhoto} />
+          {!photo ? (
+            <button className="photo-drop" onClick={() => fileRef.current?.click()} disabled={!ready || analyzing}>
+              {analyzing ? '⏳ Analizando…' : <>📷<br /><b>Tomar o subir foto</b><br /><small>Frontal, buena luz, rostro despejado (tipo carnet)</small></>}
+            </button>
+          ) : (
+            <div className="preview">
+              {/* Vista previa local; la imagen NO se guarda en el sistema */}
+              <img src={photo.previewUrl} alt={`Foto de ${name || 'empleado'}`} />
+              <div className="preview-info">
+                <span className="okmark">✅ Rostro detectado</span>
+                <small>Solo se guardará el código facial, no la imagen.</small>
+                <button className="btn" onClick={() => { URL.revokeObjectURL(photo.previewUrl); setPhoto(null); fileRef.current?.click(); }}>
+                  Cambiar foto
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <button className="btn primary big" disabled={!canRegister} onClick={handleRegister}>
+          🪪 Registrar empleado
+        </button>
+      </section>
+
+      <section className="card grow">
+        <h2>Empleados registrados <span className="count">{people.length}</span></h2>
+        <div className="scrollable">
+          {people.length === 0 && <p className="empty">Aún no hay empleados. El primero que registres podrá marcar en el kiosco de inmediato.</p>}
+          {people.map((p) => (
+            <div className="prow" key={p.id}>
+              <span className="avatar">{p.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>
+              <span className="pinfo">
+                <b>{p.name}</b>
+                <small>{p.cedula ? `C.C. ${p.cedula}` : 'Sin cédula'} · {p.sede || 'sin sede'} · entra {p.expectedEntry || '—'}</small>
+              </span>
+              <button className="del" title={`Eliminar a ${p.name}`} onClick={() => handleDelete(p)}>🗑</button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {toast && <div className="toast" role="status">{toast}</div>}
+    </div>
+  );
+}
+
+const CSS = `
+.reg-root {
+  --surface: #ffffff; --page: #f4f4fa;
+  --ink: #171630; --ink-2: #504f6b; --muted: #8b8aa3;
+  --grid: #e3e2ec; --border: rgba(24,22,60,0.12);
+  --accent: #5558d9; --accent-2: #7b3fe4; --accent-ink: #fff;
+  --accent-soft: rgba(85,88,217,0.10);
+  --good-text: #006300; --crit-soft: rgba(208,59,59,0.10);
+
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink); background: var(--page);
+  min-height: 100dvh; max-width: 560px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 12px 16px; box-sizing: border-box;
+}
+@media (prefers-color-scheme: dark) {
+  .reg-root {
+    --surface: #1d1c2e; --page: #121120;
+    --ink: #f4f4ff; --ink-2: #c1c0d6; --muted: #8b8aa3;
+    --grid: #2e2d44; --border: rgba(255,255,255,0.10);
+    --accent: #8285f0; --accent-2: #a475f5;
+    --accent-soft: rgba(130,133,240,0.16);
+    --good-text: #4cc94c;
+  }
+}
+.reg-root * { box-sizing: border-box; margin: 0; }
+
+.app-header { display: flex; align-items: center; gap: 12px; }
+.app-header .back { color: var(--muted); text-decoration: none; font-size: 15px; padding: 4px 8px; border-radius: 8px; }
+.app-header .back:hover { background: var(--accent-soft); }
+.app-header .brand { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+.app-header h1 { font-size: 19px; font-weight: 650; }
+
+.status { font-size: 13.5px; color: var(--ink-2); min-height: 20px; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+.card.grow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.card h2 { font-size: 15px; font-weight: 650; margin-bottom: 8px; }
+.card h2 .count { color: var(--muted); font-weight: 400; }
+.scrollable { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.field label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.field input[type="text"], .field input[type="time"], .field select { font: inherit; font-size: 15px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
+.field-hint { color: var(--muted); font-size: 12px; }
+.field input:focus-visible, .btn:focus-visible, .photo-drop:focus-visible, .del:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.photo-drop { font: inherit; width: 100%; padding: 22px 12px; border: 2px dashed var(--border); border-radius: 12px; background: var(--page); color: var(--ink-2); font-size: 22px; cursor: pointer; line-height: 1.5; }
+.photo-drop b { font-size: 15px; color: var(--ink); }
+.photo-drop small { font-size: 12.5px; color: var(--muted); }
+.photo-drop:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.photo-drop:disabled { opacity: .6; cursor: wait; }
+
+.preview { display: flex; gap: 12px; align-items: center; }
+.preview img { width: 96px; height: 96px; object-fit: cover; border-radius: 12px; border: 2px solid var(--good-text); }
+.preview-info { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.preview-info .okmark { font-weight: 600; color: var(--good-text); font-size: 14px; }
+.preview-info small { color: var(--muted); font-size: 12px; }
+
+.btn { border: 1px solid var(--border); background: var(--surface); color: var(--ink); font: inherit; font-size: 13.5px; padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+.btn:hover { background: var(--accent-soft); }
+.btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent; color: var(--accent-ink); font-weight: 600; }
+.btn.primary:disabled { opacity: .45; cursor: not-allowed; }
+.btn.big { width: 100%; padding: 13px; font-size: 15px; border-radius: 10px; }
+
+.prow { display: flex; align-items: center; gap: 12px; padding: 10px 2px; border-top: 1px solid var(--grid); }
+.prow:first-child { border-top: 0; }
+.avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.pinfo { display: flex; flex-direction: column; flex: 1; }
+.pinfo small { color: var(--muted); font-size: 12px; }
+.del { border: none; background: transparent; cursor: pointer; font-size: 16px; color: var(--muted); padding: 6px; border-radius: 8px; }
+.del:hover { background: var(--crit-soft); }
+
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--page); font-size: 14px; padding: 9px 18px; border-radius: 999px; z-index: 60; }
+`;

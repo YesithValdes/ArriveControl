@@ -1,0 +1,762 @@
+'use client';
+/**
+ * components/AdminPanel.jsx
+ * Panel del administrador: app de una sola pantalla con sub-pantallas
+ * (Dashboard, Anomalías, Equipo, Historial, Ajustes) y navegación inferior.
+ * Solo las listas hacen scroll; el marco y la barra quedan fijos.
+ *
+ * Datos reales: journeyService (eventos/correcciones) + rosterService (personas).
+ */
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import {
+  listJourneyEvents,
+  addManualEvent,
+  updateEventTime,
+  _resetJourneys,
+  NIGHT_WINDOW_MS,
+} from '../services/journeyService.js';
+import { listPeople } from '../services/rosterService.js';
+import { OFFICE_LOCATIONS } from '../utils/haversine.js';
+import { loadDemoData } from '../services/demoDataService.js';
+
+const dayKey = (iso) => iso.slice(0, 10);
+const todayKey = () => dayKey(new Date().toISOString());
+
+const fmt12 = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  let h = d.getHours();
+  const ap = h >= 12 ? 'p. m.' : 'a. m.';
+  h = h % 12 || 12;
+  return `${h}:${String(d.getMinutes()).padStart(2, '0')} ${ap}`;
+};
+const fmtH = (n) => (n == null ? '—' : n.toFixed(1).replace('.', ',') + ' h');
+const fmtTs = (iso) =>
+  new Date(iso).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) + ', ' + fmt12(iso);
+
+/** Suma horas de pares entrada→salida; una entrada abierta cuenta hasta ahora (máx. 12 h). */
+function pairedHours(events, nowMs) {
+  let total = 0;
+  let openIn = null;
+  for (const e of events) {
+    if (e.type === 'in') openIn = e;
+    else if (e.type === 'out' && openIn) {
+      total += (new Date(e.ts) - new Date(openIn.ts)) / 3600000;
+      openIn = null;
+    }
+  }
+  if (openIn) {
+    const span = nowMs - new Date(openIn.ts).getTime();
+    if (span < NIGHT_WINDOW_MS) total += span / 3600000;
+  }
+  return total;
+}
+
+export default function AdminPanel() {
+  const [tab, setTab] = useState('dashboard');
+  const [collapsed, setCollapsed] = useState(false); // menú lateral escondido (solo PC)
+  const [sedeFilter, setSedeFilter] = useState('all'); // 'all' | nombre de sede
+  const [tick, setTick] = useState(0); // fuerza relectura de localStorage
+  const [toast, setToast] = useState(null);
+  const [dialog, setDialog] = useState(null); // { personId, personName, type, time, reason, eventId? }
+  const refresh = () => setTick((t) => t + 1);
+
+  useEffect(() => {
+    const id = setInterval(refresh, 60000); // horas "en vivo" cada minuto
+    return () => clearInterval(id);
+  }, []);
+
+  const data = useMemo(() => {
+    const events = listJourneyEvents().sort((a, b) => a.ts.localeCompare(b.ts));
+    const nowMs = Date.now();
+
+    // Personas: roster ∪ personas vistas en eventos (con sede y horario).
+    const byId = new Map();
+    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, sede: p.sede || '', expectedEntry: p.expectedEntry || '' });
+    for (const e of events) if (!byId.has(e.personId)) byId.set(e.personId, { id: e.personId, name: e.personName, sede: e.sede || '', expectedEntry: '' });
+    const people = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+    const perPerson = new Map(people.map((p) => [p.id, events.filter((e) => e.personId === p.id)]));
+    const weekAgo = nowMs - 7 * 24 * 3600000;
+
+    const anomalies = [];
+    const rows = people.map((p) => {
+      const mine = perPerson.get(p.id);
+      const today = mine.filter((e) => dayKey(e.ts) === todayKey());
+      const firstIn = today.find((e) => e.type === 'in') || null;
+      const lastOut = [...today].reverse().find((e) => e.type === 'out') || null;
+
+      // Anomalías vigentes de esta persona (últimos 7 días).
+      for (let i = 0; i < mine.length; i++) {
+        const e = mine[i];
+        if (new Date(e.ts).getTime() < weekAgo) continue;
+        if (e.type === 'in') {
+          const next = mine[i + 1];
+          const closed = next && next.type === 'out';
+          if (!closed && nowMs - new Date(e.ts).getTime() > NIGHT_WINDOW_MS) {
+            anomalies.push({ kind: 'missing-exit', person: p, event: e });
+          }
+        }
+        if (e.flag === 'late-entry') anomalies.push({ kind: 'late-entry', person: p, event: e });
+      }
+
+      const corrected = mine.some((e) => e.correctedBy && dayKey(e.ts) === todayKey());
+
+      // Puntualidad: primera entrada vs horario esperado (+15 min de gracia).
+      let onTime = null;
+      if (firstIn && /^\d{2}:\d{2}$/.test(p.expectedEntry)) {
+        const [h, m] = p.expectedEntry.split(':').map(Number);
+        const d = new Date(firstIn.ts);
+        onTime = d.getHours() * 60 + d.getMinutes() <= h * 60 + m + 15;
+      }
+
+      return {
+        person: p,
+        sede: p.sede || '',
+        firstIn,
+        lastOut,
+        onTime,
+        hoursToday: firstIn ? pairedHours(today, nowMs) : null,
+        weekHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= weekAgo), nowMs),
+        present: !!firstIn && today[today.length - 1]?.type === 'in',
+        corrected,
+      };
+    });
+
+    // Comparativa por sede (siempre sobre TODAS las filas, sin filtro).
+    const sedeNames = OFFICE_LOCATIONS.map((o) => o.name);
+    const sedeStats = sedeNames.map((name) => {
+      const rs = rows.filter((r) => r.sede === name);
+      return {
+        name,
+        total: rs.length,
+        present: rs.filter((r) => r.present).length,
+        absent: rs.filter((r) => !r.firstIn).length,
+        hours: rs.reduce((s, r) => s + (r.hoursToday ?? 0), 0),
+        anomalies: anomalies.filter((a) => (a.person.sede || '') === name).length,
+      };
+    });
+    const sinSede = rows.filter((r) => !r.sede).length;
+
+    const audit = listJourneyEvents().filter((e) => e.correctedBy);
+    return { rows, anomalies, audit, sedeStats, sinSede };
+  }, [tick]);
+
+  // Vista filtrada por sede: alimenta tarjetas, listas y anomalías.
+  const view = useMemo(() => {
+    const rows = sedeFilter === 'all' ? data.rows : data.rows.filter((r) => r.sede === sedeFilter);
+    const anomalies = sedeFilter === 'all' ? data.anomalies : data.anomalies.filter((a) => (a.person.sede || '') === sedeFilter);
+    const marked = rows.filter((r) => r.onTime !== null);
+    return {
+      rows,
+      anomalies,
+      present: rows.filter((r) => r.present).length,
+      absent: rows.filter((r) => !r.firstIn).length,
+      punctuality: marked.length ? Math.round((marked.filter((r) => r.onTime).length / marked.length) * 100) : null,
+      totalHoursToday: rows.reduce((s, r) => s + (r.hoursToday ?? 0), 0),
+    };
+  }, [data, sedeFilter]);
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2600);
+  };
+
+  const saveAdjust = () => {
+    const { personId, personName, type, time, reason, eventId } = dialog;
+    if (!time || !reason.trim()) return;
+    const iso = new Date(`${todayKey()}T${time}:00`).toISOString();
+    if (eventId) updateEventTime(eventId, iso, 'admin');
+    else addManualEvent(personId, personName, type, iso, 'admin');
+    setDialog(null);
+    refresh();
+    showToast(`Ajuste guardado para ${personName}`);
+  };
+
+  const openFix = (a) => {
+    if (a.kind === 'missing-exit') {
+      setDialog({ personId: a.person.id, personName: a.person.name, type: 'out', time: '17:00', reason: '' });
+    } else {
+      setDialog({ personId: a.person.id, personName: a.person.name, type: 'in', time: '08:00', reason: '', eventId: a.event.id });
+    }
+  };
+
+  const tabs = [
+    { id: 'dashboard', icon: '📊', label: 'Dashboard' },
+    { id: 'anomalias', icon: '⚠️', label: 'Anomalías', badge: data.anomalies.length },
+    { id: 'equipo', icon: '👥', label: 'Equipo' },
+    { id: 'historial', icon: '📋', label: 'Historial' },
+    { id: 'ajustes', icon: '⚙️', label: 'Ajustes' },
+  ];
+
+  const chip = (cls, text) => <span className={`chip ${cls}`}>{text}</span>;
+  const statusChip = (r) => {
+    if (data.anomalies.some((a) => a.kind === 'missing-exit' && a.person.id === r.person.id))
+      return chip('crit', 'Salida faltante');
+    if (data.anomalies.some((a) => a.kind === 'late-entry' && a.person.id === r.person.id))
+      return chip('warn', 'Entrada tardía');
+    if (r.corrected) return chip('neutral', 'Corregido');
+    if (r.present) return chip('good', 'Presente');
+    if (r.firstIn && r.lastOut) return chip('good', 'Jornada completa');
+    return chip('crit', 'Sin marcación');
+  };
+
+  const maxWeek = Math.max(40, ...view.rows.map((r) => r.weekHours));
+
+  // Selector de sede (arriba del menú lateral): filtro GLOBAL — aplica a
+  // todas las vistas del panel a la vez.
+  const sedeChips = (
+    <div className="side-sede">
+      <label className="side-sede-lbl" htmlFor="sede-select">Sede</label>
+      <select
+        id="sede-select"
+        className="sede-select"
+        value={sedeFilter}
+        onChange={(e) => setSedeFilter(e.target.value)}
+      >
+        <option value="all">🌐 Todas las sedes</option>
+        {OFFICE_LOCATIONS.map((o) => (
+          <option key={o.name} value={o.name}>📍 {o.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+
+  return (
+    <div className={`admin-root${collapsed ? ' nav-collapsed' : ''}`}>
+      <style>{CSS}</style>
+
+      <header className="app-header">
+        <div className="brand">ArriveControl</div>
+        <span className="date-note">
+          {new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+        </span>
+      </header>
+
+      <div className="screen">
+        {tab === 'dashboard' && (
+          <>
+            <div className="tiles">
+              <div className="tile">
+                <div className="label">Presentes ahora</div>
+                <div className="value">{view.present}</div>
+                <div className="sub">de {view.rows.length} empleados</div>
+              </div>
+              <div className="tile">
+                <div className="label">Ausentes hoy</div>
+                <div className="value">{view.absent}</div>
+                <div className="sub">sin marcación aún</div>
+              </div>
+              <div className="tile">
+                <div className="label">Puntualidad</div>
+                <div className="value">{view.punctuality == null ? '—' : `${view.punctuality}%`}</div>
+                <div className="sub">a tiempo (+15 min de gracia)</div>
+              </div>
+              <div className="tile alerta">
+                <div className="label">Anomalías</div>
+                <div className="value">{view.anomalies.length}</div>
+                <div className="sub">requieren revisión</div>
+              </div>
+            </div>
+
+            {sedeFilter === 'all' && (
+              <section className="card">
+                <h2>Comparativa por sedes</h2>
+                <div className="sede-table" role="table">
+                  <div className="sede-row head" role="row">
+                    <span>Sede</span><span>Presentes</span><span>Ausentes</span><span>Horas hoy</span><span>Anomalías</span>
+                  </div>
+                  {data.sedeStats.map((s) => (
+                    <div className="sede-row" role="row" key={s.name}>
+                      <span className="sede-name">📍 {s.name}</span>
+                      <span>{s.present}/{s.total}</span>
+                      <span className={s.absent > 0 ? 'warn-num' : ''}>{s.absent}</span>
+                      <span>{fmtH(s.hours)}</span>
+                      <span className={s.anomalies > 0 ? 'crit-num' : ''}>{s.anomalies}</span>
+                    </div>
+                  ))}
+                </div>
+                {data.sinSede > 0 && (
+                  <p className="axis-note">⚠️ {data.sinSede} empleado(s) sin sede asignada — re-regístralos o asígnales sede al migrar a base de datos.</p>
+                )}
+              </section>
+            )}
+
+            <section className="card grow">
+              <h2>Horas acumuladas — últimos 7 días</h2>
+              <div className="scrollable">
+                <div className="chart">
+                  {view.rows.length === 0 && <p className="empty">No hay personas {sedeFilter === 'all' ? 'registradas' : `en ${sedeFilter}`}.</p>}
+                  {[...view.rows].sort((a, b) => b.weekHours - a.weekHours).map((r) => (
+                    <div className="hrow" key={r.person.id} title={`${r.person.name}: ${fmtH(r.weekHours)}`}>
+                      <span className="name">{r.person.name}</span>
+                      <span className="track"><span className="fill" style={{ width: `${(r.weekHours / maxWeek) * 100}%` }} /></span>
+                      <span className="val">{fmtH(r.weekHours)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <p className="axis-note">Jornada esperada: 8 h por día trabajado</p>
+            </section>
+          </>
+        )}
+
+        {tab === 'anomalias' && (
+          <section className="card grow">
+            <h2>Anomalías por resolver</h2>
+            <p className="hint">Marcaciones que no cierran una jornada normal. Cada corrección queda en el historial.</p>
+            <div className="scrollable">
+              {view.anomalies.length === 0 && <p className="empty">✓ No hay anomalías pendientes. Todo en orden.</p>}
+              {view.anomalies.map((a, i) => (
+                <div className="anomaly" key={a.event.id + i}>
+                  {a.kind === 'missing-exit' ? chip('crit', 'Salida faltante') : chip('warn', 'Entrada tardía')}
+                  <span className="who">{a.person.name}</span>
+                  <span className="desc">
+                    {a.kind === 'missing-exit'
+                      ? `Entrada del ${fmtTs(a.event.ts)} sin salida registrada (más de 12 h abierta).`
+                      : `Primera entrada del día a las ${fmt12(a.event.ts)} — posible olvido de marcación en la mañana.`}
+                  </span>
+                  <button className="btn primary" onClick={() => openFix(a)}>Corregir</button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {tab === 'equipo' && (
+          <section className="card grow">
+            <h2>Asistencia de hoy</h2>
+            <p className="hint">Entrada, salida y horas por empleado. Usa «Ajustar» para agregar o corregir una marcación.</p>
+            <div className="scrollable">
+              {view.rows.length === 0 && <p className="empty">No hay personas {sedeFilter === 'all' ? 'registradas' : `en ${sedeFilter}`}.</p>}
+              {view.rows.map((r) => (
+                <div className="emp-card" key={r.person.id}>
+                  <div className="emp-head">
+                    <div>
+                      <span className="emp-name">{r.person.name}</span>
+                      <span className="emp-id"> · {r.sede || 'sin sede'}</span>
+                    </div>
+                    {statusChip(r)}
+                  </div>
+                  <div className="emp-data">
+                    <span><b>Entrada</b> {fmt12(r.firstIn?.ts)}</span>
+                    <span><b>Salida</b> {fmt12(r.lastOut?.ts)}</span>
+                    <span><b>Horas</b> {fmtH(r.hoursToday)}</span>
+                  </div>
+                  <button
+                    className="btn"
+                    onClick={() => setDialog({ personId: r.person.id, personName: r.person.name, type: 'out', time: '17:00', reason: '' })}
+                  >
+                    Ajustar
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {tab === 'historial' && (
+          <section className="card grow">
+            <h2>Historial de ajustes</h2>
+            <p className="hint">Registro de auditoría: quién cambió qué y cuándo.</p>
+            <div className="scrollable">
+              {data.audit.length === 0 && <p className="empty">Aún no hay correcciones registradas.</p>}
+              {data.audit.map((e) => (
+                <div className="log-item" key={e.id}>
+                  <time>{fmtTs(e.ts)}</time>
+                  <span className="action">
+                    <b>{e.correctedBy}</b> {e.flag === 'manual' ? 'agregó' : 'corrigió'} {e.type === 'in' ? 'entrada' : 'salida'} {fmt12(e.ts)} para <b>{e.personName}</b>.
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {tab === 'ajustes' && (
+          <section className="card grow">
+            <h2>Ajustes y herramientas</h2>
+            <p className="hint">Pantallas técnicas del prototipo, ahora agrupadas aquí.</p>
+            <div className="scrollable">
+              <Link className="tool" href="/admin/registro">
+                <span className="icon">🪪</span>
+                <span><b>Registrar empleado</b><br /><small>Por foto: nombre, cédula y rostro. Queda listo para el kiosco.</small></span>
+              </Link>
+              <Link className="tool" href="/">
+                <span className="icon">🖥️</span>
+                <span><b>Volver al kiosco</b><br /><small>La pantalla principal: registro y fichaje facial (1:N).</small></span>
+              </Link>
+              <Link className="tool" href="/fichaje">
+                <span className="icon">🕐</span>
+                <span><b>Fichaje individual</b><br /><small>Desde el celular del empleado: GPS + biometría del dispositivo.</small></span>
+              </Link>
+              <Link className="tool" href="/gps">
+                <span className="icon">📍</span>
+                <span><b>Diagnóstico GPS</b><br /><small>Coordenadas, precisión y distancia a cada sede en vivo.</small></span>
+              </Link>
+              <Link className="tool" href="/demo">
+                <span className="icon">🧪</span>
+                <span><b>Laboratorio biométrico</b><br /><small>Prueba de vida 3D + identidad, y métricas FAR/FRR.</small></span>
+              </Link>
+              <button
+                className="tool"
+                onClick={() => {
+                  const r = loadDemoData();
+                  refresh();
+                  showToast(`Datos demo cargados: ${r.people} empleados, ${r.events} eventos`);
+                }}
+              >
+                <span className="icon">✨</span>
+                <span><b>Cargar datos de demostración</b><br /><small>Una semana de jornadas, anomalías y correcciones de ejemplo.</small></span>
+              </button>
+              <button
+                className="tool danger"
+                onClick={() => {
+                  if (confirm('¿Borrar todos los eventos de jornada de este dispositivo? Esta acción no se puede deshacer.')) {
+                    _resetJourneys();
+                    refresh();
+                    showToast('Eventos de jornada borrados');
+                  }
+                }}
+              >
+                <span className="icon">🗑️</span>
+                <span><b>Restablecer datos de jornadas</b><br /><small>Borra los eventos de prueba guardados en este dispositivo.</small></span>
+              </button>
+            </div>
+          </section>
+        )}
+      </div>
+
+      <nav className="tabbar" aria-label="Navegación del panel">
+        {/* Cabecera del menú lateral (solo PC): logo + nombre + botón esconder */}
+        <div className="side-top">
+          <span className="logo" aria-hidden="true">⏱</span>
+          <span className="side-brand">
+            ARRIVE<b>CONTROL</b>
+            <small>Panel de administración</small>
+          </span>
+          <button
+            className="collapse-btn"
+            onClick={() => setCollapsed((c) => !c)}
+            aria-label={collapsed ? 'Mostrar menú' : 'Esconder menú'}
+            title={collapsed ? 'Mostrar menú' : 'Esconder menú'}
+          >
+            {collapsed ? '»' : '«'}
+          </button>
+        </div>
+
+        {/* Filtro global de sede (arriba del menú): aplica a todas las vistas */}
+        {sedeChips}
+
+        {tabs.map((t) => (
+          <button key={t.id} aria-pressed={tab === t.id} onClick={() => setTab(t.id)} title={t.label}>
+            <span className="icon">{t.icon}</span>
+            <span className="lbl">{t.label}</span>
+            {t.badge ? <span className="badge">{t.badge}</span> : null}
+          </button>
+        ))}
+
+        <div className="side-foot">v0.1 · prototipo</div>
+      </nav>
+
+      {dialog && (
+        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setDialog(null)}>
+          <div className="dialog" role="dialog" aria-modal="true">
+            <h3>{dialog.eventId ? 'Corregir marcación' : 'Ajustar marcación'} — {dialog.personName}</h3>
+            <p className="hint">
+              {dialog.eventId
+                ? 'Cambia la hora del evento a la hora real. Quedará marcado como corregido.'
+                : 'Agrega una entrada o salida manual de hoy. Quedará marcada como manual.'}
+            </p>
+            {!dialog.eventId && (
+              <div className="field">
+                <label htmlFor="f-tipo">Tipo de marcación</label>
+                <select id="f-tipo" value={dialog.type} onChange={(e) => setDialog({ ...dialog, type: e.target.value })}>
+                  <option value="in">Entrada</option>
+                  <option value="out">Salida</option>
+                </select>
+              </div>
+            )}
+            <div className="field">
+              <label htmlFor="f-hora">Hora</label>
+              <input id="f-hora" type="time" value={dialog.time} onChange={(e) => setDialog({ ...dialog, time: e.target.value })} />
+            </div>
+            <div className="field">
+              <label htmlFor="f-motivo">Motivo del ajuste</label>
+              <input
+                id="f-motivo" type="text" placeholder="Ej.: olvidó marcar la salida"
+                value={dialog.reason} onChange={(e) => setDialog({ ...dialog, reason: e.target.value })}
+              />
+            </div>
+            <div className="dialog-actions">
+              <button className="btn" onClick={() => setDialog(null)}>Cancelar</button>
+              <button className="btn primary" disabled={!dialog.reason.trim()} onClick={saveAdjust}>Guardar ajuste</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && <div className="toast show" role="status">{toast}</div>}
+    </div>
+  );
+}
+
+const CSS = `
+.admin-root {
+  /* Tema claro monocromo: fondo blanco y un solo AZUL en distintas tonalidades
+     (de más claro a más profundo: #7cc8f5 → #0d8ce8 → #2b6bff → #1636c8) */
+  --page: #f2f5fb;
+  --surface: #ffffff;
+  --ink: #0e1a30; --ink-2: #42536e; --muted: #7d8aa3;
+  --grid: #e2e8f4; --border: rgba(13,140,232,0.16);
+  --accent: #0d8ce8; --accent-2: #2b6bff; --accent-ink: #ffffff;
+  --accent-soft: rgba(13,140,232,0.08);
+  --glow: 0 0 14px rgba(13,140,232,0.28);
+  --glow-2: 0 0 14px rgba(43,107,255,0.28);
+  /* Elevaciones (estilo 3D suave): luz desde arriba-izquierda, sombra abajo */
+  --elev-1: 0 1px 2px rgba(14,26,48,0.06), 0 6px 16px rgba(14,26,48,0.09), inset 0 1px 0 rgba(255,255,255,0.9);
+  --elev-2: 0 2px 4px rgba(14,26,48,0.08), 0 14px 34px rgba(14,26,48,0.14), inset 0 1px 0 rgba(255,255,255,0.9);
+  --press: inset 0 2px 6px rgba(14,26,48,0.12), inset 0 -1px 0 rgba(255,255,255,0.7);
+  /* Estados en el mismo azul, diferenciados por tonalidad + texto del chip:
+     ok = azul cielo · aviso = azul medio · crítico = azul eléctrico profundo */
+  --good-text: #0d8ce8; --good-soft: rgba(13,140,232,0.09);
+  --warn-text: #2b6bff; --warn-soft: rgba(43,107,255,0.10);
+  --crit: #1636c8; --crit-text: #1636c8; --crit-soft: rgba(22,54,200,0.10);
+
+  /* Montserrat para todo; los roles se diferencian por peso y espaciado */
+  --f-display: var(--font-montserrat), system-ui, sans-serif;
+  --f-data: var(--font-montserrat), system-ui, sans-serif;
+  --f-body: var(--font-montserrat), system-ui, sans-serif;
+
+  font-family: var(--f-body);
+  font-weight: 300;
+  color: var(--ink);
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(13,140,232,0.08), transparent),
+    radial-gradient(ellipse 60% 40% at 90% 110%, rgba(43,107,255,0.07), transparent),
+    var(--page);
+  height: 100dvh; max-width: 560px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 12px 10px; box-sizing: border-box;
+}
+.admin-root * { box-sizing: border-box; margin: 0; }
+.admin-root b, .admin-root .emp-name, .admin-root .who { font-weight: 600; }
+
+.app-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; flex: 0 0 auto; }
+.app-header .brand {
+  font-family: var(--f-display); font-size: 11px; letter-spacing: .32em;
+  text-transform: uppercase; color: var(--accent); font-weight: 700;
+  text-shadow: var(--glow);
+}
+.app-header h1 { font-family: var(--f-display); font-size: 17px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.app-header .date-note { color: var(--muted); font-size: 12.5px; font-family: var(--f-data); }
+
+.screen { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--elev-1); }
+.card.grow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.card h2 { font-family: var(--f-display); font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 2px; color: var(--accent); }
+.card .hint { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.scrollable { overflow-y: auto; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; padding-right: 2px; }
+.axis-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: 0 0 auto; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; box-shadow: var(--elev-1); }
+.tile .label { font-family: var(--f-display); font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
+.tile .value { font-family: var(--f-data); font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--accent); text-shadow: var(--glow); }
+.tile .sub { font-size: 12.5px; color: var(--ink-2); }
+.tile.alerta .value { color: var(--crit-text); text-shadow: 0 0 14px rgba(22,54,200,0.30); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-data); font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; white-space: nowrap; border: 1px solid currentColor; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+.chip.crit { color: var(--crit-text); background: var(--crit-soft); }
+.chip.warn { color: var(--warn-text); background: var(--warn-soft); }
+.chip.good { color: var(--good-text); background: var(--good-soft); }
+.chip.neutral { color: var(--ink-2); background: var(--accent-soft); }
+.chip.neutral::before { background: var(--accent); }
+
+/* Filtro global de sede (select en el menú lateral).
+   Móvil: fila que ocupa todo el ancho de la barra inferior. */
+.side-sede { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 6px 4px 4px; border-bottom: 1px solid var(--grid); margin-bottom: 4px; }
+.side-sede-lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.sede-select { flex: 1; font: inherit; font-size: 13px; font-weight: 600; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
+.sede-select:hover { background: var(--accent-soft); }
+.sede-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.sede-table { display: flex; flex-direction: column; font-size: 13px; font-variant-numeric: tabular-nums; }
+.sede-row { display: grid; grid-template-columns: 1.4fr 1fr 0.9fr 1fr 1fr; gap: 6px; padding: 7px 0; border-top: 1px solid var(--grid); align-items: center; }
+.sede-row:first-child { border-top: 0; }
+.sede-row.head { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.sede-row .sede-name { font-weight: 600; }
+.warn-num { color: var(--warn-text); font-weight: 700; }
+.crit-num { color: var(--crit-text); font-weight: 700; }
+
+.btn { border: 1px solid var(--border); background: var(--surface); color: var(--accent); font-family: var(--f-data); font-size: 13.5px; padding: 7px 14px; border-radius: 8px; cursor: pointer; box-shadow: 0 1px 2px rgba(14,26,48,0.08), 0 3px 8px rgba(14,26,48,0.08); }
+.btn:hover { background: var(--accent-soft); box-shadow: var(--glow); }
+.btn:active { box-shadow: var(--press); transform: translateY(1px); }
+.btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent; color: var(--accent-ink); font-weight: 700; box-shadow: 0 2px 4px rgba(14,26,48,0.15), 0 8px 20px rgba(13,140,232,0.35), inset 0 1px 0 rgba(255,255,255,0.25); }
+.btn.primary:disabled { opacity: .5; cursor: not-allowed; }
+.btn:focus-visible, .tabbar button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.anomaly { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 0; border-top: 1px solid var(--grid); }
+.anomaly:first-child { border-top: 0; }
+.anomaly .who { font-weight: 600; }
+.anomaly .desc { color: var(--ink-2); font-size: 13.5px; }
+.anomaly .btn { width: 100%; }
+
+.emp-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: var(--page); display: flex; flex-direction: column; gap: 8px; }
+.emp-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.emp-name { font-weight: 600; }
+.emp-id { font-size: 12px; color: var(--muted); }
+.emp-data { display: flex; gap: 14px; flex-wrap: wrap; font-family: var(--f-data); font-size: 13.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.emp-data b { display: block; font-family: var(--f-display); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+
+.chart { display: flex; flex-direction: column; gap: 8px; }
+.hrow { display: grid; grid-template-columns: 96px 1fr 52px; align-items: center; gap: 10px; font-size: 12.5px; }
+.hrow .name { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow .track { height: 14px; position: relative; background: var(--page); border-radius: 0 4px 4px 0; box-shadow: inset 0 1px 3px rgba(14,26,48,0.10); }
+.hrow .fill { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 0 4px 4px 0; min-width: 2px; box-shadow: 0 0 10px rgba(13,140,232,0.35); }
+.hrow .val { text-align: right; font-family: var(--f-data); font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+.log-item { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 9px 0; border-top: 1px solid var(--grid); font-size: 13px; }
+.log-item:first-child { border-top: 0; }
+.log-item time { color: var(--muted); font-family: var(--f-data); font-variant-numeric: tabular-nums; }
+.log-item .action { color: var(--ink-2); flex: 1 1 220px; }
+.log-item b { color: var(--ink); }
+
+.tool { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 12px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--page); color: var(--ink); text-decoration: none; font: inherit; cursor: pointer; }
+.tool:hover { background: var(--accent-soft); }
+.tool .icon { font-size: 22px; }
+.tool small { color: var(--muted); }
+.tool.danger:hover { background: var(--crit-soft); }
+
+.tabbar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; flex: 0 0 auto; padding: 6px 4px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 2px 14px rgba(14,26,48,0.06); }
+.tabbar > button { position: relative; border: 0; background: transparent; color: var(--muted); font-family: var(--f-display); font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; border-radius: 12px; }
+.tabbar > button .icon { font-size: 18px; line-height: 1; }
+.tabbar > button[aria-pressed="true"] { color: var(--accent-ink); background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: var(--glow), var(--glow-2); }
+.tabbar .badge { position: absolute; top: 2px; right: calc(50% - 20px); min-width: 16px; height: 16px; border-radius: 999px; background: var(--crit); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 4px; box-shadow: 0 0 10px rgba(22,54,200,0.4); }
+
+/* Cabecera y pie del menú lateral: solo existen en la vista PC */
+.side-top, .side-foot { display: none; }
+
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
+.dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--accent); border-radius: 14px; padding: 18px 20px; max-width: 400px; width: 100%; box-shadow: var(--glow), 0 12px 40px rgba(14,26,48,0.18); }
+.dialog h3 { font-family: var(--f-display); font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin-bottom: 2px; }
+.dialog .hint { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.field label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.field input, .field select { font-family: var(--f-data); font-size: 14px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); color-scheme: light; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--surface); color: var(--accent); border: 1px solid var(--accent); font-family: var(--f-data); font-size: 14px; padding: 9px 18px; border-radius: 999px; z-index: 60; box-shadow: var(--glow); }
+
+/* ─── Vista PC (≥900px): barra lateral + contenido ancho ─── */
+@media (min-width: 900px) {
+  .admin-root {
+    max-width: none;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0;
+    padding: 0;
+  }
+  .app-header { grid-column: 2; grid-row: 1; padding: 16px 24px; background: var(--surface); border-bottom: 1px solid var(--grid); }
+  .app-header .brand { display: none; } /* la marca ya vive en el menú lateral */
+  .app-header .date-note { margin-left: auto; font-size: 13.5px; }
+
+  /* menú lateral: panel completo pegado al borde, unido a la vista por un
+     único borde divisorio (sin esquinas redondeadas ni flotación) */
+  .tabbar {
+    grid-column: 1; grid-row: 1 / 3;
+    display: flex; flex-direction: column; gap: 4px;
+    align-self: stretch; height: 100%;
+    padding: 18px 14px 14px;
+    border-radius: 0; border: none; border-right: 1px solid var(--grid);
+    box-shadow: none;
+  }
+  .tabbar > button {
+    flex-direction: row; justify-content: flex-start; gap: 10px;
+    width: 100%; font-size: 12px; padding: 10px 14px;
+  }
+  .tabbar > button .icon { font-size: 18px; }
+  .tabbar .badge { position: static; margin-left: auto; }
+
+  /* cabecera del menú: logo + nombre + botón esconder */
+  .side-top { display: flex; align-items: center; gap: 10px; padding: 4px 6px 14px; border-bottom: 1px solid var(--grid); margin-bottom: 10px; }
+  .logo {
+    flex: 0 0 auto; width: 38px; height: 38px; border-radius: 11px;
+    display: flex; align-items: center; justify-content: center; font-size: 20px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: var(--glow); color: var(--accent-ink);
+  }
+  .side-brand { font-family: var(--f-display); font-size: 12px; font-weight: 400; letter-spacing: .14em; color: var(--ink); line-height: 1.3; }
+  .side-brand b { font-weight: 800; color: var(--accent); }
+  .side-brand small { display: block; font-family: var(--f-body); font-weight: 400; font-size: 10px; letter-spacing: .02em; text-transform: none; color: var(--muted); }
+  .side-top .collapse-btn {
+    margin-left: auto; flex: 0 0 auto; width: 26px; height: 26px; border-radius: 8px;
+    border: 1px solid var(--border); background: transparent; color: var(--accent);
+    font-size: 14px; line-height: 1; cursor: pointer; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .side-top .collapse-btn:hover { background: var(--accent-soft); box-shadow: var(--glow); }
+  .side-foot { display: block; margin-top: auto; padding: 10px 6px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
+
+  /* PC: el filtro de sede va ARRIBA del menú, en columna, bajo la cabecera */
+  .side-sede { flex-direction: column; align-items: stretch; gap: 4px; padding: 0 6px 12px; margin-bottom: 8px; border-bottom: 1px solid var(--grid); }
+
+  /* estado escondido: riel de iconos */
+  .nav-collapsed { grid-template-columns: 74px minmax(0, 1fr); }
+  .nav-collapsed .tabbar { padding: 18px 8px 14px; }
+  .nav-collapsed .side-top { flex-direction: column; gap: 8px; padding-bottom: 12px; }
+  .nav-collapsed .side-brand, .nav-collapsed .lbl, .nav-collapsed .side-foot { display: none; }
+  /* riel colapsado: el select se compacta (muestra solo el emoji al cerrar) */
+  .nav-collapsed .side-sede { padding: 0 2px 10px; }
+  .nav-collapsed .side-sede-lbl { display: none; }
+  .nav-collapsed .sede-select { padding: 8px 4px; font-size: 12px; }
+  .nav-collapsed .side-top .collapse-btn { margin-left: 0; }
+  .nav-collapsed .tabbar > button { justify-content: center; padding: 10px 0; }
+  .nav-collapsed .tabbar .badge { position: absolute; top: 2px; right: 4px; margin-left: 0; }
+
+  /* contenido pegado al sidebar, sin marcos: la jerarquía la dan las sombras.
+     El lienzo es gris muy suave y las piezas "flotan" en blanco (estilo 3D). */
+  .screen { grid-column: 2; grid-row: 2; padding: 22px 26px; gap: 18px; background: var(--page); }
+  .admin-root { background: var(--page); }
+  .card { border: none; border-radius: 14px; padding: 18px 20px; background: var(--surface); box-shadow: var(--elev-1); }
+  .tiles { gap: 14px; }
+  .tile { border: none; background: var(--surface); box-shadow: var(--elev-1); transition: box-shadow .2s, transform .2s; }
+  .tile:hover { box-shadow: var(--elev-2); transform: translateY(-2px); }
+  .tool, .emp-card { border: none; background: var(--surface); box-shadow: var(--elev-1); transition: box-shadow .2s, transform .2s; }
+  .tool:hover { box-shadow: var(--elev-2); transform: translateY(-2px); background: var(--surface); }
+  .emp-card:hover { box-shadow: var(--elev-2); }
+
+  /* sidebar y encabezado proyectan sombra sobre el contenido */
+  .tabbar { background: var(--surface); box-shadow: 6px 0 20px rgba(14,26,48,0.07); border-right: none; }
+  .app-header { box-shadow: 0 6px 18px rgba(14,26,48,0.06); border-bottom: none; position: relative; z-index: 2; }
+  .dialog { box-shadow: var(--elev-2), 0 24px 70px rgba(14,26,48,0.25); }
+  .card { padding: 18px 22px; border-radius: 14px; }
+  .card h2 { font-size: 16px; }
+
+  .tiles { grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .tile { padding: 14px 16px; }
+  .tile .value { font-size: 30px; }
+
+  .hrow { grid-template-columns: 200px 1fr 64px; font-size: 13.5px; }
+  .hrow .track { height: 16px; }
+
+  /* anomalías y empleados pasan de tarjeta apilada a fila */
+  .anomaly { flex-direction: row; align-items: center; gap: 14px; }
+  .anomaly .who { min-width: 170px; }
+  .anomaly .desc { flex: 1 1 auto; }
+  .anomaly .btn { width: auto; }
+
+  .emp-card { flex-direction: row; align-items: center; gap: 20px; padding: 12px 16px; }
+  .emp-head { flex: 1 1 220px; }
+  .emp-data { gap: 28px; flex: 0 0 auto; }
+  .emp-card .btn { flex: 0 0 auto; margin-left: auto; }
+
+  .log-item { font-size: 13.5px; }
+  .log-item time { min-width: 130px; }
+}
+`;

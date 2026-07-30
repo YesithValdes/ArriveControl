@@ -1,0 +1,19 @@
+{
+  "name": "attendance-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "dev:https": "next dev --experimental-https",
+    "build": "next build",
+    "start": "next start",
+    "test": "node tests/run-tests.mjs"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.18",
+    "@vladmandic/face-api": "^1.7.15",
+    "next": "^15.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
