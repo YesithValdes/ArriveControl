@@ -51,6 +51,39 @@ function Icon({ name, size = 17 }) {
   );
 }
 
+/**
+ * Lista en acordeón para móvil: reemplaza a las tablas (que en pantallas
+ * angostas obligarían a scroll horizontal). Cabecera = lo esencial;
+ * al expandir se ven los demás campos y las acciones.
+ */
+function AccList({ items }) {
+  const [openId, setOpenId] = useState(null);
+  return (
+    <div className="acc">
+      {items.map((it) => {
+        const open = openId === it.id;
+        return (
+          <div className={`acc-item${open ? ' open' : ''}`} key={it.id}>
+            <button className="acc-head" aria-expanded={open} onClick={() => setOpenId(open ? null : it.id)}>
+              <span className="acc-title">{it.title}</span>
+              {it.right}
+              <span className="acc-chev"><Icon name="chevronRight" size={14} /></span>
+            </button>
+            {open && (
+              <div className="acc-body">
+                {it.fields.map(([label, value]) => (
+                  <div className="acc-field" key={label}><b>{label}</b><span>{value}</span></div>
+                ))}
+                {it.actions && <div className="acc-actions">{it.actions}</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const dayKey = (iso) => iso.slice(0, 10);
 const todayKey = () => dayKey(new Date().toISOString());
 
@@ -596,36 +629,50 @@ export default function AdminPanel() {
             <p className="hint">Marcaciones que no cierran una jornada normal. Clic en una fila para corregirla; cada corrección queda en el historial.</p>
             <div className="scrollable">
               {view.anomalies.length === 0 && <p className="empty">Sin anomalías pendientes.</p>}
-              {view.anomalies.length > 0 && (
-                <div className="att-tablewrap">
-                  <table className="att-table">
-                    <thead>
-                      <tr><th>Empleado</th><th>Tipo</th><th>Día</th><th>Detalle</th></tr>
-                    </thead>
-                    <tbody>
-                      {view.anomalies.map((a, i) => (
-                        <tr key={a.event.id + i} onClick={() => openFix(a)} tabIndex={0}
-                          onKeyDown={(e) => e.key === 'Enter' && openFix(a)}>
-                          <td className="att-name">{a.person.name}</td>
-                          <td>{
-                            a.kind === 'missing-exit' ? chip('crit', 'Salida faltante')
-                              : a.kind === 'early-exit' ? chip('warn', 'Salida temprana')
-                                : chip('warn', 'Entrada tardía')
-                          }</td>
-                          <td>{new Date(a.event.ts).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })}</td>
-                          <td className="att-sede">
-                            {a.kind === 'missing-exit'
-                              ? `Entrada de las ${fmt12(a.event.ts)} sin salida registrada (más de 12 h abierta).`
-                              : a.kind === 'early-exit'
-                                ? `Salió a las ${fmt12(a.event.ts)}, bastante antes de su hora esperada (${a.person.expectedExit || '—'}).`
-                                : `Primera entrada del día a las ${fmt12(a.event.ts)} — posible olvido en la mañana.`}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              {view.anomalies.length > 0 && (() => {
+                const aChip = (a) =>
+                  a.kind === 'missing-exit' ? chip('crit', 'Salida faltante')
+                    : a.kind === 'early-exit' ? chip('warn', 'Salida temprana')
+                      : chip('warn', 'Entrada tardía');
+                const aDesc = (a) =>
+                  a.kind === 'missing-exit'
+                    ? `Entrada de las ${fmt12(a.event.ts)} sin salida registrada (más de 12 h abierta).`
+                    : a.kind === 'early-exit'
+                      ? `Salió a las ${fmt12(a.event.ts)}, bastante antes de su hora esperada (${a.person.expectedExit || '—'}).`
+                      : `Primera entrada del día a las ${fmt12(a.event.ts)} — posible olvido en la mañana.`;
+                const aDay = (a) => new Date(a.event.ts).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
+                return (
+                  <>
+                    <div className="att-tablewrap">
+                      <table className="att-table">
+                        <thead>
+                          <tr><th>Empleado</th><th>Tipo</th><th>Día</th><th>Detalle</th></tr>
+                        </thead>
+                        <tbody>
+                          {view.anomalies.map((a, i) => (
+                            <tr key={a.event.id + i} onClick={() => openFix(a)} tabIndex={0}
+                              onKeyDown={(e) => e.key === 'Enter' && openFix(a)}>
+                              <td className="att-name">{a.person.name}</td>
+                              <td>{aChip(a)}</td>
+                              <td>{aDay(a)}</td>
+                              <td className="att-sede">{aDesc(a)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <AccList
+                      items={view.anomalies.map((a, i) => ({
+                        id: a.event.id + i,
+                        title: a.person.name,
+                        right: aChip(a),
+                        fields: [['Día', aDay(a)], ['Detalle', aDesc(a)]],
+                        actions: <button className="btn primary block" onClick={() => openFix(a)}>Corregir</button>,
+                      }))}
+                    />
+                  </>
+                );
+              })()}
             </div>
           </section>
         )}
@@ -651,26 +698,46 @@ export default function AdminPanel() {
             <div className="scrollable">
               {attRows.length === 0 && <p className="empty">Sin resultados{search ? ` para «${search}»` : ''}.</p>}
               {attRows.length > 0 && (
-                <div className="att-tablewrap">
-                  <table className="att-table">
-                    <thead>
-                      <tr><th>Empleado</th><th>Sede</th><th>Entrada</th><th>Salida</th><th className="num">Horas</th><th>Estado</th></tr>
-                    </thead>
-                    <tbody>
-                      {pageRows.map((r) => (
-                        <tr key={r.person.id} onClick={() => openDrawer(r.person.id, r.person.name)} tabIndex={0}
-                          onKeyDown={(e) => e.key === 'Enter' && openDrawer(r.person.id, r.person.name)}>
-                          <td className="att-name">{r.person.name}</td>
-                          <td className="att-sede">{r.sede || '—'}</td>
-                          <td>{fmt12(r.firstIn?.ts)}</td>
-                          <td>{fmt12(r.lastOut?.ts)}</td>
-                          <td className="num">{fmtH(r.hoursToday)}</td>
-                          <td>{statusChip(r)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  <div className="att-tablewrap">
+                    <table className="att-table">
+                      <thead>
+                        <tr><th>Empleado</th><th>Sede</th><th>Entrada</th><th>Salida</th><th className="num">Horas</th><th>Estado</th></tr>
+                      </thead>
+                      <tbody>
+                        {pageRows.map((r) => (
+                          <tr key={r.person.id} onClick={() => openDrawer(r.person.id, r.person.name)} tabIndex={0}
+                            onKeyDown={(e) => e.key === 'Enter' && openDrawer(r.person.id, r.person.name)}>
+                            <td className="att-name">{r.person.name}</td>
+                            <td className="att-sede">{r.sede || '—'}</td>
+                            <td>{fmt12(r.firstIn?.ts)}</td>
+                            <td>{fmt12(r.lastOut?.ts)}</td>
+                            <td className="num">{fmtH(r.hoursToday)}</td>
+                            <td>{statusChip(r)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <AccList
+                    items={pageRows.map((r) => ({
+                      id: r.person.id,
+                      title: r.person.name,
+                      right: statusChip(r),
+                      fields: [
+                        ['Sede', r.sede || '—'],
+                        ['Entrada', fmt12(r.firstIn?.ts)],
+                        ['Salida', fmt12(r.lastOut?.ts)],
+                        ['Horas', fmtH(r.hoursToday)],
+                      ],
+                      actions: (
+                        <button className="btn primary block" onClick={() => openDrawer(r.person.id, r.person.name)}>
+                          Ver marcaciones
+                        </button>
+                      ),
+                    }))}
+                  />
+                </>
               )}
             </div>
             {pageCount > 1 && (
@@ -696,35 +763,54 @@ export default function AdminPanel() {
             </div>
             <div className="scrollable">
               {empRows.length === 0 && <p className="empty">Sin resultados{empSearch ? ` para «${empSearch}»` : ''}.</p>}
-              {empRows.length > 0 && (
-                <div className="att-tablewrap">
-                  <table className="att-table">
-                    <thead>
-                      <tr><th>Empleado</th><th>Cédula</th><th>Sede</th><th>Horario</th><th>Jornada</th></tr>
-                    </thead>
-                    <tbody>
-                      {empRows.map((p) => {
-                        const open = () => setEditEmp({
-                          id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '',
-                          expectedEntry: p.expectedEntry || '',
-                          expectedExit: p.expectedExit || '',
-                          breakMinutes: p.breakMinutes == null ? '' : String(p.breakMinutes),
-                        });
-                        const exp = expectedDailyHours(p);
-                        return (
-                          <tr key={p.id} onClick={open} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && open()}>
-                            <td className="att-name">{p.name}</td>
-                            <td>{p.cedula ? `C.C. ${p.cedula}` : '—'}</td>
-                            <td className="att-sede">{p.sede || '—'}</td>
-                            <td>{p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : <span className="libre">horario libre</span>}</td>
-                            <td>{exp == null ? <span className="libre">—</span> : `${fmtH(exp)}${p.breakMinutes ? ` (−${p.breakMinutes}m)` : ''}`}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              {empRows.length > 0 && (() => {
+                const openEdit = (p) => setEditEmp({
+                  id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '',
+                  expectedEntry: p.expectedEntry || '',
+                  expectedExit: p.expectedExit || '',
+                  breakMinutes: p.breakMinutes == null ? '' : String(p.breakMinutes),
+                });
+                const horario = (p) => (p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : 'horario libre');
+                const jornada = (p) => {
+                  const exp = expectedDailyHours(p);
+                  return exp == null ? '—' : `${fmtH(exp)}${p.breakMinutes ? ` (−${p.breakMinutes}m)` : ''}`;
+                };
+                return (
+                  <>
+                    <div className="att-tablewrap">
+                      <table className="att-table">
+                        <thead>
+                          <tr><th>Empleado</th><th>Cédula</th><th>Sede</th><th>Horario</th><th>Jornada</th></tr>
+                        </thead>
+                        <tbody>
+                          {empRows.map((p) => (
+                            <tr key={p.id} onClick={() => openEdit(p)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && openEdit(p)}>
+                              <td className="att-name">{p.name}</td>
+                              <td>{p.cedula ? `C.C. ${p.cedula}` : '—'}</td>
+                              <td className="att-sede">{p.sede || '—'}</td>
+                              <td>{p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : <span className="libre">horario libre</span>}</td>
+                              <td>{expectedDailyHours(p) == null ? <span className="libre">—</span> : jornada(p)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <AccList
+                      items={empRows.map((p) => ({
+                        id: p.id,
+                        title: p.name,
+                        right: <span className="acc-note">{p.sede || 'sin sede'}</span>,
+                        fields: [
+                          ['Cédula', p.cedula ? `C.C. ${p.cedula}` : '—'],
+                          ['Horario', horario(p)],
+                          ['Jornada', jornada(p)],
+                        ],
+                        actions: <button className="btn primary block" onClick={() => openEdit(p)}>Editar</button>,
+                      }))}
+                    />
+                  </>
+                );
+              })()}
             </div>
           </section>
         )}
@@ -741,22 +827,39 @@ export default function AdminPanel() {
             <div className="scrollable">
               {report.length === 0 && <p className="empty">Sin marcaciones en este período{sedeFilter !== 'all' ? ` para ${sedeFilter}` : ''}.</p>}
               {report.length > 0 && (
-                <div className="rep-table" role="table">
-                  <div className="rep-row head" role="row">
-                    <span>Empleado</span><span>Sede</span><span>Días</span><span>Horas</span><span>Extras</span><span>Dom/Fest</span><span>Tardías</span>
-                  </div>
-                  {report.map((r) => (
-                    <div className="rep-row" role="row" key={r.id}>
-                      <span className="rep-name">{r.name}</span>
-                      <span>{r.sede || '—'}</span>
-                      <span>{r.days}</span>
-                      <span>{fmtH(r.hours)}</span>
-                      <span className={r.extras > 0 ? 'warn-num' : ''}>{r.extras > 0 ? fmtH(r.extras) : '—'}</span>
-                      <span className={r.domFest > 0 ? 'warn-num' : ''}>{r.domFest > 0 ? fmtH(r.domFest) : '—'}</span>
-                      <span className={r.lateCount > 0 ? 'warn-num' : ''}>{r.lateCount}</span>
+                <>
+                  <div className="rep-table" role="table">
+                    <div className="rep-row head" role="row">
+                      <span>Empleado</span><span>Sede</span><span>Días</span><span>Horas</span><span>Extras</span><span>Dom/Fest</span><span>Tardías</span>
                     </div>
-                  ))}
-                </div>
+                    {report.map((r) => (
+                      <div className="rep-row" role="row" key={r.id}>
+                        <span className="rep-name">{r.name}</span>
+                        <span>{r.sede || '—'}</span>
+                        <span>{r.days}</span>
+                        <span>{fmtH(r.hours)}</span>
+                        <span className={r.extras > 0 ? 'warn-num' : ''}>{r.extras > 0 ? fmtH(r.extras) : '—'}</span>
+                        <span className={r.domFest > 0 ? 'warn-num' : ''}>{r.domFest > 0 ? fmtH(r.domFest) : '—'}</span>
+                        <span className={r.lateCount > 0 ? 'warn-num' : ''}>{r.lateCount}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <AccList
+                    items={report.map((r) => ({
+                      id: r.id,
+                      title: r.name,
+                      right: <span className="acc-note">{fmtH(r.hours)}</span>,
+                      fields: [
+                        ['Sede', r.sede || '—'],
+                        ['Días trabajados', r.days],
+                        ['Horas', fmtH(r.hours)],
+                        ['Horas extra', r.extras > 0 ? fmtH(r.extras) : '—'],
+                        ['Dom/Festivos', r.domFest > 0 ? fmtH(r.domFest) : '—'],
+                        ['Entradas tardías', r.lateCount],
+                      ],
+                    }))}
+                  />
+                </>
               )}
             </div>
           </section>
@@ -899,27 +1002,44 @@ export default function AdminPanel() {
               <button className="btn primary" onClick={() => setNewSedeOpen(true)}>Nueva sede</button>
             </div>
             <div className="scrollable">
-              <div className="att-tablewrap">
-                <table className="att-table">
-                  <thead>
-                    <tr><th>Sede</th><th>Latitud</th><th>Longitud</th><th>Radio</th><th>Empleados</th></tr>
-                  </thead>
-                  <tbody>
-                    {sedes.map((o) => {
-                      const open = () => setEditSede({ original: o.name, name: o.name, lat: String(o.lat), lon: String(o.lon), radius: String(o.radius) });
-                      return (
-                        <tr key={o.name} onClick={open} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && open()}>
-                          <td className="att-name">{o.name}</td>
-                          <td>{o.lat.toFixed(6)}</td>
-                          <td>{o.lon.toFixed(6)}</td>
-                          <td>{o.radius} m</td>
-                          <td className="att-sede">{allPeople.filter((p) => p.sede === o.name).length}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              {(() => {
+                const openEdit = (o) => setEditSede({ original: o.name, name: o.name, lat: String(o.lat), lon: String(o.lon), radius: String(o.radius) });
+                return (
+                  <>
+                    <div className="att-tablewrap">
+                      <table className="att-table">
+                        <thead>
+                          <tr><th>Sede</th><th>Latitud</th><th>Longitud</th><th>Radio</th><th>Empleados</th></tr>
+                        </thead>
+                        <tbody>
+                          {sedes.map((o) => (
+                            <tr key={o.name} onClick={() => openEdit(o)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && openEdit(o)}>
+                              <td className="att-name">{o.name}</td>
+                              <td>{o.lat.toFixed(6)}</td>
+                              <td>{o.lon.toFixed(6)}</td>
+                              <td>{o.radius} m</td>
+                              <td className="att-sede">{allPeople.filter((p) => p.sede === o.name).length}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <AccList
+                      items={sedes.map((o) => ({
+                        id: o.name,
+                        title: o.name,
+                        right: <span className="acc-note">{allPeople.filter((p) => p.sede === o.name).length} empleados</span>,
+                        fields: [
+                          ['Latitud', o.lat.toFixed(6)],
+                          ['Longitud', o.lon.toFixed(6)],
+                          ['Radio GPS', `${o.radius} m`],
+                        ],
+                        actions: <button className="btn primary block" onClick={() => openEdit(o)}>Editar</button>,
+                      }))}
+                    />
+                  </>
+                );
+              })()}
 
             </div>
           </section>
@@ -1562,6 +1682,29 @@ const CSS = `
 .ev-form-row label { flex: 1; }
 .ev-form input, .ev-form select { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
 
+/* ─── Acordeón (móvil): reemplaza a las tablas para evitar scroll lateral ─── */
+.att-tablewrap { display: none; }
+.rep-table { display: none; }
+.acc { display: flex; flex-direction: column; gap: 8px; }
+.acc-item { background: var(--surface); border: 1px solid var(--grid); border-radius: 10px; box-shadow: var(--elev-1); }
+.acc-head {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  border: 0; background: transparent; font: inherit; font-weight: 600; font-size: 14px;
+  padding: 12px 14px; cursor: pointer; text-align: left; color: var(--ink); border-radius: 10px;
+}
+.acc-head:active { background: var(--accent-soft); }
+.acc-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-note { font-size: 11.5px; color: var(--muted); font-weight: 500; flex: 0 0 auto; }
+.acc-chev { color: var(--muted); display: flex; flex: 0 0 auto; transition: transform .18s; }
+.acc-item.open .acc-chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .acc-chev { transition: none; } }
+.acc-body { border-top: 1px solid var(--grid); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 7px; }
+.acc-field { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; }
+.acc-field b { color: var(--muted); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; flex: 0 0 auto; }
+.acc-field span { color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums; }
+.acc-actions { margin-top: 4px; }
+.acc-actions .btn.block { margin-top: 0; }
+
 /* ─── Móvil (<900px): los drawers laterales se vuelven hojas inferiores ─── */
 @media (max-width: 899px) {
   .overlay.right { align-items: flex-end; justify-content: stretch; padding: 0; }
@@ -1612,6 +1755,11 @@ const CSS = `
   .menu-btn { display: none; }
   .head-tab { font-size: 17px; }
   .side-top .collapse-btn { display: flex; }
+
+  /* PC: tablas visibles, acordeón oculto */
+  .att-tablewrap { display: block; }
+  .rep-table { display: flex; }
+  .acc { display: none; }
   .tabbar > button {
     flex-direction: row; justify-content: flex-start; gap: 10px;
     width: 100%; font-size: 12px; padding: 10px 14px;
