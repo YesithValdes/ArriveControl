@@ -115,6 +115,7 @@ export default function AdminPanel() {
   const [sedes, setSedes] = useState([]);
   useEffect(() => { setSedes(getSedes()); }, [tick]);
   const [newSede, setNewSede] = useState({ name: '', lat: '', lon: '', radius: '50' });
+  const [editSede, setEditSede] = useState(null); // { original, name, lat, lon, radius }
   const [newHoliday, setNewHoliday] = useState('');
 
   // Edición de empleado (CRUD): diálogo con datos no biométricos.
@@ -126,6 +127,7 @@ export default function AdminPanel() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); // all|present|absent|anomaly
   const [page, setPage] = useState(0);
+  const [empSearch, setEmpSearch] = useState(''); // búsqueda de la tabla Empleados
 
   // Drawer de detalle: línea de tiempo de marcaciones de una persona en un día.
   const [drawer, setDrawer] = useState(null); // { personId, personName, day }
@@ -397,6 +399,16 @@ export default function AdminPanel() {
     if (statusFilter === 'anomaly') rs = rs.filter((r) => data.anomalies.some((a) => a.person.id === r.person.id));
     return rs;
   }, [view, search, statusFilter, data]);
+  // Roster completo sin filtro de sede (para conteos por sede).
+  const allPeople = useMemo(() => listPeople(), [tick]);
+
+  // Tabla de empleados: roster filtrado por búsqueda.
+  const empRows = useMemo(() => {
+    const q = empSearch.trim().toLowerCase();
+    if (!q) return roster;
+    return roster.filter((p) => p.name.toLowerCase().includes(q) || (p.cedula || '').includes(q));
+  }, [roster, empSearch]);
+
   const pageCount = Math.max(1, Math.ceil(attRows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = attRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
@@ -639,46 +651,59 @@ export default function AdminPanel() {
 
         {tab === 'empleados' && (
           <section className="card grow">
-            <h2>Empleados registrados <span className="muted-count">{roster.length}</span></h2>
+            <h2>Empleados registrados <span className="muted-count">{empRows.length}</span></h2>
             <p className="hint">Personas que pueden marcar en el kiosco. El registro es por foto, con cédula, sede y horario.</p>
-            <Link className="btn primary block" href="/admin/registro">Registrar empleado</Link>
+            <div className="att-controls">
+              <input
+                className="att-search" type="search" placeholder="Buscar por nombre o cédula…"
+                value={empSearch} onChange={(e) => setEmpSearch(e.target.value)}
+              />
+              <Link className="btn primary" href="/admin/registro">Registrar empleado</Link>
+            </div>
             <div className="scrollable">
-              {roster.length === 0 && <p className="empty">No hay empleados {sedeFilter === 'all' ? 'registrados' : `en ${sedeFilter}`}.</p>}
-              {roster.map((p) => (
-                <div className="emp-card" key={p.id}>
-                  <div className="emp-head">
-                    <div>
-                      <span className="emp-name">{p.name}</span>
-                      <span className="emp-id"> · {p.cedula ? `C.C. ${p.cedula}` : 'sin cédula'}</span>
-                    </div>
-                    <div className="emp-actions">
-                      <button
-                        className="btn"
-                        onClick={() => setEditEmp({ id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '', expectedEntry: p.expectedEntry || '08:00' })}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        className="btn danger-btn"
-                        onClick={() => {
-                          if (confirm(`¿Eliminar a ${p.name}? Ya no podrá marcar asistencia.`)) {
-                            removePerson(p.id);
-                            refresh();
-                            showToast(`${p.name} eliminado`);
-                          }
-                        }}
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                  </div>
-                  <div className="emp-data">
-                    <span><b>Sede</b> {p.sede || '—'}</span>
-                    <span><b>Entrada esperada</b> {p.expectedEntry || '—'}</span>
-                    <span><b>Registro</b> {new Date(p.createdAt).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                  </div>
+              {empRows.length === 0 && <p className="empty">Sin resultados{empSearch ? ` para «${empSearch}»` : ''}.</p>}
+              {empRows.length > 0 && (
+                <div className="att-tablewrap">
+                  <table className="att-table">
+                    <thead>
+                      <tr><th>Empleado</th><th>Cédula</th><th>Sede</th><th>Entrada esperada</th><th>Registro</th><th className="num">Acciones</th></tr>
+                    </thead>
+                    <tbody>
+                      {empRows.map((p) => (
+                        <tr key={p.id} className="static">
+                          <td className="att-name">{p.name}</td>
+                          <td>{p.cedula ? `C.C. ${p.cedula}` : '—'}</td>
+                          <td className="att-sede">{p.sede || '—'}</td>
+                          <td>{p.expectedEntry || '—'}</td>
+                          <td>{new Date(p.createdAt).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                          <td className="num">
+                            <span className="tl-actions">
+                              <button
+                                className="btn small"
+                                onClick={() => setEditEmp({ id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '', expectedEntry: p.expectedEntry || '08:00' })}
+                              >
+                                Editar
+                              </button>
+                              <button
+                                className="btn small danger-btn"
+                                onClick={() => {
+                                  if (confirm(`¿Eliminar a ${p.name}? Ya no podrá marcar asistencia.`)) {
+                                    removePerson(p.id);
+                                    refresh();
+                                    showToast(`${p.name} eliminado`);
+                                  }
+                                }}
+                              >
+                                Eliminar
+                              </button>
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
+              )}
             </div>
           </section>
         )}
@@ -850,40 +875,47 @@ export default function AdminPanel() {
             <h2>Sedes</h2>
             <p className="hint">Cada sede tiene sus coordenadas y su propio radio GPS. El kiosco y el fichaje las usan de inmediato.</p>
             <div className="scrollable">
-              {sedes.map((o) => (
-                <div className="cfg-group sede-card" key={o.name}>
-                  <div className="sede-card-head">
-                    <h3>{o.name}</h3>
-                    <button
-                      className="btn danger-btn"
-                      onClick={() => {
-                        if (!confirm(`¿Eliminar la sede "${o.name}"? Los empleados asignados a ella quedarán sin sede.`)) return;
-                        const r = removeSede(o.name);
-                        if (r.error) { showToast(r.error); return; }
-                        if (sedeFilter === o.name) setSedeFilter('all');
-                        refresh();
-                        showToast(`Sede "${o.name}" eliminada`);
-                      }}
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                  <div className="sede-fields">
-                    <label>Latitud
-                      <input type="number" step="0.000001" defaultValue={o.lat}
-                        onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && Math.abs(v) <= 90 && v !== o.lat) { updateSede(o.name, { lat: v }); refresh(); showToast('Sede actualizada'); } }} />
-                    </label>
-                    <label>Longitud
-                      <input type="number" step="0.000001" defaultValue={o.lon}
-                        onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && Math.abs(v) <= 180 && v !== o.lon) { updateSede(o.name, { lon: v }); refresh(); showToast('Sede actualizada'); } }} />
-                    </label>
-                    <label>Radio (m)
-                      <input type="number" min="10" max="1000" defaultValue={o.radius}
-                        onBlur={(e) => { const v = Number(e.target.value); if (v > 0 && v !== o.radius) { updateSede(o.name, { radius: v }); refresh(); showToast('Radio actualizado'); } }} />
-                    </label>
-                  </div>
-                </div>
-              ))}
+              <div className="att-tablewrap">
+                <table className="att-table">
+                  <thead>
+                    <tr><th>Sede</th><th>Latitud</th><th>Longitud</th><th>Radio</th><th>Empleados</th><th className="num">Acciones</th></tr>
+                  </thead>
+                  <tbody>
+                    {sedes.map((o) => (
+                      <tr key={o.name} className="static">
+                        <td className="att-name">{o.name}</td>
+                        <td>{o.lat.toFixed(6)}</td>
+                        <td>{o.lon.toFixed(6)}</td>
+                        <td>{o.radius} m</td>
+                        <td className="att-sede">{allPeople.filter((p) => p.sede === o.name).length}</td>
+                        <td className="num">
+                          <span className="tl-actions">
+                            <button
+                              className="btn small"
+                              onClick={() => setEditSede({ original: o.name, name: o.name, lat: String(o.lat), lon: String(o.lon), radius: String(o.radius) })}
+                            >
+                              Editar
+                            </button>
+                            <button
+                              className="btn small danger-btn"
+                              onClick={() => {
+                                if (!confirm(`¿Eliminar la sede "${o.name}"? Los empleados asignados a ella quedarán sin sede.`)) return;
+                                const r = removeSede(o.name);
+                                if (r.error) { showToast(r.error); return; }
+                                if (sedeFilter === o.name) setSedeFilter('all');
+                                refresh();
+                                showToast(`Sede "${o.name}" eliminada`);
+                              }}
+                            >
+                              Eliminar
+                            </button>
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
               <div className="cfg-group">
                 <h3>＋ Nueva sede</h3>
@@ -1040,6 +1072,65 @@ export default function AdminPanel() {
         </div>
       )}
 
+      {/* Diálogo de edición de sede (incluye renombrar, propagando al roster) */}
+      {editSede && (
+        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setEditSede(null)}>
+          <div className="dialog" role="dialog" aria-modal="true">
+            <h3>Editar sede — {editSede.original}</h3>
+            <p className="hint">Si cambias el nombre, los empleados asignados se actualizan automáticamente.</p>
+            <div className="field">
+              <label htmlFor="s-nombre">Nombre</label>
+              <input id="s-nombre" type="text" value={editSede.name} onChange={(e) => setEditSede({ ...editSede, name: e.target.value })} />
+            </div>
+            <div className="field">
+              <label htmlFor="s-lat">Latitud</label>
+              <input id="s-lat" type="number" step="0.000001" value={editSede.lat} onChange={(e) => setEditSede({ ...editSede, lat: e.target.value })} />
+            </div>
+            <div className="field">
+              <label htmlFor="s-lon">Longitud</label>
+              <input id="s-lon" type="number" step="0.000001" value={editSede.lon} onChange={(e) => setEditSede({ ...editSede, lon: e.target.value })} />
+            </div>
+            <div className="field">
+              <label htmlFor="s-radio">Radio GPS (metros)</label>
+              <input id="s-radio" type="number" min="10" max="1000" value={editSede.radius} onChange={(e) => setEditSede({ ...editSede, radius: e.target.value })} />
+            </div>
+            <div className="dialog-actions">
+              <button className="btn" onClick={() => setEditSede(null)}>Cancelar</button>
+              <button
+                className="btn primary"
+                disabled={!editSede.name.trim() || editSede.lat === '' || editSede.lon === ''}
+                onClick={() => {
+                  const name = editSede.name.trim();
+                  const lat = Number(editSede.lat);
+                  const lon = Number(editSede.lon);
+                  const radius = Number(editSede.radius) || 50;
+                  if (!Number.isFinite(lat) || Math.abs(lat) > 90 || !Number.isFinite(lon) || Math.abs(lon) > 180) {
+                    showToast('Coordenadas inválidas'); return;
+                  }
+                  if (name !== editSede.original && sedes.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
+                    showToast(`Ya existe una sede llamada "${name}"`); return;
+                  }
+                  const r = updateSede(editSede.original, { name, lat, lon, radius });
+                  if (r.error) { showToast(r.error); return; }
+                  // Renombrado: propagar a empleados asignados y al filtro activo.
+                  if (name !== editSede.original) {
+                    for (const p of listPeople()) {
+                      if (p.sede === editSede.original) updatePerson(p.id, { sede: name });
+                    }
+                    if (sedeFilter === editSede.original) setSedeFilter(name);
+                  }
+                  setEditSede(null);
+                  refresh();
+                  showToast('Sede actualizada');
+                }}
+              >
+                Guardar cambios
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Diálogo de edición de empleado (CRUD: actualizar datos no biométricos) */}
       {editEmp && (
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setEditEmp(null)}>
@@ -1096,33 +1187,9 @@ export default function AdminPanel() {
 }
 
 const CSS = `
+/* Tokens (color, tipografía, elevación) viven en app/globals.css — el sistema
+   de diseño es único para toda la app. Aquí solo el layout del panel. */
 .admin-root {
-  /* Tema claro monocromo: fondo blanco y un solo AZUL en distintas tonalidades
-     (de más claro a más profundo: #7cc8f5 → #0d8ce8 → #2b6bff → #1636c8) */
-  /* Tema claro corporativo: blanco + un azul sobrio en tonalidades */
-  --page: #f4f6fa;
-  --surface: #ffffff;
-  --ink: #101828; --ink-2: #475467; --muted: #8a94a6;
-  --grid: #e4e8f0; --border: #e4e8f0;
-  --accent: #2563eb; --accent-2: #1e40af; --accent-ink: #ffffff;
-  --accent-soft: rgba(37,99,235,0.07);
-  --glow: 0 1px 3px rgba(16,24,40,0.10);
-  --glow-2: 0 1px 3px rgba(16,24,40,0.10);
-  /* Elevaciones sutiles */
-  --elev-1: 0 1px 2px rgba(16,24,40,0.05), 0 1px 3px rgba(16,24,40,0.06);
-  --elev-2: 0 2px 6px rgba(16,24,40,0.08), 0 6px 16px rgba(16,24,40,0.08);
-  --press: inset 0 1px 3px rgba(16,24,40,0.12);
-  /* Estados en la misma familia azul, diferenciados por tonalidad + texto:
-     ok = azul medio · aviso = azul intenso · crítico = azul marino profundo */
-  --good-text: #2563eb; --good-soft: rgba(37,99,235,0.08);
-  --warn-text: #1e40af; --warn-soft: rgba(30,64,175,0.08);
-  --crit: #172554; --crit-text: #172554; --crit-soft: rgba(23,37,84,0.08);
-
-  /* Montserrat para todo; los roles se diferencian por peso y espaciado */
-  --f-display: var(--font-montserrat), system-ui, sans-serif;
-  --f-data: var(--font-montserrat), system-ui, sans-serif;
-  --f-body: var(--font-montserrat), system-ui, sans-serif;
-
   font-family: var(--f-body);
   font-weight: 300;
   color: var(--ink);
@@ -1323,6 +1390,9 @@ const CSS = `
 .att-table th.num, .att-table td.num { text-align: right; }
 .att-table tbody tr { cursor: pointer; }
 .att-table tbody tr:hover td { background: var(--accent-soft); }
+.att-table tbody tr.static { cursor: default; }
+.att-table tbody tr.static:hover td { background: transparent; }
+.att-table td .tl-actions { justify-content: flex-end; }
 .att-table .att-name { font-weight: 600; }
 .att-table .att-sede { color: var(--muted); }
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 10px; font-size: 12.5px; color: var(--muted); }

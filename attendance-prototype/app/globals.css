@@ -1,0 +1,95 @@
+/**
+ * app/globals.css — Sistema de diseño ArriveControl (único, tema claro).
+ *
+ * Fuente de verdad de color, tipografía y elevación para TODAS las pantallas:
+ * kiosco, admin, registro, fichaje y diagnóstico. Ningún componente debe
+ * volver a escribir un hex literal: usa siempre var(--token).
+ *
+ * Tema claro corporativo: blanco + un azul sobrio en tonalidades.
+ * Los estados (ok / aviso / crítico) viven en la misma familia azul y se
+ * diferencian por tonalidad, salvo en el kiosco, donde la marcación necesita
+ * leerse a un metro de distancia y usa verde/ámbar/rojo semánticos.
+ */
+
+:root {
+  /* Superficies */
+  --page: #f4f6fa;
+  --surface: #ffffff;
+  --ink: #101828;
+  --ink-2: #475467;
+  --muted: #8a94a6;
+  --grid: #e4e8f0;
+  --border: #e4e8f0;
+
+  /* Acento */
+  --accent: #2563eb;
+  --accent-2: #1e40af;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(37, 99, 235, 0.07);
+
+  /* Elevaciones sutiles */
+  --glow: 0 1px 3px rgba(16, 24, 40, 0.10);
+  --glow-2: 0 1px 3px rgba(16, 24, 40, 0.10);
+  --elev-1: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --elev-2: 0 2px 6px rgba(16, 24, 40, 0.08), 0 6px 16px rgba(16, 24, 40, 0.08);
+  --press: inset 0 1px 3px rgba(16, 24, 40, 0.12);
+
+  /* Estados en la familia azul (panel, formularios, diagnóstico) */
+  --good-text: #2563eb;
+  --good-soft: rgba(37, 99, 235, 0.08);
+  --warn-text: #1e40af;
+  --warn-soft: rgba(30, 64, 175, 0.08);
+  --crit: #172554;
+  --crit-text: #172554;
+  --crit-soft: rgba(23, 37, 84, 0.08);
+
+  /* Estados del KIOSCO: se leen a distancia, por eso sí usan color semántico.
+     Entrada = verde · Salida = ámbar · Rechazo = rojo · Info = azul. */
+  --k-in: #15803d;
+  --k-in-soft: rgba(21, 128, 61, 0.10);
+  --k-out: #b45309;
+  --k-out-soft: rgba(180, 83, 9, 0.10);
+  --k-no: #b91c1c;
+  --k-no-soft: rgba(185, 28, 28, 0.10);
+  --k-scan: #b45309;
+
+  /* Tipografía: Montserrat en todo; los roles se diferencian por peso. */
+  --f-display: var(--font-montserrat), system-ui, sans-serif;
+  --f-data: var(--font-montserrat), ui-monospace, monospace;
+  --f-body: var(--font-montserrat), system-ui, sans-serif;
+
+  /* Radios */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-weight: 300;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Foco visible y consistente en toda la app */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

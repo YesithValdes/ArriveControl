@@ -54,7 +54,7 @@ export default function JourneysPanel() {
       {journeys.map((j) => {
         const hasMissing = j.events.some((e) => e.missingExit);
         return (
-          <div key={`${j.personId}|${j.day}`} style={{ ...s.journey, borderColor: hasMissing ? 'rgba(245,158,11,0.5)' : '#22304A' }}>
+          <div key={`${j.personId}|${j.day}`} style={{ ...s.journey, borderColor: hasMissing ? 'var(--k-out)' : 'var(--border)' }}>
             <div style={s.jHead}>
               <strong>{j.personName}</strong>
               <span style={s.jDay}>{fmtDay(j.day)}</span>
@@ -62,7 +62,7 @@ export default function JourneysPanel() {
 
             {j.events.map((e) => (
               <div key={e.id} style={s.row}>
-                <span style={{ ...s.type, color: e.type === 'in' ? '#22C55E' : '#F59E0B' }}>
+                <span style={{ ...s.type, color: e.type === 'in' ? 'var(--k-in)' : 'var(--k-out)' }}>
                   {e.type === 'in' ? '🟢 Entrada' : '🟠 Salida'}
                 </span>
                 <input
@@ -75,7 +75,7 @@ export default function JourneysPanel() {
                   {e.flag === 'late-entry' && <em title="Primera entrada después del mediodía">⚠️ tardía</em>}
                   {e.flag === 'manual' && <em title="Agregado por el administrador">✍️ manual</em>}
                   {e.flag === 'corrected' && <em title="Hora corregida por el administrador">✏️ corregido</em>}
-                  {e.missingExit && <em style={{ color: '#FCD34D' }} title="Más de 12 h sin salida">⏳ sin salida</em>}
+                  {e.missingExit && <em style={{ color: 'var(--k-out)' }} title="Más de 12 h sin salida">⏳ sin salida</em>}
                 </span>
                 <button style={s.del} title="Eliminar evento" onClick={() => { deleteEvent(e.id); refresh(); }}>🗑</button>
               </div>
@@ -83,7 +83,7 @@ export default function JourneysPanel() {
 
             {hasMissing && (
               <div style={s.fixRow}>
-                <span style={{ fontSize: 12, color: '#FCD34D' }}>Cerrar jornada:</span>
+                <span style={{ fontSize: 12, color: 'var(--k-out)' }}>Cerrar jornada:</span>
                 <input
                   type="time"
                   defaultValue="18:00"
@@ -101,16 +101,16 @@ export default function JourneysPanel() {
 }
 
 const s = {
-  card: { maxWidth: 460, margin: '16px auto 0', padding: 20, fontFamily: 'system-ui, sans-serif', border: '1px solid #22304A', borderRadius: 16, background: '#0A1120', color: '#E8EEF9' },
-  dim: { fontSize: 12, color: '#8296B3', margin: '4px 0 12px' },
-  journey: { border: '1px solid #22304A', borderRadius: 12, padding: 12, marginBottom: 10, background: '#141E31' },
+  card: { maxWidth: 460, margin: '16px auto 0', padding: 20, fontFamily: 'var(--f-body)', border: '1px solid var(--border)', borderRadius: 16, background: 'var(--surface)', color: 'var(--ink)' },
+  dim: { fontSize: 12, color: 'var(--muted)', margin: '4px 0 12px' },
+  journey: { border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 10, background: 'var(--page)' },
   jHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 },
-  jDay: { fontSize: 12, color: '#8296B3', textTransform: 'capitalize' },
-  row: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderTop: '1px solid #22304A', fontSize: 14 },
+  jDay: { fontSize: 12, color: 'var(--muted)', textTransform: 'capitalize' },
+  row: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderTop: '1px solid var(--border)', fontSize: 14 },
   type: { fontWeight: 700, fontSize: 13, width: 92, flexShrink: 0 },
-  timeInput: { background: '#0A1120', color: '#E8EEF9', border: '1px solid #22304A', borderRadius: 8, padding: '4px 8px', fontFamily: 'ui-monospace, monospace', fontSize: 14, colorScheme: 'dark' },
-  flags: { display: 'flex', gap: 8, fontSize: 11, color: '#8296B3', fontStyle: 'normal', flex: 1, flexWrap: 'wrap' },
-  del: { marginLeft: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 14, color: '#8296B3' },
-  fixRow: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, padding: 10, background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.35)', borderRadius: 10 },
-  addBtn: { border: 'none', background: '#F59E0B', color: '#1C1203', fontWeight: 700, fontSize: 13, padding: '8px 12px', borderRadius: 8, cursor: 'pointer' },
+  timeInput: { background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 8px', fontFamily: 'var(--f-data)', fontSize: 14, colorScheme: 'light' },
+  flags: { display: 'flex', gap: 8, fontSize: 11, color: 'var(--muted)', fontStyle: 'normal', flex: 1, flexWrap: 'wrap' },
+  del: { marginLeft: 'auto', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 14, color: 'var(--muted)' },
+  fixRow: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, padding: 10, background: 'var(--k-out-soft)', border: '1px solid var(--k-out)', borderRadius: 10 },
+  addBtn: { border: 'none', background: 'var(--k-out)', color: '#ffffff', fontWeight: 700, fontSize: 13, padding: '8px 12px', borderRadius: 8, cursor: 'pointer' },
 };

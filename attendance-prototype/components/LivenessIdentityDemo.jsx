@@ -413,7 +413,7 @@ export default function LivenessIdentityDemo() {
         <div style={s.err}>
           <strong>Error al cargar modelos:</strong>
           <div style={{ fontFamily: 'monospace', fontSize: 12, margin: '4px 0 8px', wordBreak: 'break-word' }}>{loadError}</div>
-          <button style={{ ...s.btn, width: '100%', background: '#dc2626' }} onClick={handleClearCacheReload}>
+          <button style={{ ...s.btn, width: '100%', background: 'var(--k-no)' }} onClick={handleClearCacheReload}>
             🧹 Limpiar caché y reintentar
           </button>
         </div>
@@ -501,7 +501,7 @@ export default function LivenessIdentityDemo() {
             <div style={s.sectionTitle}>2 · Elegir a quién validar ({people.length})</div>
             {people.length === 0 && <p style={s.dim}>Aún no hay personas registradas.</p>}
             {people.map((p) => (
-              <label key={p.id} style={{ ...s.personRow, background: selectedId === p.id ? 'rgba(59,130,246,0.18)' : '#0A1120', borderColor: selectedId === p.id ? '#3B82F6' : '#22304A' }}>
+              <label key={p.id} style={{ ...s.personRow, background: selectedId === p.id ? 'rgba(59,130,246,0.18)' : 'var(--surface)', borderColor: selectedId === p.id ? 'var(--accent)' : 'var(--border)' }}>
                 <input type="radio" name="target" checked={selectedId === p.id} onChange={() => setSelectedId(p.id)} />
                 <span style={{ flex: 1 }}>{p.name}</span>
                 {adminOk && <button style={s.del} onClick={(e) => { e.preventDefault(); handleDeletePerson(p.id); }}>🗑️</button>}
@@ -556,7 +556,7 @@ export default function LivenessIdentityDemo() {
           <strong>Últimos intentos</strong>
           {attempts.map((a) => (
             <div key={a.id} style={s.logRow}>
-              <span style={{ color: a.accepted ? '#22C55E' : '#EF4444' }}>{a.accepted ? '✅' : '❌'}</span>
+              <span style={{ color: a.accepted ? 'var(--k-in)' : 'var(--k-no)' }}>{a.accepted ? '✅' : '❌'}</span>
               <span style={{ flex: 1 }}>{a.targetName} · {kindLabel(a.kind)}</span>
               <span style={s.mono}>{a.distance ?? '—'}</span>
             </div>
@@ -589,7 +589,7 @@ function drawOverlay(canvas, video, lm, active) {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!lm) return;
-  ctx.fillStyle = active ? '#f59e0b' : '#22d3ee';
+  ctx.fillStyle = active ? 'var(--k-out)' : 'var(--accent)';
   for (let i = 0; i < lm.length; i += 4) {
     ctx.beginPath();
     ctx.arc(lm[i].x * canvas.width, lm[i].y * canvas.height, 1.4, 0, Math.PI * 2);
@@ -598,7 +598,7 @@ function drawOverlay(canvas, video, lm, active) {
 }
 
 function FaceSpotlight({ state, faceDetected }) {
-  const ring = { idle: '#e5e7eb', active: '#f59e0b', success: '#22c55e', fail: '#ef4444' }[state] || '#e5e7eb';
+  const ring = { idle: 'var(--grid)', active: 'var(--k-out)', success: 'var(--k-in)', fail: 'var(--k-no)' }[state] || 'var(--grid)';
   return (
     <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
       <defs><mask id="hole"><rect x="0" y="0" width="100" height="100" fill="white" /><ellipse cx="50" cy="46" rx="27" ry="36" fill="black" /></mask></defs>
@@ -622,7 +622,7 @@ function DistanceBar({ distance, threshold }) {
   return (
     <div style={s.distWrap}>
       <div style={s.distHead}>
-        <span>Distancia: <strong style={{ color: isMatch ? '#22C55E' : '#EF4444', fontFamily: 'monospace' }}>{distance}</strong></span>
+        <span>Distancia: <strong style={{ color: isMatch ? 'var(--k-in)' : 'var(--k-no)', fontFamily: 'monospace' }}>{distance}</strong></span>
         <span style={s.dim}>umbral {threshold}</span>
       </div>
       <div style={s.distTrack}>
@@ -632,67 +632,67 @@ function DistanceBar({ distance, threshold }) {
         {/* línea de umbral */}
         <div style={{ ...s.distThresh, left: pct(threshold) }} />
         {/* marcador de la distancia actual */}
-        <div style={{ ...s.distMark, left: pct(distance), background: isMatch ? '#22C55E' : '#EF4444' }} />
+        <div style={{ ...s.distMark, left: pct(distance), background: isMatch ? 'var(--k-in)' : 'var(--k-no)' }} />
       </div>
       <div style={s.distScale}><span>0 (idéntico)</span><span>{isMatch ? '✅ misma persona' : '❌ otra persona'}</span><span>1.0</span></div>
     </div>
   );
 }
 function M({ label, v, unit, good, bad, sub }) {
-  return <div style={s.mcell}><div style={s.mlabel}>{label}</div><div style={{ ...s.mval, color: bad ? '#EF4444' : good ? '#22C55E' : '#E8EEF9' }}>{v == null ? '—' : v}{v != null && unit}</div><div style={s.msub}>{sub}</div></div>;
+  return <div style={s.mcell}><div style={s.mlabel}>{label}</div><div style={{ ...s.mval, color: bad ? 'var(--k-no)' : good ? 'var(--k-in)' : 'var(--ink)' }}>{v == null ? '—' : v}{v != null && unit}</div><div style={s.msub}>{sub}</div></div>;
 }
 function T({ label, value }) { return <div style={s.tcell}><span style={s.tlabel}>{label}</span><span style={s.tval}>{value == null ? '—' : value}</span></div>; }
 
 /* Sistema de diseño ArriveControl (tema oscuro):
-   tinta #0A1120 · panel #141E31 · línea #22304A · texto #E8EEF9 · dim #8296B3
-   acento #3B82F6 · éxito #22C55E · rechazo #EF4444 · escaneo #F59E0B */
+   tinta var(--surface) · panel var(--page) · línea var(--border) · texto var(--ink) · dim var(--muted)
+   acento var(--accent) · éxito var(--k-in) · rechazo var(--k-no) · escaneo var(--k-out) */
 const s = {
-  card: { maxWidth: 460, margin: '0 auto', padding: 20, fontFamily: 'system-ui, sans-serif', border: '1px solid #22304A', borderRadius: 16, background: '#0A1120', color: '#E8EEF9' },
-  sub: { fontSize: 14, color: '#8296B3', minHeight: 20 },
-  err: { background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', color: '#FCA5A5', padding: 12, borderRadius: 10, margin: '8px 0', fontSize: 14 },
-  videoWrap: { position: 'relative', lineHeight: 0, borderRadius: 12, overflow: 'hidden', border: '1px solid #22304A' },
+  card: { maxWidth: 460, margin: '0 auto', padding: 20, fontFamily: 'var(--f-body)', border: '1px solid var(--border)', borderRadius: 16, background: 'var(--surface)', color: 'var(--ink)' },
+  sub: { fontSize: 14, color: 'var(--muted)', minHeight: 20 },
+  err: { background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', color: 'var(--k-no)', padding: 12, borderRadius: 10, margin: '8px 0', fontSize: 14 },
+  videoWrap: { position: 'relative', lineHeight: 0, borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)' },
   video: { width: '100%', borderRadius: 12, background: '#000', transform: 'scaleX(-1)', display: 'block' },
   overlay: { position: 'absolute', inset: 0, width: '100%', height: '100%', transform: 'scaleX(-1)', pointerEvents: 'none' },
-  instruction: { margin: '10px 0', padding: '12px 14px', background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.45)', color: '#FCD34D', borderRadius: 10, fontSize: 16, fontWeight: 600, textAlign: 'center' },
+  instruction: { margin: '10px 0', padding: '12px 14px', background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.45)', color: 'var(--k-out)', borderRadius: 10, fontSize: 16, fontWeight: 600, textAlign: 'center' },
   liveGrid: { display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6, margin: '10px 0' },
-  mini: { background: '#141E31', border: '1px solid #22304A', borderRadius: 8, padding: 6, textAlign: 'center' },
-  miniL: { fontSize: 10, color: '#8296B3' },
-  miniV: { fontSize: 15, fontWeight: 700, fontFamily: 'ui-monospace, monospace' },
-  distWrap: { margin: '8px 0', padding: 10, border: '1px solid #22304A', borderRadius: 10, background: '#141E31' },
+  mini: { background: 'var(--page)', border: '1px solid var(--border)', borderRadius: 8, padding: 6, textAlign: 'center' },
+  miniL: { fontSize: 10, color: 'var(--muted)' },
+  miniV: { fontSize: 15, fontWeight: 700, fontFamily: 'var(--f-data)' },
+  distWrap: { margin: '8px 0', padding: 10, border: '1px solid var(--border)', borderRadius: 10, background: 'var(--page)' },
   distHead: { display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 },
-  distTrack: { position: 'relative', height: 22, borderRadius: 6, overflow: 'hidden', background: '#0A1120' },
+  distTrack: { position: 'relative', height: 22, borderRadius: 6, overflow: 'hidden', background: 'var(--surface)' },
   distZone: { position: 'absolute', top: 0, bottom: 0 },
-  distThresh: { position: 'absolute', top: -2, bottom: -2, width: 2, background: '#E8EEF9' },
+  distThresh: { position: 'absolute', top: -2, bottom: -2, width: 2, background: 'var(--ink)' },
   distMark: { position: 'absolute', top: '50%', width: 14, height: 14, borderRadius: '50%', border: '2px solid #fff', transform: 'translate(-50%,-50%)', boxShadow: '0 0 6px rgba(0,0,0,0.6)' },
-  distScale: { display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#8296B3', marginTop: 4 },
-  ok: { background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.4)', color: '#86EFAC', padding: 12, borderRadius: 10, margin: '8px 0' },
-  bad: { background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', color: '#FCA5A5', padding: 12, borderRadius: 10, margin: '8px 0' },
+  distScale: { display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--muted)', marginTop: 4 },
+  ok: { background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.4)', color: 'var(--k-in)', padding: 12, borderRadius: 10, margin: '8px 0' },
+  bad: { background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', color: 'var(--k-no)', padding: 12, borderRadius: 10, margin: '8px 0' },
   small: { fontSize: 13, marginTop: 6 },
-  section: { border: '1px solid #22304A', borderRadius: 12, padding: 12, margin: '10px 0', background: '#141E31' },
-  sectionTitle: { fontSize: 12, fontWeight: 700, color: '#8296B3', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' },
-  input: { flex: 1, padding: '10px 12px', fontSize: 15, borderRadius: 8, border: '1px solid #22304A', background: '#0A1120', color: '#E8EEF9' },
-  personRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1px solid #22304A', borderRadius: 8, marginBottom: 6, cursor: 'pointer' },
+  section: { border: '1px solid var(--border)', borderRadius: 12, padding: 12, margin: '10px 0', background: 'var(--page)' },
+  sectionTitle: { fontSize: 12, fontWeight: 700, color: 'var(--muted)', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' },
+  input: { flex: 1, padding: '10px 12px', fontSize: 15, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--ink)' },
+  personRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 6, cursor: 'pointer' },
   del: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 16 },
   validBtns: { display: 'grid', gridTemplateColumns: '1fr', gap: 6 },
-  dim: { fontSize: 12, color: '#8296B3', margin: '6px 0 0' },
-  btn: { padding: '14px 16px', fontSize: 16, borderRadius: 12, border: 'none', background: '#3B82F6', color: '#fff', cursor: 'pointer', fontWeight: 700 },
-  btnAlt: { padding: '10px 14px', fontSize: 15, borderRadius: 10, border: 'none', background: '#3B82F6', color: '#fff', cursor: 'pointer', fontWeight: 600 },
-  btnGood: { padding: '12px', fontSize: 15, borderRadius: 10, border: 'none', background: '#22C55E', color: '#03140A', cursor: 'pointer', fontWeight: 700 },
-  btnWarn: { padding: '12px', fontSize: 15, borderRadius: 10, border: 'none', background: '#F59E0B', color: '#1C1203', cursor: 'pointer', fontWeight: 700 },
-  btnGhost: { padding: '12px', fontSize: 15, borderRadius: 10, border: '1px solid #22304A', background: 'transparent', color: '#E8EEF9', cursor: 'pointer' },
-  metricsBox: { marginTop: 12, padding: 12, background: '#141E31', border: '1px solid #22304A', borderRadius: 12 },
+  dim: { fontSize: 12, color: 'var(--muted)', margin: '6px 0 0' },
+  btn: { padding: '14px 16px', fontSize: 16, borderRadius: 12, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 700 },
+  btnAlt: { padding: '10px 14px', fontSize: 15, borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 600 },
+  btnGood: { padding: '12px', fontSize: 15, borderRadius: 10, border: 'none', background: 'var(--k-in)', color: '#ffffff', cursor: 'pointer', fontWeight: 700 },
+  btnWarn: { padding: '12px', fontSize: 15, borderRadius: 10, border: 'none', background: 'var(--k-out)', color: '#ffffff', cursor: 'pointer', fontWeight: 700 },
+  btnGhost: { padding: '12px', fontSize: 15, borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--ink)', cursor: 'pointer' },
+  metricsBox: { marginTop: 12, padding: 12, background: 'var(--page)', border: '1px solid var(--border)', borderRadius: 12 },
   mgrid: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, margin: '8px 0' },
-  mcell: { background: '#0A1120', border: '1px solid #22304A', borderRadius: 8, padding: 8, textAlign: 'center' },
-  mlabel: { fontSize: 11, color: '#8296B3' },
+  mcell: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 8, textAlign: 'center' },
+  mlabel: { fontSize: 11, color: 'var(--muted)' },
   mval: { fontSize: 20, fontWeight: 800, fontVariantNumeric: 'tabular-nums' },
-  msub: { fontSize: 10, color: '#8296B3' },
-  clearBtn: { marginTop: 4, padding: '6px 10px', border: '1px solid #22304A', borderRadius: 8, background: 'transparent', color: '#8296B3', cursor: 'pointer', fontSize: 13 },
-  logBox: { marginTop: 12, padding: 12, background: '#141E31', border: '1px solid #22304A', borderRadius: 12, fontSize: 13 },
-  logRow: { display: 'flex', gap: 8, padding: '5px 0', borderTop: '1px solid #22304A' },
-  mono: { fontFamily: 'ui-monospace, monospace' },
-  timings: { marginTop: 12, padding: 12, background: '#141E31', border: '1px solid #22304A', color: '#E8EEF9', borderRadius: 12, fontSize: 13 },
+  msub: { fontSize: 10, color: 'var(--muted)' },
+  clearBtn: { marginTop: 4, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 8, background: 'transparent', color: 'var(--muted)', cursor: 'pointer', fontSize: 13 },
+  logBox: { marginTop: 12, padding: 12, background: 'var(--page)', border: '1px solid var(--border)', borderRadius: 12, fontSize: 13 },
+  logRow: { display: 'flex', gap: 8, padding: '5px 0', borderTop: '1px solid var(--border)' },
+  mono: { fontFamily: 'var(--f-data)' },
+  timings: { marginTop: 12, padding: 12, background: 'var(--page)', border: '1px solid var(--border)', color: 'var(--ink)', borderRadius: 12, fontSize: 13 },
   tgrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 },
-  tcell: { display: 'flex', justifyContent: 'space-between', gap: 8, background: '#0A1120', padding: '6px 8px', borderRadius: 6 },
-  tlabel: { color: '#8296B3', fontSize: 12 },
-  tval: { fontFamily: 'ui-monospace, monospace', fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
+  tcell: { display: 'flex', justifyContent: 'space-between', gap: 8, background: 'var(--surface)', padding: '6px 8px', borderRadius: 6 },
+  tlabel: { color: 'var(--muted)', fontSize: 12 },
+  tval: { fontFamily: 'var(--f-data)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
 };

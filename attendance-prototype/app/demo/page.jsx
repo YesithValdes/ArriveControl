@@ -11,7 +11,7 @@ export const metadata = { title: 'Demo Vida 3D + Identidad' };
 
 export default function DemoPage() {
   return (
-    <main style={{ padding: '24px 12px', minHeight: '100vh', background: '#050A14' }}>
+    <main style={{ padding: '24px 12px', minHeight: '100vh' }}>
       <NavBar current="/demo" />
       <LivenessIdentityDemo />
       <JourneysPanel />

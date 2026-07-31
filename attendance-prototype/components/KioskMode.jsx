@@ -337,7 +337,7 @@ export default function KioskMode() {
       {/* Estado 1 · Reposo */}
       {(ui === 'idle') && (
         <div style={s.idle}>
-          <div style={s.brand}>ARRIVE<span style={{ color: '#3B82F6' }}>CONTROL</span></div>
+          <div style={s.brand}>ARRIVE<span style={{ color: 'var(--accent)' }}>CONTROL</span></div>
           <div style={s.clock}>{clock.time}</div>
           <div style={s.date}>{clock.date}</div>
           <div style={s.idleOval}>
@@ -364,7 +364,7 @@ export default function KioskMode() {
           </div>
           <div style={s.typeTag}>🟢 ENTRADA</div>
           <div style={s.rName}>¡Bienvenido/a,<br />{result.name}!</div>
-          <div style={{ ...s.rTime, color: '#22C55E' }}>{result.time}</div>
+          <div style={{ ...s.rTime, color: 'var(--k-in)' }}>{result.time}</div>
           {result.flag === 'late-entry' && (
             <div style={s.warnNote}>⚠️ Entrada registrada en la tarde. Si olvidaste marcar en la mañana, avisa a RRHH.</div>
           )}
@@ -376,9 +376,9 @@ export default function KioskMode() {
           <div style={{ ...s.badge, ...s.badgeOut }}>
             <span className="ac-emoji ac-wave" role="img" aria-label="hasta pronto">👋</span>
           </div>
-          <div style={{ ...s.typeTag, color: '#F59E0B' }}>🟠 SALIDA</div>
+          <div style={{ ...s.typeTag, color: 'var(--k-out)' }}>🟠 SALIDA</div>
           <div style={s.rName}>¡Hasta pronto,<br />{result.name}!</div>
-          <div style={{ ...s.rTime, color: '#F59E0B' }}>{result.time}</div>
+          <div style={{ ...s.rTime, color: 'var(--k-out)' }}>{result.time}</div>
           <div style={s.countdown}>dist {result.distance} · cerrando…</div>
         </div>
       )}
@@ -470,62 +470,71 @@ function ScanOval() {
   );
 }
 
+/**
+ * Kiosco en tema CLARO, con la tipografía y los tokens del sistema
+ * (app/globals.css). Conserva emojis como iconografía: a un metro de
+ * distancia se reconocen más rápido que un trazo fino.
+ * Los estados de marcación sí usan color semántico (--k-in/out/no) porque
+ * deben leerse de reojo; el resto de la UI vive en la familia azul.
+ */
 const s = {
   kiosk: {
     position: 'relative', maxWidth: 430, margin: '0 auto', minHeight: 640,
-    background: '#0A1120', borderRadius: 24, overflow: 'hidden',
-    color: '#E8EEF9', fontFamily: 'system-ui, -apple-system, sans-serif',
-    border: '1px solid #22304A',
+    background: 'var(--surface)', borderRadius: 24, overflow: 'hidden',
+    color: 'var(--ink)', fontFamily: 'var(--f-body)',
+    border: '1px solid var(--border)', boxShadow: 'var(--elev-2)',
   },
   camWrap: { position: 'absolute', inset: 0, transition: 'opacity .3s' },
   video: { width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' },
   scanOval: {
     position: 'absolute', left: '50%', top: '42%', transform: 'translate(-50%,-50%)',
     width: 190, height: 250, borderRadius: '50%',
-    border: '3px dashed #F59E0B', boxShadow: '0 0 0 2000px rgba(5,10,20,0.62)',
+    // El velo sigue siendo oscuro: es sobre el VIDEO, no sobre la interfaz.
+    border: '3px dashed var(--k-scan)', boxShadow: '0 0 0 2000px rgba(16,24,40,0.55)',
   },
   instruction: {
     position: 'absolute', left: 16, right: 16, top: 40, textAlign: 'center',
-    fontSize: 30, fontWeight: 800, letterSpacing: '-0.01em',
-    textShadow: '0 2px 12px rgba(0,0,0,0.7)',
+    fontSize: 30, fontWeight: 800, letterSpacing: '-0.01em', color: '#ffffff',
+    textShadow: '0 2px 12px rgba(0,0,0,0.8)',
   },
   scanStatus: {
     position: 'absolute', left: 0, right: 0, bottom: 40, textAlign: 'center',
-    color: '#F59E0B', fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
+    color: '#ffffff', fontSize: 13, fontWeight: 700, letterSpacing: '0.08em',
+    textTransform: 'uppercase', textShadow: '0 1px 8px rgba(0,0,0,0.8)',
   },
   idle: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '56px 24px 24px', minHeight: 640 },
-  brand: { position: 'absolute', top: 18, left: 20, fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: '#8296B3' },
-  clock: { fontSize: 64, fontWeight: 800, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', marginTop: 24 },
-  date: { color: '#8296B3', fontSize: 15, textTransform: 'capitalize' },
+  brand: { position: 'absolute', top: 18, left: 20, fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--muted)' },
+  clock: { fontSize: 64, fontWeight: 800, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', marginTop: 24, fontFamily: 'var(--f-data)' },
+  date: { color: 'var(--muted)', fontSize: 15, textTransform: 'capitalize' },
   idleOval: {
-    width: 120, height: 156, border: '2px dashed #22304A', borderRadius: '50%',
+    width: 120, height: 156, border: '2px dashed var(--grid)', borderRadius: '50%',
     margin: '36px auto 0', display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 40, color: '#22304A',
+    fontSize: 40,
   },
   idleCta: { textAlign: 'center', fontSize: 19, fontWeight: 600, marginTop: 26, textWrap: 'balance', maxWidth: 300 },
-  startBtn: { marginTop: 24, background: '#3B82F6', color: '#fff', border: 'none', fontSize: 16, fontWeight: 700, padding: '14px 44px', borderRadius: 14, cursor: 'pointer' },
-  stopBtn: { marginTop: 24, background: 'transparent', color: '#8296B3', border: '1px solid #22304A', fontSize: 14, padding: '10px 28px', borderRadius: 12, cursor: 'pointer' },
-  privacy: { marginTop: 'auto', paddingTop: 24, textAlign: 'center', fontSize: 11, color: '#8296B3' },
-  errNote: { marginTop: 10, fontSize: 12, color: '#EF4444', textAlign: 'center', fontFamily: 'ui-monospace, monospace' },
-  count: { marginTop: 6, fontSize: 11, color: '#8296B3' },
+  startBtn: { marginTop: 24, background: 'var(--accent)', color: 'var(--accent-ink)', border: 'none', fontSize: 16, fontFamily: 'inherit', fontWeight: 700, padding: '14px 44px', borderRadius: 'var(--r-md)', cursor: 'pointer', boxShadow: 'var(--elev-1)' },
+  stopBtn: { marginTop: 24, background: 'transparent', color: 'var(--muted)', border: '1px solid var(--border)', fontSize: 14, fontFamily: 'inherit', padding: '10px 28px', borderRadius: 'var(--r-md)', cursor: 'pointer' },
+  privacy: { marginTop: 'auto', paddingTop: 24, textAlign: 'center', fontSize: 11, color: 'var(--muted)' },
+  errNote: { marginTop: 10, fontSize: 12, color: 'var(--k-no)', textAlign: 'center', fontFamily: 'var(--f-data)' },
+  count: { marginTop: 6, fontSize: 11, color: 'var(--muted)' },
   resultScreen: {
     position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
     alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 8, padding: 24,
   },
-  okBg: { background: 'linear-gradient(180deg, rgba(34,197,94,0.16), rgba(34,197,94,0.05)), #0A1120' },
-  outBg: { background: 'linear-gradient(180deg, rgba(245,158,11,0.16), rgba(245,158,11,0.05)), #0A1120' },
-  dupBg: { background: 'linear-gradient(180deg, rgba(59,130,246,0.16), rgba(59,130,246,0.05)), #0A1120' },
-  noBg: { background: 'linear-gradient(180deg, rgba(239,68,68,0.16), rgba(239,68,68,0.05)), #0A1120' },
-  badge: { width: 92, height: 92, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 46, fontWeight: 800, marginBottom: 10 },
-  badgeOk: { background: '#22C55E', color: '#03140A', boxShadow: '0 0 60px rgba(34,197,94,0.45)' },
-  badgeOut: { background: '#F59E0B', color: '#1C1203', boxShadow: '0 0 60px rgba(245,158,11,0.45)' },
-  badgeDup: { background: '#3B82F6', color: '#0A1120', boxShadow: '0 0 60px rgba(59,130,246,0.45)' },
-  badgeNo: { background: '#EF4444', color: '#1C0505', boxShadow: '0 0 60px rgba(239,68,68,0.4)' },
-  typeTag: { fontSize: 15, fontWeight: 800, letterSpacing: '0.14em', color: '#22C55E' },
-  warnNote: { marginTop: 10, fontSize: 13, color: '#FCD34D', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 10, padding: '8px 12px', maxWidth: 300, lineHeight: 1.4 },
+  okBg: { background: 'var(--k-in-soft)' },
+  outBg: { background: 'var(--k-out-soft)' },
+  dupBg: { background: 'var(--accent-soft)' },
+  noBg: { background: 'var(--k-no-soft)' },
+  badge: { width: 92, height: 92, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 46, fontWeight: 800, marginBottom: 10, color: '#ffffff' },
+  badgeOk: { background: 'var(--k-in)' },
+  badgeOut: { background: 'var(--k-out)' },
+  badgeDup: { background: 'var(--accent)' },
+  badgeNo: { background: 'var(--k-no)' },
+  typeTag: { fontSize: 15, fontWeight: 800, letterSpacing: '0.14em', color: 'var(--k-in)' },
+  warnNote: { marginTop: 10, fontSize: 13, color: 'var(--k-out)', background: 'var(--k-out-soft)', border: '1px solid var(--k-out)', borderRadius: 'var(--r-md)', padding: '8px 12px', maxWidth: 300, lineHeight: 1.4 },
   rName: { fontSize: 30, fontWeight: 800, letterSpacing: '-0.02em', textWrap: 'balance', lineHeight: 1.2 },
-  rSub: { color: '#8296B3', fontSize: 15, maxWidth: 300, lineHeight: 1.5 },
-  rTime: { fontSize: 22, fontWeight: 700, fontVariantNumeric: 'tabular-nums', marginTop: 2 },
-  countdown: { marginTop: 22, fontSize: 11, color: '#8296B3', letterSpacing: '0.1em', textTransform: 'uppercase', fontFamily: 'ui-monospace, monospace' },
-  retryBtn: { marginTop: 22, background: '#EF4444', color: '#fff', border: 'none', fontSize: 16, fontWeight: 700, padding: '14px 44px', borderRadius: 14, cursor: 'pointer' },
+  rSub: { color: 'var(--ink-2)', fontSize: 15, maxWidth: 300, lineHeight: 1.5 },
+  rTime: { fontSize: 22, fontWeight: 700, fontVariantNumeric: 'tabular-nums', marginTop: 2, fontFamily: 'var(--f-data)' },
+  countdown: { marginTop: 22, fontSize: 11, color: 'var(--muted)', letterSpacing: '0.1em', textTransform: 'uppercase', fontFamily: 'var(--f-data)' },
+  retryBtn: { marginTop: 22, background: 'var(--k-no)', color: '#ffffff', border: 'none', fontSize: 16, fontFamily: 'inherit', fontWeight: 700, padding: '14px 44px', borderRadius: 'var(--r-md)', cursor: 'pointer' },
 };

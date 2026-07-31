@@ -214,29 +214,15 @@ export default function EmployeeRegister() {
 }
 
 const CSS = `
+/* Tokens (color, tipografía, elevación) viven en app/globals.css — el sistema
+   de diseño es único para toda la app. Aquí solo el layout de la pantalla. */
 .reg-root {
-  --surface: #ffffff; --page: #f4f4fa;
-  --ink: #171630; --ink-2: #504f6b; --muted: #8b8aa3;
-  --grid: #e3e2ec; --border: rgba(24,22,60,0.12);
-  --accent: #5558d9; --accent-2: #7b3fe4; --accent-ink: #fff;
-  --accent-soft: rgba(85,88,217,0.10);
-  --good-text: #006300; --crit-soft: rgba(208,59,59,0.10);
-
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--f-body);
+  font-weight: 300;
   color: var(--ink); background: var(--page);
   min-height: 100dvh; max-width: 560px; margin: 0 auto;
   display: flex; flex-direction: column; gap: 10px;
   padding: 14px 12px 16px; box-sizing: border-box;
-}
-@media (prefers-color-scheme: dark) {
-  .reg-root {
-    --surface: #1d1c2e; --page: #121120;
-    --ink: #f4f4ff; --ink-2: #c1c0d6; --muted: #8b8aa3;
-    --grid: #2e2d44; --border: rgba(255,255,255,0.10);
-    --accent: #8285f0; --accent-2: #a475f5;
-    --accent-soft: rgba(130,133,240,0.16);
-    --good-text: #4cc94c;
-  }
 }
 .reg-root * { box-sizing: border-box; margin: 0; }
 

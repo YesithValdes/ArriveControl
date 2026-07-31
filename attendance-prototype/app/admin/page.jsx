@@ -1,16 +1,9 @@
 /**
  * app/admin/page.jsx — Ruta escondida /admin
- * Panel del administrador. Tipografía: Montserrat (cargada con next/font),
- * diferenciando roles por peso y espaciado.
+ * Panel del administrador. La tipografía (Montserrat) y los tokens de diseño
+ * ya vienen del layout raíz — aquí solo se monta el panel.
  */
-import { Montserrat } from 'next/font/google';
 import AdminPanel from '../../components/AdminPanel.jsx';
-
-const montserrat = Montserrat({
-  subsets: ['latin'],
-  weight: ['300', '400', '600', '700', '800'],
-  variable: '--font-montserrat',
-});
 
 export const metadata = {
   title: 'Panel del administrador',
@@ -18,9 +11,5 @@ export const metadata = {
 };
 
 export default function AdminPage() {
-  return (
-    <div className={montserrat.variable}>
-      <AdminPanel />
-    </div>
-  );
+  return <AdminPanel />;
 }

@@ -8,14 +8,16 @@ import Link from 'next/link';
 const link = {
   padding: '8px 14px',
   borderRadius: 999,
-  border: '1px solid #22304A',
-  background: '#141E31',
-  color: '#E8EEF9',
+  border: '1px solid var(--border)',
+  background: 'var(--surface)',
+  color: 'var(--ink-2)',
   textDecoration: 'none',
   fontSize: 14,
-  fontFamily: 'system-ui, sans-serif',
+  fontWeight: 600,
+  fontFamily: 'var(--f-body)',
+  boxShadow: 'var(--elev-1)',
 };
-const active = { ...link, background: '#3B82F6', color: '#fff', border: '1px solid #3B82F6' };
+const active = { ...link, background: 'var(--accent)', color: 'var(--accent-ink)', border: '1px solid var(--accent)' };
 
 export default function NavBar({ current }) {
   // Solo el fichaje es público. El panel del administrador vive en /admin

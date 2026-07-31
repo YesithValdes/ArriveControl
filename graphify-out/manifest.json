@@ -1,0 +1,212 @@
+{
+  "attendance-prototype/.vercel/project.json": {
+    "mtime": 1785450100.5564098,
+    "ast_hash": "a6d4b7d53c2a73e5ef2b847c76b36a46",
+    "semantic_hash": "a6d4b7d53c2a73e5ef2b847c76b36a46"
+  },
+  "attendance-prototype/app/admin/page.jsx": {
+    "mtime": 1785430209.29059,
+    "ast_hash": "1f4504032687b0d0b463c8508c1b6aaf",
+    "semantic_hash": "1f4504032687b0d0b463c8508c1b6aaf"
+  },
+  "attendance-prototype/app/admin/registro/page.jsx": {
+    "mtime": 1785428331.0355608,
+    "ast_hash": "791701706b4183828862c14b25cc5358",
+    "semantic_hash": "791701706b4183828862c14b25cc5358"
+  },
+  "attendance-prototype/app/demo/page.jsx": {
+    "mtime": 1785423860.598024,
+    "ast_hash": "ad6252a41de4a8f48855898a99ff51d1",
+    "semantic_hash": "ad6252a41de4a8f48855898a99ff51d1"
+  },
+  "attendance-prototype/app/fichaje/page.jsx": {
+    "mtime": 1785427912.333219,
+    "ast_hash": "54d77a68e556b9461cfc30be93fc1e4c",
+    "semantic_hash": "54d77a68e556b9461cfc30be93fc1e4c"
+  },
+  "attendance-prototype/app/gps/page.jsx": {
+    "mtime": 1785343508.8187344,
+    "ast_hash": "7f4f0be18263782f1c09b2b92b0bb8be",
+    "semantic_hash": "7f4f0be18263782f1c09b2b92b0bb8be"
+  },
+  "attendance-prototype/app/layout.jsx": {
+    "mtime": 1785340580.0993724,
+    "ast_hash": "51502ff8eb3b4b1290c6001fbebe4862",
+    "semantic_hash": "51502ff8eb3b4b1290c6001fbebe4862"
+  },
+  "attendance-prototype/app/page.jsx": {
+    "mtime": 1785427909.4223342,
+    "ast_hash": "85a06c210537451ef27718a48a55e159",
+    "semantic_hash": "85a06c210537451ef27718a48a55e159"
+  },
+  "attendance-prototype/components/AdminPanel.jsx": {
+    "mtime": 1785512156.8038692,
+    "ast_hash": "c88f26f81b6334e5b9962102272f37d4",
+    "semantic_hash": "c88f26f81b6334e5b9962102272f37d4"
+  },
+  "attendance-prototype/components/AttendanceModule.jsx": {
+    "mtime": 1785510477.867603,
+    "ast_hash": "d0e19015dfef691f50e82bea28760b11",
+    "semantic_hash": "d0e19015dfef691f50e82bea28760b11"
+  },
+  "attendance-prototype/components/AttendanceModuleFaceApi.jsx": {
+    "mtime": 1784914134.6487277,
+    "ast_hash": "b699d4c86c194d0cd9fa48fa525995ed",
+    "semantic_hash": "b699d4c86c194d0cd9fa48fa525995ed"
+  },
+  "attendance-prototype/components/EmployeeRegister.jsx": {
+    "mtime": 1785510425.6868637,
+    "ast_hash": "e789f113ad809500ae08b3c78b74f61b",
+    "semantic_hash": "e789f113ad809500ae08b3c78b74f61b"
+  },
+  "attendance-prototype/components/GpsDebug.jsx": {
+    "mtime": 1785510466.035863,
+    "ast_hash": "f4eb238357a03491f6ab3cd5261441ee",
+    "semantic_hash": "f4eb238357a03491f6ab3cd5261441ee"
+  },
+  "attendance-prototype/components/HRPanel.jsx": {
+    "mtime": 1784921497.5941086,
+    "ast_hash": "83b278b58da6ffb4e27b02d713cf9b53",
+    "semantic_hash": "83b278b58da6ffb4e27b02d713cf9b53"
+  },
+  "attendance-prototype/components/JourneysPanel.jsx": {
+    "mtime": 1785423851.7303362,
+    "ast_hash": "20bda6d3f165c0acc824faa6a990f8e4",
+    "semantic_hash": "20bda6d3f165c0acc824faa6a990f8e4"
+  },
+  "attendance-prototype/components/KioskMode.jsx": {
+    "mtime": 1785429441.0152266,
+    "ast_hash": "e9d88c191807e536216af41b001737a9",
+    "semantic_hash": "e9d88c191807e536216af41b001737a9"
+  },
+  "attendance-prototype/components/LivenessIdentityDemo.jsx": {
+    "mtime": 1785363987.3097675,
+    "ast_hash": "c5b137e1a8dcd091e26a66a4ee4c7a23",
+    "semantic_hash": "c5b137e1a8dcd091e26a66a4ee4c7a23"
+  },
+  "attendance-prototype/components/NavBar.jsx": {
+    "mtime": 1785427956.9048195,
+    "ast_hash": "979395d1d3284a31a1d79cfedac66a33",
+    "semantic_hash": "979395d1d3284a31a1d79cfedac66a33"
+  },
+  "attendance-prototype/components/ServiceWorkerRegister.jsx": {
+    "mtime": 1785343183.3325744,
+    "ast_hash": "226ca99d69f16b03629fa44ab5212f27",
+    "semantic_hash": "226ca99d69f16b03629fa44ab5212f27"
+  },
+  "attendance-prototype/next.config.mjs": {
+    "mtime": 1784907800.2614639,
+    "ast_hash": "9430769833db8646880c5198dc80c450",
+    "semantic_hash": "9430769833db8646880c5198dc80c450"
+  },
+  "attendance-prototype/package.json": {
+    "mtime": 1784926839.3840353,
+    "ast_hash": "e095123537d353df709b004c28e43ae7",
+    "semantic_hash": "e095123537d353df709b004c28e43ae7"
+  },
+  "attendance-prototype/public/models/face_landmark_68_model-weights_manifest.json": {
+    "mtime": 1784907907.0767553,
+    "ast_hash": "5d083f3f330b61925025ec8d81361db7",
+    "semantic_hash": "5d083f3f330b61925025ec8d81361db7"
+  },
+  "attendance-prototype/public/models/face_recognition_model-weights_manifest.json": {
+    "mtime": 1784907908.17357,
+    "ast_hash": "1b056fd5dd4ddc1b83edc726a32c973e",
+    "semantic_hash": "1b056fd5dd4ddc1b83edc726a32c973e"
+  },
+  "attendance-prototype/public/models/tiny_face_detector_model-weights_manifest.json": {
+    "mtime": 1784907905.6672773,
+    "ast_hash": "862f9faaeb421d87a569666df52b84d2",
+    "semantic_hash": "862f9faaeb421d87a569666df52b84d2"
+  },
+  "attendance-prototype/public/sw.js": {
+    "mtime": 1785342992.683507,
+    "ast_hash": "cc224d47f56cb06f6a975744a94a94b9",
+    "semantic_hash": "cc224d47f56cb06f6a975744a94a94b9"
+  },
+  "attendance-prototype/public/wasm/vision_wasm_internal.js": {
+    "mtime": 1784926857.7659326,
+    "ast_hash": "5c7e418a5d131d06dda604c131b92206",
+    "semantic_hash": "5c7e418a5d131d06dda604c131b92206"
+  },
+  "attendance-prototype/public/wasm/vision_wasm_nosimd_internal.js": {
+    "mtime": 1784926858.1819675,
+    "ast_hash": "14828039d561c535dc0410a1f34f6620",
+    "semantic_hash": "14828039d561c535dc0410a1f34f6620"
+  },
+  "attendance-prototype/services/attendanceService.js": {
+    "mtime": 1784909094.6658309,
+    "ast_hash": "df95124735f00d8cf7eda406fdad47ec",
+    "semantic_hash": "df95124735f00d8cf7eda406fdad47ec"
+  },
+  "attendance-prototype/services/configService.js": {
+    "mtime": 1785510407.5316548,
+    "ast_hash": "249e15fb443d854d4fd9fb5bdf655e06",
+    "semantic_hash": "249e15fb443d854d4fd9fb5bdf655e06"
+  },
+  "attendance-prototype/services/demoDataService.js": {
+    "mtime": 1785512521.2744246,
+    "ast_hash": "222016c2a85425464f7d79c8f01411a6",
+    "semantic_hash": "222016c2a85425464f7d79c8f01411a6"
+  },
+  "attendance-prototype/services/journeyService.js": {
+    "mtime": 1785511488.9574363,
+    "ast_hash": "29a9c1ce136da133cac8b2d0c03b3b00",
+    "semantic_hash": "29a9c1ce136da133cac8b2d0c03b3b00"
+  },
+  "attendance-prototype/services/rosterService.js": {
+    "mtime": 1785510412.1870573,
+    "ast_hash": "9cbe1d89c9f10134ead3b7bd217ccf2a",
+    "semantic_hash": "9cbe1d89c9f10134ead3b7bd217ccf2a"
+  },
+  "attendance-prototype/services/sedesService.js": {
+    "mtime": 1785510379.1510904,
+    "ast_hash": "d8a1d3941e48a98f9605319d29039ad9",
+    "semantic_hash": "d8a1d3941e48a98f9605319d29039ad9"
+  },
+  "attendance-prototype/services/webauthnService.js": {
+    "mtime": 1784923263.9669764,
+    "ast_hash": "4522ac37b81520d561fdca04045e4d95",
+    "semantic_hash": "4522ac37b81520d561fdca04045e4d95"
+  },
+  "attendance-prototype/tests/edge-cases.mjs": {
+    "mtime": 1785430174.9051435,
+    "ast_hash": "59299e1e6899ec5b85131ef5c12c3451",
+    "semantic_hash": "59299e1e6899ec5b85131ef5c12c3451"
+  },
+  "attendance-prototype/tests/run-tests.mjs": {
+    "mtime": 1785423933.9337456,
+    "ast_hash": "c3d089ffa95fc40995b2665293550244",
+    "semantic_hash": "c3d089ffa95fc40995b2665293550244"
+  },
+  "attendance-prototype/utils/base64url.js": {
+    "mtime": 1784914146.4960406,
+    "ast_hash": "205f318e28ae390a61ef85da52616f93",
+    "semantic_hash": "205f318e28ae390a61ef85da52616f93"
+  },
+  "attendance-prototype/utils/faceMath.js": {
+    "mtime": 1785359307.1349711,
+    "ast_hash": "62ff00dee81f221c6f0fa83fa769e2b5",
+    "semantic_hash": "62ff00dee81f221c6f0fa83fa769e2b5"
+  },
+  "attendance-prototype/utils/haversine.js": {
+    "mtime": 1785510391.8304336,
+    "ast_hash": "42a4f6b1f30e794dcf29600196cd85de",
+    "semantic_hash": "42a4f6b1f30e794dcf29600196cd85de"
+  },
+  "README.md": {
+    "mtime": 1785448479.8053143,
+    "ast_hash": "11fba60ccfc742d5c24b408ecf443629",
+    "semantic_hash": "11fba60ccfc742d5c24b408ecf443629"
+  },
+  "attendance-prototype/.vercel/README.txt": {
+    "mtime": 1785450100.560002,
+    "ast_hash": "2b13c79d37d6ed82a3255b83b6815034",
+    "semantic_hash": "2b13c79d37d6ed82a3255b83b6815034"
+  },
+  "attendance-prototype/public/models/README.md": {
+    "mtime": 1784907682.4283702,
+    "ast_hash": "8d5bd999991418ec70808e3151f2f3f1",
+    "semantic_hash": "8d5bd999991418ec70808e3151f2f3f1"
+  }
+}

@@ -13,7 +13,6 @@
  *
  * La biometría la ejecuta y custodia el sistema operativo: nunca recibimos
  * foto, vector ni el método usado — solo la confirmación criptográfica.
- * Versión anterior con face-api.js conservada en AttendanceModuleFaceApi.jsx.
  */
 
 import { useEffect, useState } from 'react';
@@ -319,7 +318,7 @@ export default function AttendanceModule({
               <p style={styles.meta}>Aún no tienes este dispositivo registrado. Primero completa el registro.</p>
             )}
             {regStatus === 'approved' && (
-              <p style={{ ...styles.meta, color: '#15803d' }}>✅ Dispositivo registrado. Ya puedes fichar.</p>
+              <p style={{ ...styles.meta, color: 'var(--good-text)' }}>✅ Dispositivo registrado. Ya puedes fichar.</p>
             )}
           </>
         )}
@@ -382,8 +381,8 @@ function StepBadge({ label, active, done }) {
     <span
       style={{
         ...styles.badge,
-        background: done ? '#16a34a' : active ? '#2563eb' : '#e5e7eb',
-        color: done || active ? '#fff' : '#6b7280',
+        background: done ? 'var(--good-text)' : active ? 'var(--accent)' : 'var(--grid)',
+        color: done || active ? '#fff' : 'var(--muted)',
       }}
     >
       {label}
@@ -391,22 +390,23 @@ function StepBadge({ label, active, done }) {
   );
 }
 
+// Estilos derivados del sistema de diseño (app/globals.css): sin hex literales.
 const styles = {
   // maxHeight + overflowY: la tarjeta cabe en la pantalla del móvil sin
   // desplazar la página; solo su interior se desplaza si un error la desborda.
-  card: { maxWidth: 420, width: '100%', maxHeight: '100%', overflowY: 'auto', margin: '0 auto', padding: 20, boxSizing: 'border-box', fontFamily: 'system-ui, sans-serif', border: '1px solid #e5e7eb', borderRadius: 16, background: '#fff' },
+  card: { maxWidth: 420, width: '100%', maxHeight: '100%', overflowY: 'auto', margin: '0 auto', padding: 20, boxSizing: 'border-box', fontFamily: 'var(--f-body)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', background: 'var(--surface)', boxShadow: 'var(--elev-1)' },
   steps: { display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
-  badge: { padding: '4px 10px', borderRadius: 999, fontSize: 13 },
+  badge: { padding: '4px 10px', borderRadius: 999, fontSize: 13, fontWeight: 600 },
   status: { fontSize: 15, minHeight: 22 },
-  meta: { fontSize: 13, color: '#6b7280' },
-  errorBox: { background: '#fef2f2', border: '1px solid #fca5a5', color: '#991b1b', padding: 12, borderRadius: 10, margin: '12px 0', fontSize: 14 },
-  successBox: { background: '#f0fdf4', border: '1px solid #86efac', color: '#166534', padding: 12, borderRadius: 10, margin: '12px 0', fontSize: 14 },
+  meta: { fontSize: 13, color: 'var(--muted)' },
+  errorBox: { background: 'var(--crit-soft)', border: '1px solid var(--crit)', color: 'var(--crit-text)', padding: 12, borderRadius: 'var(--r-md)', margin: '12px 0', fontSize: 14 },
+  successBox: { background: 'var(--good-soft)', border: '1px solid var(--good-text)', color: 'var(--good-text)', padding: 12, borderRadius: 'var(--r-md)', margin: '12px 0', fontSize: 14 },
   helpText: { margin: '8px 0 0', fontSize: 13 },
   actions: { display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 },
-  button: { padding: '14px 16px', fontSize: 16, borderRadius: 12, border: 'none', background: '#2563eb', color: '#fff', cursor: 'pointer' },
-  buttonRegister: { padding: '14px 16px', fontSize: 16, borderRadius: 12, border: 'none', background: '#7c3aed', color: '#fff', cursor: 'pointer' },
-  codeBox: { background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af', padding: 12, borderRadius: 10, fontSize: 14 },
-  codeValue: { fontSize: 22, letterSpacing: 3, fontFamily: 'monospace' },
-  codeInput: { padding: '14px 16px', fontSize: 20, letterSpacing: 4, textAlign: 'center', borderRadius: 12, border: '1px solid #d1d5db', fontFamily: 'monospace' },
-  buttonSecondary: { padding: '12px 16px', fontSize: 15, borderRadius: 12, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' },
+  button: { padding: '14px 16px', fontSize: 16, fontFamily: 'inherit', fontWeight: 600, borderRadius: 'var(--r-md)', border: 'none', background: 'var(--accent)', color: 'var(--accent-ink)', cursor: 'pointer' },
+  buttonRegister: { padding: '14px 16px', fontSize: 16, fontFamily: 'inherit', fontWeight: 600, borderRadius: 'var(--r-md)', border: 'none', background: 'var(--accent-2)', color: 'var(--accent-ink)', cursor: 'pointer' },
+  codeBox: { background: 'var(--accent-soft)', border: '1px solid var(--accent)', color: 'var(--accent-2)', padding: 12, borderRadius: 'var(--r-md)', fontSize: 14 },
+  codeValue: { fontSize: 22, letterSpacing: 3, fontFamily: 'var(--f-data)', fontWeight: 700 },
+  codeInput: { padding: '14px 16px', fontSize: 20, letterSpacing: 4, textAlign: 'center', borderRadius: 'var(--r-md)', border: '1px solid var(--border)', fontFamily: 'var(--f-data)', background: 'var(--surface)', color: 'var(--ink)' },
+  buttonSecondary: { padding: '12px 16px', fontSize: 15, fontFamily: 'inherit', borderRadius: 'var(--r-md)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--ink)', cursor: 'pointer' },
 };

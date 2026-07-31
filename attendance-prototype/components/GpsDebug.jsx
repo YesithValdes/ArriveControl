@@ -108,24 +108,25 @@ function Row({ k, v, warn, good }) {
   return (
     <div style={s.row}>
       <span style={s.k}>{k}</span>
-      <span style={{ ...s.v, color: warn ? '#dc2626' : good ? '#16a34a' : '#111827' }}>{v}</span>
+      <span style={{ ...s.v, color: warn ? 'var(--crit-text)' : good ? 'var(--good-text)' : 'var(--ink)' }}>{v}</span>
     </div>
   );
 }
 
+// Estilos derivados del sistema de diseño (app/globals.css): sin hex literales.
 const s = {
-  card: { maxWidth: 460, margin: '0 auto', padding: 20, fontFamily: 'system-ui, sans-serif', border: '1px solid #e5e7eb', borderRadius: 16 },
-  sub: { fontSize: 13, color: '#6b7280' },
+  card: { maxWidth: 460, margin: '0 auto', padding: 20, fontFamily: 'var(--f-body)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', boxShadow: 'var(--elev-1)' },
+  sub: { fontSize: 13, color: 'var(--muted)' },
   actions: { display: 'flex', gap: 8, margin: '10px 0' },
-  btn: { padding: '12px 14px', fontSize: 15, borderRadius: 10, border: 'none', background: '#2563eb', color: '#fff', cursor: 'pointer' },
-  btnGhost: { padding: '12px 14px', fontSize: 15, borderRadius: 10, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' },
-  err: { background: '#fef2f2', border: '1px solid #fca5a5', color: '#991b1b', padding: 10, borderRadius: 8, fontSize: 14 },
-  box: { border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, margin: '10px 0' },
-  boxTitle: { fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 6 },
+  btn: { padding: '12px 14px', fontSize: 15, fontFamily: 'inherit', fontWeight: 600, borderRadius: 'var(--r-md)', border: 'none', background: 'var(--accent)', color: 'var(--accent-ink)', cursor: 'pointer' },
+  btnGhost: { padding: '12px 14px', fontSize: 15, fontFamily: 'inherit', borderRadius: 'var(--r-md)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--ink)', cursor: 'pointer' },
+  err: { background: 'var(--crit-soft)', border: '1px solid var(--crit)', color: 'var(--crit-text)', padding: 10, borderRadius: 'var(--r-sm)', fontSize: 14 },
+  box: { border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 12, margin: '10px 0' },
+  boxTitle: { fontSize: 13, fontWeight: 700, color: 'var(--ink-2)', marginBottom: 6 },
   row: { display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 14 },
-  k: { color: '#6b7280' },
-  v: { fontFamily: 'monospace', fontWeight: 700 },
-  distTitle: { fontSize: 12, color: '#6b7280', marginTop: 8 },
-  help: { marginTop: 12, padding: 12, background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 10, fontSize: 13 },
+  k: { color: 'var(--muted)' },
+  v: { fontFamily: 'var(--f-data)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
+  distTitle: { fontSize: 12, color: 'var(--muted)', marginTop: 8 },
+  help: { marginTop: 12, padding: 12, background: 'var(--page)', border: '1px dashed var(--grid)', borderRadius: 'var(--r-md)', fontSize: 13, color: 'var(--ink-2)' },
   ul: { margin: '8px 0 0', paddingLeft: 18, lineHeight: 1.6 },
 };
