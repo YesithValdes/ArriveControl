@@ -87,6 +87,7 @@ function pairedHours(events, nowMs) {
 export default function AdminPanel() {
   const [tab, setTab] = useState('dashboard');
   const [collapsed, setCollapsed] = useState(false); // menú lateral escondido (solo PC)
+  const [navOpen, setNavOpen] = useState(false); // menú off-canvas abierto (solo móvil)
   const [sedeFilter, setSedeFilter] = useState('all'); // 'all' | nombre de sede
   const [tick, setTick] = useState(0); // fuerza relectura de localStorage
 
@@ -488,14 +489,27 @@ export default function AdminPanel() {
   }
 
   return (
-    <div className={`admin-root${collapsed ? ' nav-collapsed' : ''}`}>
+    <div className={`admin-root${collapsed ? ' nav-collapsed' : ''}${navOpen ? ' nav-open' : ''}`}>
       <style>{CSS}</style>
 
       <header className="app-header">
-        <div className="brand">ArriveControl</div>
-        <span className="date-note">
-          {new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-        </span>
+        <button className="menu-btn" onClick={() => setNavOpen(true)} aria-label="Abrir menú">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+        <div className="head-titles">
+          <span className="head-tab">{tabs.find((t) => t.id === tab)?.label || 'Ajustes'}</span>
+          <span className="date-note">
+            {new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            {sedeFilter !== 'all' ? ` · ${sedeFilter}` : ''}
+          </span>
+        </div>
+        {data.anomalies.length > 0 && (
+          <button className="head-badge" title="Anomalías pendientes" onClick={() => setTab('anomalias')}>
+            {data.anomalies.length}
+          </button>
+        )}
       </header>
 
       <div className="screen">
@@ -912,6 +926,7 @@ export default function AdminPanel() {
         )}
       </div>
 
+      {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} />}
       <nav className="tabbar" aria-label="Navegación del panel">
         {/* Cabecera del menú lateral (solo PC): logo + nombre + botón esconder */}
         <div className="side-top">
@@ -934,7 +949,7 @@ export default function AdminPanel() {
         {sedeChips}
 
         {tabs.map((t) => (
-          <button key={t.id} aria-pressed={tab === t.id} onClick={() => setTab(t.id)} title={t.label}>
+          <button key={t.id} aria-pressed={tab === t.id} onClick={() => { setTab(t.id); setNavOpen(false); }} title={t.label}>
             <span className="icon"><Icon name={t.icon} /></span>
             <span className="lbl">{t.label}</span>
             {t.badge ? <span className="badge">{t.badge}</span> : null}
@@ -1281,13 +1296,23 @@ const CSS = `
 .admin-root * { box-sizing: border-box; margin: 0; }
 .admin-root b, .admin-root .emp-name, .admin-root .who { font-weight: 600; }
 
-.app-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; flex: 0 0 auto; }
-.app-header .brand {
-  font-family: var(--f-display); font-size: 11px; letter-spacing: .24em;
-  text-transform: uppercase; color: var(--accent); font-weight: 700;
+/* Barra superior: hamburguesa (móvil) + título de la sección + globo */
+.app-header { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+.menu-btn {
+  flex: 0 0 auto; width: 38px; height: 38px; border-radius: 9px;
+  border: 1px solid var(--grid); background: var(--surface); color: var(--ink-2);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.app-header h1 { font-family: var(--f-display); font-size: 17px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.app-header .date-note { color: var(--muted); font-size: 12.5px; font-family: var(--f-data); }
+.menu-btn:active { background: var(--accent-soft); }
+.head-titles { display: flex; flex-direction: column; min-width: 0; }
+.head-tab { font-family: var(--f-display); font-size: 15px; font-weight: 700; }
+.app-header .date-note { color: var(--muted); font-size: 11.5px; font-family: var(--f-data); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head-badge {
+  margin-left: auto; flex: 0 0 auto; min-width: 22px; height: 22px; border-radius: 11px;
+  border: 0; background: var(--accent); color: #fff; font: inherit; font-size: 11.5px;
+  font-weight: 700; display: flex; align-items: center; justify-content: center;
+  padding: 0 7px; cursor: pointer;
+}
 
 .screen { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--elev-1); }
@@ -1313,10 +1338,9 @@ const CSS = `
 .chip.neutral { color: var(--ink-2); background: var(--accent-soft); }
 .chip.neutral::before { background: var(--accent); }
 
-/* Filtro global de sede (select en el menú lateral).
-   Móvil: fila que ocupa todo el ancho de la barra inferior. */
-.side-sede { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 6px 4px 4px; border-bottom: 1px solid var(--grid); margin-bottom: 4px; }
-.side-sede-lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+/* Filtro global de sede (select en el menú lateral, móvil y PC) */
+.side-sede { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 4px 6px 12px; border-bottom: 1px solid var(--grid); margin-bottom: 8px; }
+.side-sede-lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .sede-select { flex: 1; font: inherit; font-size: 13px; font-weight: 600; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
 .sede-select:hover { background: var(--accent-soft); }
 .sede-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -1435,17 +1459,45 @@ const CSS = `
 .tool small { color: var(--muted); }
 .tool.danger:hover { background: var(--crit-soft); }
 
-.tabbar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; flex: 0 0 auto; padding: 6px 4px 8px; background: var(--surface); border: 1px solid var(--grid); border-radius: 10px; box-shadow: var(--elev-1); }
-/* móvil: el botón bloquear se integra a la rejilla de pestañas */
-.tabbar .lock-btn { flex-direction: column; gap: 2px; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; padding: 6px 2px; justify-content: center; align-items: center; }
-.tabbar .lock-btn .icon { font-size: 18px; }
-.tabbar > button { position: relative; border: 0; background: transparent; color: var(--muted); font-family: var(--f-display); font-size: 9px; font-weight: 600; letter-spacing: .04em; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 2px; border-radius: 8px; }
-.tabbar > button .icon { display: flex; line-height: 1; }
-.tabbar > button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
-.tabbar .badge { position: absolute; top: 2px; right: calc(50% - 20px); min-width: 16px; height: 16px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 4px; }
+/* Menú lateral: en móvil es off-canvas (se desliza con la hamburguesa);
+   en PC es la columna fija de siempre (media query más abajo). */
+.nav-scrim { position: fixed; inset: 0; background: rgba(16,24,40,0.42); z-index: 59; }
+.tabbar {
+  position: fixed; top: 0; bottom: 0; left: 0; width: 280px; z-index: 60;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 16px 12px 12px; background: var(--surface);
+  border: 0; border-right: 1px solid var(--grid); border-radius: 0;
+  box-shadow: var(--elev-2);
+  transform: translateX(-105%); transition: transform .24s ease;
+}
+.admin-root.nav-open .tabbar { transform: translateX(0); }
+@media (prefers-reduced-motion: reduce) { .tabbar { transition: none; } }
 
-/* Cabecera y pie del menú lateral: solo existen en la vista PC */
-.side-top, .side-foot { display: none; }
+.tabbar > button, .tabbar .lock-btn {
+  position: relative; border: 0; background: transparent; color: var(--ink-2);
+  font-family: var(--f-body); font-size: 13.5px; font-weight: 600; cursor: pointer;
+  display: flex; flex-direction: row; align-items: center; gap: 12px;
+  width: 100%; text-align: left; padding: 11px 12px; border-radius: 9px;
+}
+.tabbar > button .icon, .tabbar .lock-btn .icon { display: flex; line-height: 1; flex: 0 0 auto; }
+.tabbar > button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.tabbar .lock-btn { color: var(--muted); margin-top: auto; }
+.tabbar .lock-btn:hover { background: var(--crit-soft); color: var(--crit-text); }
+.tabbar .badge { position: static; margin-left: auto; min-width: 18px; height: 18px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 5px; }
+
+/* Cabecera del menú (logo + marca): visible también en móvil */
+.side-top { display: flex; align-items: center; gap: 10px; padding: 2px 6px 14px; border-bottom: 1px solid var(--grid); margin-bottom: 6px; }
+.side-foot { display: block; padding: 10px 12px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
+.logo {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--f-display); font-size: 13px; font-weight: 800; letter-spacing: .04em;
+  background: var(--accent); color: var(--accent-ink);
+}
+.side-brand { font-family: var(--f-display); font-size: 12px; font-weight: 400; letter-spacing: .14em; color: var(--ink); line-height: 1.3; }
+.side-brand b { font-weight: 800; color: var(--accent); }
+.side-brand small { display: block; font-family: var(--f-body); font-weight: 400; font-size: 10px; letter-spacing: .02em; text-transform: none; color: var(--muted); }
+.side-top .collapse-btn { display: none; } /* colapsar solo existe en PC */
 
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
 .dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--grid); border-radius: 10px; padding: 18px 20px; max-width: 400px; width: 100%; box-shadow: 0 12px 40px rgba(16,24,40,0.18); }
@@ -1510,6 +1562,26 @@ const CSS = `
 .ev-form-row label { flex: 1; }
 .ev-form input, .ev-form select { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
 
+/* ─── Móvil (<900px): los drawers laterales se vuelven hojas inferiores ─── */
+@media (max-width: 899px) {
+  .overlay.right { align-items: flex-end; justify-content: stretch; padding: 0; }
+  .drawer {
+    width: 100%; max-width: none; height: auto; max-height: 84%;
+    border-left: 0; border-top: 1px solid var(--grid);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -10px 30px rgba(16,24,40,0.20);
+    animation: sheet-up .26s ease;
+  }
+  /* asa de la hoja */
+  .drawer::before {
+    content: ""; display: block; flex: 0 0 auto;
+    width: 40px; height: 4px; border-radius: 2px;
+    background: var(--grid); margin: 8px auto 2px;
+  }
+  @keyframes sheet-up { from { transform: translateY(40px); opacity: .6; } to { transform: none; opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .drawer { animation: none; } }
+}
+
 /* ─── Vista PC (≥900px): barra lateral + contenido ancho ─── */
 @media (min-width: 900px) {
   .admin-root {
@@ -1528,6 +1600,7 @@ const CSS = `
   /* menú lateral: panel completo pegado al borde, unido a la vista por un
      único borde divisorio (sin esquinas redondeadas ni flotación) */
   .tabbar {
+    position: static; transform: none; width: auto; z-index: auto;
     grid-column: 1; grid-row: 1 / 3;
     display: flex; flex-direction: column; gap: 4px;
     align-self: stretch; height: 100%;
@@ -1535,6 +1608,10 @@ const CSS = `
     border-radius: 0; border: none; border-right: 1px solid var(--grid);
     box-shadow: none;
   }
+  .nav-scrim { display: none; }
+  .menu-btn { display: none; }
+  .head-tab { font-size: 17px; }
+  .side-top .collapse-btn { display: flex; }
   .tabbar > button {
     flex-direction: row; justify-content: flex-start; gap: 10px;
     width: 100%; font-size: 12px; padding: 10px 14px;
