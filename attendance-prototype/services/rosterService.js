@@ -48,7 +48,10 @@ const HHMM = /^\d{2}:\d{2}$/;
  * @param {number} [opts.breakMinutes]   - pausa de almuerzo (para horas esperadas)
  */
 export function addPerson(name, descriptor, opts = {}) {
-  const { cedula = '', sede = '', expectedEntry = '08:00', expectedExit = '19:00', breakMinutes = 60 } = opts;
+  // Horario OPCIONAL: por defecto vacío. El sistema funciona por alternancia
+  // (entrada→salida→entrada…) sin necesitar horario; configurarlo solo añade
+  // las alertas de puntualidad a quien de verdad tiene hora fija.
+  const { cedula = '', sede = '', expectedEntry = '', expectedExit = '', breakMinutes = null } = opts;
   const people = listPeople();
   const c = normalizeCedula(cedula);
   if (c && people.some((p) => p.cedula === c)) {
@@ -59,13 +62,14 @@ export function addPerson(name, descriptor, opts = {}) {
     id,
     name: name.trim() || id,
     cedula: c,
-    // Horario esperado ("HH:MM"). La entrada regula la alerta de tardanza;
-    // la salida, la de salida temprana y el cálculo de horas esperadas.
-    expectedEntry: HHMM.test(expectedEntry) ? expectedEntry : '08:00',
-    expectedExit: HHMM.test(expectedExit) ? expectedExit : '19:00',
-    // Pausa de almuerzo en minutos: se descuenta de las horas ESPERADAS
-    // del día (salida − entrada − pausa). 0 = jornada continua.
-    breakMinutes: Number.isFinite(breakMinutes) && breakMinutes >= 0 ? breakMinutes : 60,
+    // Horario esperado ("HH:MM") — OPCIONAL, cadena vacía = sin horario fijo.
+    // Solo si está definido se activan las alertas de tardanza / salida temprana.
+    expectedEntry: HHMM.test(expectedEntry) ? expectedEntry : '',
+    expectedExit: HHMM.test(expectedExit) ? expectedExit : '',
+    // Pausa de almuerzo (min): solo sirve para estimar la jornada esperada.
+    // Las horas REALES no la usan — salen de sumar los pares marcados, así que
+    // si la persona marca su almuerzo, ese tiempo ya queda descontado solo.
+    breakMinutes: Number.isFinite(breakMinutes) && breakMinutes >= 0 ? breakMinutes : null,
     // Sede asignada: se usa para filtrar el dashboard por sede y para
     // limitar la validación GPS a la sede del empleado (no a cualquiera).
     sede: String(sede || '').trim(),
@@ -105,16 +109,19 @@ export function updatePerson(id, partial) {
     }
   }
   if (partial.name !== undefined) next.name = String(partial.name).trim() || people[i].name;
-  if (partial.expectedEntry !== undefined && !HHMM.test(partial.expectedEntry)) {
-    next.expectedEntry = people[i].expectedEntry;
+  // Horario opcional: '' lo borra explícitamente; un valor inválido se ignora.
+  if (partial.expectedEntry !== undefined) {
+    next.expectedEntry = HHMM.test(partial.expectedEntry) ? partial.expectedEntry
+      : partial.expectedEntry === '' ? '' : people[i].expectedEntry;
   }
-  if (partial.expectedExit !== undefined && !HHMM.test(partial.expectedExit)) {
-    next.expectedExit = people[i].expectedExit ?? '19:00';
+  if (partial.expectedExit !== undefined) {
+    next.expectedExit = HHMM.test(partial.expectedExit) ? partial.expectedExit
+      : partial.expectedExit === '' ? '' : people[i].expectedExit;
   }
   if (partial.breakMinutes !== undefined) {
-    next.breakMinutes = Number.isFinite(partial.breakMinutes) && partial.breakMinutes >= 0
-      ? partial.breakMinutes
-      : (people[i].breakMinutes ?? 60);
+    next.breakMinutes = partial.breakMinutes === null ? null
+      : Number.isFinite(partial.breakMinutes) && partial.breakMinutes >= 0 ? partial.breakMinutes
+        : people[i].breakMinutes ?? null;
   }
   people[i] = next;
   save(PEOPLE_KEY, people);

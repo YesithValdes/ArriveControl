@@ -67,10 +67,31 @@ await test('con horario 13:00, entrar a las 16:30 (>3 h tarde) SÍ alerta', () =
   const r = registerPassage(tarde, at('2026-07-30T16:30:00'));
   assert.equal(r.flag, 'late-entry');
 });
-await test('sin horario configurado, se conserva la regla del mediodía', () => {
+await test('SIN horario configurado no se supone nada: entrar a la 1 p.m. no alerta', () => {
   _resetJourneys();
   const r = registerPassage(P, at('2026-07-30T13:00:00'));
-  assert.equal(r.flag, 'late-entry');
+  assert.equal(r.flag, null, 'el horario es opcional: sin él no debe inventarse una hora esperada');
+});
+await test('sin horario, salir a las 10 a.m. tampoco alerta', () => {
+  const r = registerPassage(P, at('2026-07-30T15:00:00'));
+  assert.equal(r.type, 'out');
+  assert.equal(r.flag, null);
+});
+await test('sin horario, las horas siguen calculándose por alternancia', () => {
+  _resetJourneys();
+  registerPassage(P, at('2026-08-03T07:30:00'));  // entrada
+  registerPassage(P, at('2026-08-03T12:00:00'));  // sale a almorzar
+  registerPassage(P, at('2026-08-03T13:00:00'));  // regresa
+  const last = registerPassage(P, at('2026-08-03T18:00:00')); // salida final
+  assert.equal(last.type, 'out');
+  const evs = listJourneyEvents().filter((e) => e.personId === P.id).sort((a, b) => a.ts.localeCompare(b.ts));
+  // Pares: 07:30–12:00 (4.5 h) + 13:00–18:00 (5 h) = 9.5 h; el almuerzo queda fuera solo.
+  let total = 0, openIn = null;
+  for (const e of evs) {
+    if (e.type === 'in') openIn = e;
+    else if (openIn) { total += (new Date(e.ts) - new Date(openIn.ts)) / 3600000; openIn = null; }
+  }
+  assert.equal(total, 9.5, `dio ${total} h`);
 });
 
 console.log('\n💾 CASO 5 · Datos corruptos en el roster');

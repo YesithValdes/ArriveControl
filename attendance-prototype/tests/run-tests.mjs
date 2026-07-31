@@ -190,8 +190,16 @@ await test('reinicio diario: la marcación de las 6 a.m. del día siguiente es E
   assert.equal(r.type, 'in', 'cambió el día calendario: la alternancia se reinicia');
 });
 _resetJourneys();
-await test('entrada tardía (primera del día en la tarde) queda marcada', () => {
+await test('sin horario configurado, entrar en la tarde NO se marca como tardía', () => {
+  // El horario es OPCIONAL: sin él, el sistema no supone ninguna hora esperada.
   const r = registerPassage(person, at('2026-07-30T17:03:00'));
+  assert.equal(r.type, 'in');
+  assert.equal(r.flag, null);
+});
+_resetJourneys();
+await test('CON horario configurado, la entrada tardía sí se marca', () => {
+  const conHorario = { id: 'P2', name: 'Beto', expectedEntry: '08:00' };
+  const r = registerPassage(conHorario, at('2026-07-30T17:03:00'));
   assert.equal(r.type, 'in');
   assert.equal(r.flag, 'late-entry');
 });

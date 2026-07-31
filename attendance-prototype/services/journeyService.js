@@ -12,9 +12,14 @@
  *      cierra sola — la operación es diurna (8–19); si algún día se
  *      necesitan turnos nocturnos, este es el punto a revisar.
  *  - Anti-rebote: si el último evento fue hace < 3 min, no se registra otro.
+ *  - Las HORAS TRABAJADAS salen de sumar los pares entrada→salida marcados.
+ *    No se supone ningún horario ni se descuenta almuerzo por configuración:
+ *    si la persona marca su pausa, ese tiempo queda fuera de los pares solo.
  *  - Anomalías:
- *    · 'late-entry'   → primera ENTRADA del día después del mediodía.
- *    · 'missing-exit' → ENTRADA con > 12 h sin salida que la cierre.
+ *    · 'late-entry'   → solo si el empleado TIENE horario de entrada configurado.
+ *    · 'early-exit'   → solo si TIENE horario de salida configurado.
+ *    · 'missing-exit' → ENTRADA con > 12 h sin salida que la cierre (no depende
+ *                       de horario: sin el cierre del par, las horas no se calculan).
  *
  * En producción: tabla 'attendance_events' en Supabase, timestamp del
  * SERVIDOR (nunca del cliente) y cola offline en el kiosco.
@@ -65,22 +70,16 @@ export function registerPassage(person, now = new Date()) {
   const sameLocalDay = last && new Date(last.ts).toDateString() === now.toDateString();
   const type = last && last.type === 'in' && sameLocalDay ? 'out' : 'in';
 
-  // Anomalía: primera entrada del día mucho después del horario ESPERADO
-  // del empleado (posible olvido de marcación anterior). Si la persona no
-  // tiene horario configurado, se usa el mediodía como referencia.
+  // Anomalía: primera entrada del día mucho después del horario esperado.
+  // El horario es OPCIONAL: sin horario configurado NO se evalúa nada — no
+  // se supone ninguna hora de entrada, porque los horarios varían por persona.
   let flag = null;
-  if (type === 'in') {
+  if (type === 'in' && HHMM.test(person.expectedEntry || '')) {
     const todayEvents = mine.filter((e) => dayKey(e.ts) === dayKey(now.toISOString()));
     if (todayEvents.length === 0) {
+      const [h, m] = person.expectedEntry.split(':').map(Number);
       const nowMin = now.getHours() * 60 + now.getMinutes();
-      let limitMin;
-      if (/^\d{2}:\d{2}$/.test(person.expectedEntry || '')) {
-        const [h, m] = person.expectedEntry.split(':').map(Number);
-        limitMin = h * 60 + m + LATE_TOLERANCE_MIN; // esperado + 3 h de tolerancia
-      } else {
-        limitMin = LATE_ENTRY_HOUR * 60; // fallback: mediodía
-      }
-      if (nowMin >= limitMin) flag = 'late-entry';
+      if (nowMin >= h * 60 + m + LATE_TOLERANCE_MIN) flag = 'late-entry';
     }
   }
 

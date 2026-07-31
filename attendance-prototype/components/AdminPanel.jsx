@@ -146,8 +146,8 @@ export default function AdminPanel() {
 
     // Personas: roster ∪ personas vistas en eventos (con sede y horario).
     const byId = new Map();
-    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, sede: p.sede || '', expectedEntry: p.expectedEntry || '', expectedExit: p.expectedExit || '', breakMinutes: p.breakMinutes ?? 60 });
-    for (const e of events) if (!byId.has(e.personId)) byId.set(e.personId, { id: e.personId, name: e.personName, sede: e.sede || '', expectedEntry: '', expectedExit: '', breakMinutes: 60 });
+    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, sede: p.sede || '', expectedEntry: p.expectedEntry || '', expectedExit: p.expectedExit || '', breakMinutes: p.breakMinutes ?? null });
+    for (const e of events) if (!byId.has(e.personId)) byId.set(e.personId, { id: e.personId, name: e.personName, sede: e.sede || '', expectedEntry: '', expectedExit: '', breakMinutes: null });
     const people = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 
     const perPerson = new Map(people.map((p) => [p.id, events.filter((e) => e.personId === p.id)]));
@@ -692,9 +692,9 @@ export default function AdminPanel() {
                       {empRows.map((p) => {
                         const open = () => setEditEmp({
                           id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '',
-                          expectedEntry: p.expectedEntry || '08:00',
-                          expectedExit: p.expectedExit || '19:00',
-                          breakMinutes: String(p.breakMinutes ?? 60),
+                          expectedEntry: p.expectedEntry || '',
+                          expectedExit: p.expectedExit || '',
+                          breakMinutes: p.breakMinutes == null ? '' : String(p.breakMinutes),
                         });
                         const exp = expectedDailyHours(p);
                         return (
@@ -702,8 +702,8 @@ export default function AdminPanel() {
                             <td className="att-name">{p.name}</td>
                             <td>{p.cedula ? `C.C. ${p.cedula}` : '—'}</td>
                             <td className="att-sede">{p.sede || '—'}</td>
-                            <td>{p.expectedEntry || '—'} – {p.expectedExit || '—'}</td>
-                            <td>{exp == null ? '—' : `${fmtH(exp)}${p.breakMinutes ? ` (−${p.breakMinutes}m)` : ''}`}</td>
+                            <td>{p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : <span className="libre">horario libre</span>}</td>
+                            <td>{exp == null ? <span className="libre">—</span> : `${fmtH(exp)}${p.breakMinutes ? ` (−${p.breakMinutes}m)` : ''}`}</td>
                           </tr>
                         );
                       })}
@@ -1195,7 +1195,7 @@ export default function AdminPanel() {
               </select>
             </div>
             <div className="field">
-              <label>Horario esperado</label>
+              <label>Horario esperado <span className="libre">opcional</span></label>
               <div className="hours-row">
                 <label className="sub-field">Entrada
                   <input type="time" value={editEmp.expectedEntry} onChange={(e) => setEditEmp({ ...editEmp, expectedEntry: e.target.value })} />
@@ -1208,8 +1208,13 @@ export default function AdminPanel() {
                 </label>
               </div>
               <small className="hint">
-                Jornada esperada: <strong>{fmtH(expectedDailyHours({ ...editEmp, breakMinutes: Number(editEmp.breakMinutes) }))}</strong> al día.
-                Salir más tarde cuenta como horas extra, no como incidencia.
+                {editEmp.expectedEntry && editEmp.expectedExit ? (
+                  <>Jornada esperada: <strong>{fmtH(expectedDailyHours({ ...editEmp, breakMinutes: editEmp.breakMinutes === '' ? null : Number(editEmp.breakMinutes) }))}</strong> al día.
+                  Salir más tarde cuenta como horas extra, no como incidencia.</>
+                ) : (
+                  <>Sin horario fijo: no se generan alertas de puntualidad. Las horas se calculan
+                  igual sumando cada entrada y salida marcada.</>
+                )}
               </small>
             </div>
             <div className="dialog-actions">
@@ -1224,7 +1229,7 @@ export default function AdminPanel() {
                     sede: editEmp.sede,
                     expectedEntry: editEmp.expectedEntry,
                     expectedExit: editEmp.expectedExit,
-                    breakMinutes: Number(editEmp.breakMinutes),
+                    breakMinutes: editEmp.breakMinutes === '' ? null : Number(editEmp.breakMinutes),
                   });
                   if (r.error) { showToast(r.error); return; }
                   setEditEmp(null);
@@ -1449,6 +1454,7 @@ const CSS = `
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .field label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .field input, .field select { font-family: var(--f-data); font-size: 14px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); color-scheme: light; }
+.libre { color: var(--muted); font-size: 12px; font-weight: 400; font-style: normal; }
 .hours-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .hours-row .sub-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .hours-row .sub-field input { font-family: var(--f-data); font-size: 14px; font-weight: 400; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); color-scheme: light; }

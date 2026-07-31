@@ -38,9 +38,11 @@ export default function EmployeeRegister() {
   const [status, setStatus] = useState('Cargando el modelo facial…');
   const [name, setName] = useState('');
   const [cedula, setCedula] = useState('');
-  const [expectedEntry, setExpectedEntry] = useState('08:00');
-  const [expectedExit, setExpectedExit] = useState('19:00');
-  const [breakMinutes, setBreakMinutes] = useState('60');
+  // Horario OPCIONAL: vacío por defecto. Sin él, el sistema igual registra
+  // por alternancia (entrada→salida) y calcula las horas reales.
+  const [expectedEntry, setExpectedEntry] = useState('');
+  const [expectedExit, setExpectedExit] = useState('');
+  const [breakMinutes, setBreakMinutes] = useState('');
   const [sedes, setSedes] = useState([]);
   const [sede, setSede] = useState('');
   useEffect(() => {
@@ -114,7 +116,10 @@ export default function EmployeeRegister() {
   const canRegister = ready && !analyzing && name.trim().length >= 3 && cedula.trim().length >= 5 && photo;
 
   const handleRegister = () => {
-    const result = addPerson(name, photo.descriptor, { cedula, sede, expectedEntry, expectedExit, breakMinutes: Number(breakMinutes) });
+    const result = addPerson(name, photo.descriptor, {
+      cedula, sede, expectedEntry, expectedExit,
+      breakMinutes: breakMinutes === '' ? null : Number(breakMinutes),
+    });
     if (result.error) {
       setStatus(`❌ ${result.error}`);
       return;
@@ -172,7 +177,7 @@ export default function EmployeeRegister() {
         </div>
 
         <div className="field">
-          <label>Horario esperado</label>
+          <label>Horario esperado <span className="opcional">opcional</span></label>
           <div className="hours-row">
             <label className="sub-field">Entrada
               <input type="time" value={expectedEntry} onChange={(e) => setExpectedEntry(e.target.value)} />
@@ -181,13 +186,18 @@ export default function EmployeeRegister() {
               <input type="time" value={expectedExit} onChange={(e) => setExpectedExit(e.target.value)} />
             </label>
             <label className="sub-field">Almuerzo
-              <input type="number" min="0" max="240" step="15" value={breakMinutes}
+              <input type="number" min="0" max="240" step="15" placeholder="min" value={breakMinutes}
                 onChange={(e) => setBreakMinutes(e.target.value)} />
             </label>
           </div>
           <small className="field-hint">
-            Jornada esperada: <strong>{fmtExpected(expectedEntry, expectedExit, breakMinutes)}</strong> al día.
-            Salir más tarde no genera alerta (se cuenta como horas extra); solo se avisa si sale mucho antes.
+            {expectedEntry && expectedExit ? (
+              <>Jornada esperada: <strong>{fmtExpected(expectedEntry, expectedExit, breakMinutes)}</strong> al día.
+              Se avisará si llega muy tarde o sale mucho antes; alargarse no genera alerta (cuenta como horas extra).</>
+            ) : (
+              <>Déjalo vacío si su horario varía. Las horas se calculan igual sumando cada entrada y salida
+              marcada — si marca su almuerzo, ese tiempo queda descontado solo.</>
+            )}
           </small>
         </div>
 
@@ -228,7 +238,7 @@ export default function EmployeeRegister() {
               <span className="avatar">{p.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>
               <span className="pinfo">
                 <b>{p.name}</b>
-                <small>{p.cedula ? `C.C. ${p.cedula}` : 'Sin cédula'} · {p.sede || 'sin sede'} · entra {p.expectedEntry || '—'}</small>
+                <small>{p.cedula ? `C.C. ${p.cedula}` : 'Sin cédula'} · {p.sede || 'sin sede'} · {p.expectedEntry && p.expectedExit ? `${p.expectedEntry}–${p.expectedExit}` : 'horario libre'}</small>
               </span>
               <button className="del" title={`Eliminar a ${p.name}`} onClick={() => handleDelete(p)}>🗑</button>
             </div>
@@ -273,6 +283,7 @@ const CSS = `
 .field label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .field input[type="text"], .field input[type="time"], .field select { font: inherit; font-size: 15px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
 .field-hint { color: var(--muted); font-size: 12px; }
+.opcional { font-weight: 400; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-left: 6px; }
 .hours-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .sub-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .sub-field input { font: inherit; font-size: 15px; font-weight: 400; color: var(--ink); padding: 9px 10px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--page); }
