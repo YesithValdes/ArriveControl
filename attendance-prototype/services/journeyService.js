@@ -24,6 +24,10 @@ export const ANTI_BOUNCE_MS = 3 * 60 * 1000;      // 3 minutos
 export const NIGHT_WINDOW_MS = 12 * 60 * 60 * 1000; // 12 horas
 export const LATE_ENTRY_HOUR = 12;                 // mediodía (fallback sin horario)
 export const LATE_TOLERANCE_MIN = 180;             // 3 h después del horario esperado
+// Salida temprana: solo alerta si se va MUCHO antes de su hora esperada.
+// Salir más tarde NUNCA es anomalía: en esta operación alargarse es normal
+// y se contabiliza como horas extra, no como incidencia.
+export const EARLY_EXIT_TOLERANCE_MIN = 90;        // 1½ h antes de lo esperado
 
 const hasLS = typeof localStorage !== 'undefined';
 const load = () => {
@@ -33,6 +37,7 @@ const load = () => {
 const save = (events) => hasLS && localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
 
 const dayKey = (iso) => iso.slice(0, 10); // YYYY-MM-DD
+const HHMM = /^\d{2}:\d{2}$/;
 
 /**
  * Registra el paso de una persona por el kiosco y decide ENTRADA o SALIDA.
@@ -77,6 +82,15 @@ export function registerPassage(person, now = new Date()) {
     }
   }
 
+  // Anomalía: salida MUY anterior a la esperada. Solo se evalúa aquí, en el
+  // momento de marcar; si la persona vuelve a entrar después (almuerzo), la
+  // bandera se limpia al cerrar la jornada real (ver clearEarlyExitIfReturned).
+  if (type === 'out' && HHMM.test(person.expectedExit || '')) {
+    const [xh, xm] = person.expectedExit.split(':').map(Number);
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    if (nowMin < xh * 60 + xm - EARLY_EXIT_TOLERANCE_MIN) flag = 'early-exit';
+  }
+
   const event = {
     id: `${nowMs}-${person.id}`,
     personId: person.id,
@@ -87,6 +101,14 @@ export function registerPassage(person, now = new Date()) {
     flag,
     correctedBy: null,
   };
+
+  // Si la persona VUELVE a entrar, la salida anterior no era la final: era
+  // una pausa (almuerzo, diligencia). Limpiamos su bandera 'early-exit' para
+  // no reportar como incidencia lo que fue un descanso normal.
+  if (type === 'in' && last && last.type === 'out' && last.flag === 'early-exit') {
+    const original = events.find((e) => e.id === last.id);
+    if (original) original.flag = null;
+  }
 
   // El guardado puede fallar (almacenamiento lleno/corrupto). NUNCA debe
   // reventar al kiosco ni simular un éxito: se reporta como error manejable.

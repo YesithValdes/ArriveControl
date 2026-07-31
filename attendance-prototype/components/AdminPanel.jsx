@@ -18,7 +18,7 @@ import {
   _resetJourneys,
   NIGHT_WINDOW_MS,
 } from '../services/journeyService.js';
-import { listPeople, removePerson, updatePerson } from '../services/rosterService.js';
+import { listPeople, removePerson, updatePerson, expectedDailyHours } from '../services/rosterService.js';
 import { getLaborConfig, saveLaborConfig } from '../services/configService.js';
 import { getSedes, addSede, updateSede, removeSede } from '../services/sedesService.js';
 
@@ -116,6 +116,7 @@ export default function AdminPanel() {
   useEffect(() => { setSedes(getSedes()); }, [tick]);
   const [newSede, setNewSede] = useState({ name: '', lat: '', lon: '', radius: '50' });
   const [editSede, setEditSede] = useState(null); // { original, name, lat, lon, radius }
+  const [newSedeOpen, setNewSedeOpen] = useState(false); // drawer de "Nueva sede"
   const [newHoliday, setNewHoliday] = useState('');
 
   // Edición de empleado (CRUD): diálogo con datos no biométricos.
@@ -145,8 +146,8 @@ export default function AdminPanel() {
 
     // Personas: roster ∪ personas vistas en eventos (con sede y horario).
     const byId = new Map();
-    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, sede: p.sede || '', expectedEntry: p.expectedEntry || '' });
-    for (const e of events) if (!byId.has(e.personId)) byId.set(e.personId, { id: e.personId, name: e.personName, sede: e.sede || '', expectedEntry: '' });
+    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, sede: p.sede || '', expectedEntry: p.expectedEntry || '', expectedExit: p.expectedExit || '', breakMinutes: p.breakMinutes ?? 60 });
+    for (const e of events) if (!byId.has(e.personId)) byId.set(e.personId, { id: e.personId, name: e.personName, sede: e.sede || '', expectedEntry: '', expectedExit: '', breakMinutes: 60 });
     const people = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 
     const perPerson = new Map(people.map((p) => [p.id, events.filter((e) => e.personId === p.id)]));
@@ -171,6 +172,7 @@ export default function AdminPanel() {
           }
         }
         if (e.flag === 'late-entry') anomalies.push({ kind: 'late-entry', person: p, event: e });
+        if (e.flag === 'early-exit') anomalies.push({ kind: 'early-exit', person: p, event: e });
       }
 
       const corrected = mine.some((e) => e.correctedBy && dayKey(e.ts) === todayKey());
@@ -576,22 +578,40 @@ export default function AdminPanel() {
 
         {tab === 'anomalias' && (
           <section className="card grow">
-            <h2>Anomalías por resolver</h2>
-            <p className="hint">Marcaciones que no cierran una jornada normal. Cada corrección queda en el historial.</p>
+            <h2>Anomalías por resolver <span className="muted-count">{view.anomalies.length}</span></h2>
+            <p className="hint">Marcaciones que no cierran una jornada normal. Clic en una fila para corregirla; cada corrección queda en el historial.</p>
             <div className="scrollable">
               {view.anomalies.length === 0 && <p className="empty">Sin anomalías pendientes.</p>}
-              {view.anomalies.map((a, i) => (
-                <div className="anomaly" key={a.event.id + i}>
-                  {a.kind === 'missing-exit' ? chip('crit', 'Salida faltante') : chip('warn', 'Entrada tardía')}
-                  <span className="who">{a.person.name}</span>
-                  <span className="desc">
-                    {a.kind === 'missing-exit'
-                      ? `Entrada del ${fmtTs(a.event.ts)} sin salida registrada (más de 12 h abierta).`
-                      : `Primera entrada del día a las ${fmt12(a.event.ts)} — posible olvido de marcación en la mañana.`}
-                  </span>
-                  <button className="btn primary" onClick={() => openFix(a)}>Corregir</button>
+              {view.anomalies.length > 0 && (
+                <div className="att-tablewrap">
+                  <table className="att-table">
+                    <thead>
+                      <tr><th>Empleado</th><th>Tipo</th><th>Día</th><th>Detalle</th></tr>
+                    </thead>
+                    <tbody>
+                      {view.anomalies.map((a, i) => (
+                        <tr key={a.event.id + i} onClick={() => openFix(a)} tabIndex={0}
+                          onKeyDown={(e) => e.key === 'Enter' && openFix(a)}>
+                          <td className="att-name">{a.person.name}</td>
+                          <td>{
+                            a.kind === 'missing-exit' ? chip('crit', 'Salida faltante')
+                              : a.kind === 'early-exit' ? chip('warn', 'Salida temprana')
+                                : chip('warn', 'Entrada tardía')
+                          }</td>
+                          <td>{new Date(a.event.ts).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })}</td>
+                          <td className="att-sede">
+                            {a.kind === 'missing-exit'
+                              ? `Entrada de las ${fmt12(a.event.ts)} sin salida registrada (más de 12 h abierta).`
+                              : a.kind === 'early-exit'
+                                ? `Salió a las ${fmt12(a.event.ts)}, bastante antes de su hora esperada (${a.person.expectedExit || '—'}).`
+                                : `Primera entrada del día a las ${fmt12(a.event.ts)} — posible olvido en la mañana.`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
+              )}
             </div>
           </section>
         )}
@@ -666,40 +686,27 @@ export default function AdminPanel() {
                 <div className="att-tablewrap">
                   <table className="att-table">
                     <thead>
-                      <tr><th>Empleado</th><th>Cédula</th><th>Sede</th><th>Entrada esperada</th><th>Registro</th><th className="num">Acciones</th></tr>
+                      <tr><th>Empleado</th><th>Cédula</th><th>Sede</th><th>Horario</th><th>Jornada</th></tr>
                     </thead>
                     <tbody>
-                      {empRows.map((p) => (
-                        <tr key={p.id} className="static">
-                          <td className="att-name">{p.name}</td>
-                          <td>{p.cedula ? `C.C. ${p.cedula}` : '—'}</td>
-                          <td className="att-sede">{p.sede || '—'}</td>
-                          <td>{p.expectedEntry || '—'}</td>
-                          <td>{new Date(p.createdAt).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                          <td className="num">
-                            <span className="tl-actions">
-                              <button
-                                className="btn small"
-                                onClick={() => setEditEmp({ id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '', expectedEntry: p.expectedEntry || '08:00' })}
-                              >
-                                Editar
-                              </button>
-                              <button
-                                className="btn small danger-btn"
-                                onClick={() => {
-                                  if (confirm(`¿Eliminar a ${p.name}? Ya no podrá marcar asistencia.`)) {
-                                    removePerson(p.id);
-                                    refresh();
-                                    showToast(`${p.name} eliminado`);
-                                  }
-                                }}
-                              >
-                                Eliminar
-                              </button>
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {empRows.map((p) => {
+                        const open = () => setEditEmp({
+                          id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '',
+                          expectedEntry: p.expectedEntry || '08:00',
+                          expectedExit: p.expectedExit || '19:00',
+                          breakMinutes: String(p.breakMinutes ?? 60),
+                        });
+                        const exp = expectedDailyHours(p);
+                        return (
+                          <tr key={p.id} onClick={open} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && open()}>
+                            <td className="att-name">{p.name}</td>
+                            <td>{p.cedula ? `C.C. ${p.cedula}` : '—'}</td>
+                            <td className="att-sede">{p.sede || '—'}</td>
+                            <td>{p.expectedEntry || '—'} – {p.expectedExit || '—'}</td>
+                            <td>{exp == null ? '—' : `${fmtH(exp)}${p.breakMinutes ? ` (−${p.breakMinutes}m)` : ''}`}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -872,82 +879,34 @@ export default function AdminPanel() {
         {tab === 'cfg-sedes' && (
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
-            <h2>Sedes</h2>
-            <p className="hint">Cada sede tiene sus coordenadas y su propio radio GPS. El kiosco y el fichaje las usan de inmediato.</p>
+            <h2>Sedes <span className="muted-count">{sedes.length}</span></h2>
+            <p className="hint">Cada sede tiene sus coordenadas y su propio radio GPS. El kiosco y el fichaje las usan de inmediato. Clic en una fila para editarla.</p>
+            <div className="att-controls">
+              <button className="btn primary" onClick={() => setNewSedeOpen(true)}>Nueva sede</button>
+            </div>
             <div className="scrollable">
               <div className="att-tablewrap">
                 <table className="att-table">
                   <thead>
-                    <tr><th>Sede</th><th>Latitud</th><th>Longitud</th><th>Radio</th><th>Empleados</th><th className="num">Acciones</th></tr>
+                    <tr><th>Sede</th><th>Latitud</th><th>Longitud</th><th>Radio</th><th>Empleados</th></tr>
                   </thead>
                   <tbody>
-                    {sedes.map((o) => (
-                      <tr key={o.name} className="static">
-                        <td className="att-name">{o.name}</td>
-                        <td>{o.lat.toFixed(6)}</td>
-                        <td>{o.lon.toFixed(6)}</td>
-                        <td>{o.radius} m</td>
-                        <td className="att-sede">{allPeople.filter((p) => p.sede === o.name).length}</td>
-                        <td className="num">
-                          <span className="tl-actions">
-                            <button
-                              className="btn small"
-                              onClick={() => setEditSede({ original: o.name, name: o.name, lat: String(o.lat), lon: String(o.lon), radius: String(o.radius) })}
-                            >
-                              Editar
-                            </button>
-                            <button
-                              className="btn small danger-btn"
-                              onClick={() => {
-                                if (!confirm(`¿Eliminar la sede "${o.name}"? Los empleados asignados a ella quedarán sin sede.`)) return;
-                                const r = removeSede(o.name);
-                                if (r.error) { showToast(r.error); return; }
-                                if (sedeFilter === o.name) setSedeFilter('all');
-                                refresh();
-                                showToast(`Sede "${o.name}" eliminada`);
-                              }}
-                            >
-                              Eliminar
-                            </button>
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {sedes.map((o) => {
+                      const open = () => setEditSede({ original: o.name, name: o.name, lat: String(o.lat), lon: String(o.lon), radius: String(o.radius) });
+                      return (
+                        <tr key={o.name} onClick={open} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && open()}>
+                          <td className="att-name">{o.name}</td>
+                          <td>{o.lat.toFixed(6)}</td>
+                          <td>{o.lon.toFixed(6)}</td>
+                          <td>{o.radius} m</td>
+                          <td className="att-sede">{allPeople.filter((p) => p.sede === o.name).length}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
 
-              <div className="cfg-group">
-                <h3>＋ Nueva sede</h3>
-                <div className="sede-fields">
-                  <label>Nombre
-                    <input type="text" placeholder="Ej.: Bodega Norte" value={newSede.name} onChange={(e) => setNewSede({ ...newSede, name: e.target.value })} />
-                  </label>
-                  <label>Latitud
-                    <input type="number" step="0.000001" placeholder="1.212981" value={newSede.lat} onChange={(e) => setNewSede({ ...newSede, lat: e.target.value })} />
-                  </label>
-                  <label>Longitud
-                    <input type="number" step="0.000001" placeholder="-77.280157" value={newSede.lon} onChange={(e) => setNewSede({ ...newSede, lon: e.target.value })} />
-                  </label>
-                  <label>Radio (m)
-                    <input type="number" min="10" max="1000" value={newSede.radius} onChange={(e) => setNewSede({ ...newSede, radius: e.target.value })} />
-                  </label>
-                </div>
-                <p className="cfg-note">Consigue lat/lon en Google Maps: clic derecho sobre el punto → copiar coordenadas. Verifica luego con el Diagnóstico GPS.</p>
-                <button
-                  className="btn primary"
-                  disabled={!newSede.name.trim() || newSede.lat === '' || newSede.lon === ''}
-                  onClick={() => {
-                    const r = addSede({ name: newSede.name, lat: Number(newSede.lat), lon: Number(newSede.lon), radius: Number(newSede.radius) || 50 });
-                    if (r.error) { showToast(r.error); return; }
-                    setNewSede({ name: '', lat: '', lon: '', radius: '50' });
-                    refresh();
-                    showToast(`Sede "${r.name}" creada`);
-                  }}
-                >
-                  Guardar sede
-                </button>
-              </div>
             </div>
           </section>
         )}
@@ -1072,11 +1031,69 @@ export default function AdminPanel() {
         </div>
       )}
 
+      {/* Drawer de nueva sede */}
+      {newSedeOpen && (
+        <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setNewSedeOpen(false)}>
+          <aside className="drawer" role="dialog" aria-modal="true" aria-label="Nueva sede">
+            <div className="drawer-head">
+              <div>
+                <h3>Nueva sede</h3>
+                <span className="drawer-id">Coordenadas y radio GPS</span>
+              </div>
+              <button className="btn" onClick={() => setNewSedeOpen(false)}>Cerrar</button>
+            </div>
+            <div className="drawer-body">
+              <p className="hint">Consigue lat/lon en Google Maps: clic derecho sobre el punto → copiar coordenadas. Verifica luego con el Diagnóstico GPS.</p>
+              <div className="field">
+                <label htmlFor="n-nombre">Nombre</label>
+                <input id="n-nombre" type="text" placeholder="Ej.: Bodega Norte" value={newSede.name} onChange={(e) => setNewSede({ ...newSede, name: e.target.value })} />
+              </div>
+              <div className="field">
+                <label htmlFor="n-lat">Latitud</label>
+                <input id="n-lat" type="number" step="0.000001" placeholder="1.212981" value={newSede.lat} onChange={(e) => setNewSede({ ...newSede, lat: e.target.value })} />
+              </div>
+              <div className="field">
+                <label htmlFor="n-lon">Longitud</label>
+                <input id="n-lon" type="number" step="0.000001" placeholder="-77.280157" value={newSede.lon} onChange={(e) => setNewSede({ ...newSede, lon: e.target.value })} />
+              </div>
+              <div className="field">
+                <label htmlFor="n-radio">Radio GPS (metros)</label>
+                <input id="n-radio" type="number" min="10" max="1000" value={newSede.radius} onChange={(e) => setNewSede({ ...newSede, radius: e.target.value })} />
+              </div>
+              <div className="dialog-actions">
+                <button className="btn" onClick={() => setNewSedeOpen(false)}>Cancelar</button>
+                <button
+                  className="btn primary"
+                  disabled={!newSede.name.trim() || newSede.lat === '' || newSede.lon === ''}
+                  onClick={() => {
+                    const r = addSede({ name: newSede.name, lat: Number(newSede.lat), lon: Number(newSede.lon), radius: Number(newSede.radius) || 50 });
+                    if (r.error) { showToast(r.error); return; }
+                    setNewSede({ name: '', lat: '', lon: '', radius: '50' });
+                    setNewSedeOpen(false);
+                    refresh();
+                    showToast(`Sede "${r.name}" creada`);
+                  }}
+                >
+                  Guardar sede
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+
       {/* Diálogo de edición de sede (incluye renombrar, propagando al roster) */}
       {editSede && (
-        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setEditSede(null)}>
-          <div className="dialog" role="dialog" aria-modal="true">
-            <h3>Editar sede — {editSede.original}</h3>
+        <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setEditSede(null)}>
+          <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Editar sede ${editSede.original}`}>
+            <div className="drawer-head">
+              <div>
+                <h3>Editar sede</h3>
+                <span className="drawer-id">{editSede.original}</span>
+              </div>
+              <button className="btn" onClick={() => setEditSede(null)}>Cerrar</button>
+            </div>
+            <div className="drawer-body">
             <p className="hint">Si cambias el nombre, los empleados asignados se actualizan automáticamente.</p>
             <div className="field">
               <label htmlFor="s-nombre">Nombre</label>
@@ -1127,15 +1144,40 @@ export default function AdminPanel() {
                 Guardar cambios
               </button>
             </div>
-          </div>
+
+            <div className="danger-zone">
+              <button
+                className="btn danger-btn block"
+                onClick={() => {
+                  if (!confirm(`¿Eliminar la sede "${editSede.original}"? Los empleados asignados a ella quedarán sin sede.`)) return;
+                  const r = removeSede(editSede.original);
+                  if (r.error) { showToast(r.error); return; }
+                  if (sedeFilter === editSede.original) setSedeFilter('all');
+                  setEditSede(null);
+                  refresh();
+                  showToast(`Sede "${editSede.original}" eliminada`);
+                }}
+              >
+                Eliminar sede
+              </button>
+            </div>
+            </div>
+          </aside>
         </div>
       )}
 
       {/* Diálogo de edición de empleado (CRUD: actualizar datos no biométricos) */}
       {editEmp && (
-        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setEditEmp(null)}>
-          <div className="dialog" role="dialog" aria-modal="true">
-            <h3>Editar empleado — {editEmp.name}</h3>
+        <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setEditEmp(null)}>
+          <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Editar empleado ${editEmp.name}`}>
+            <div className="drawer-head">
+              <div>
+                <h3>Editar empleado</h3>
+                <span className="drawer-id">{editEmp.id}</span>
+              </div>
+              <button className="btn" onClick={() => setEditEmp(null)}>Cerrar</button>
+            </div>
+            <div className="drawer-body">
             <p className="hint">El rostro no se edita aquí: para cambiarlo, elimina y vuelve a registrar con foto nueva.</p>
             <div className="field">
               <label htmlFor="e-nombre">Nombre completo</label>
@@ -1153,8 +1195,22 @@ export default function AdminPanel() {
               </select>
             </div>
             <div className="field">
-              <label htmlFor="e-hora">Hora esperada de entrada</label>
-              <input id="e-hora" type="time" value={editEmp.expectedEntry} onChange={(e) => setEditEmp({ ...editEmp, expectedEntry: e.target.value })} />
+              <label>Horario esperado</label>
+              <div className="hours-row">
+                <label className="sub-field">Entrada
+                  <input type="time" value={editEmp.expectedEntry} onChange={(e) => setEditEmp({ ...editEmp, expectedEntry: e.target.value })} />
+                </label>
+                <label className="sub-field">Salida
+                  <input type="time" value={editEmp.expectedExit} onChange={(e) => setEditEmp({ ...editEmp, expectedExit: e.target.value })} />
+                </label>
+                <label className="sub-field">Almuerzo
+                  <input type="number" min="0" max="240" step="15" value={editEmp.breakMinutes} onChange={(e) => setEditEmp({ ...editEmp, breakMinutes: e.target.value })} />
+                </label>
+              </div>
+              <small className="hint">
+                Jornada esperada: <strong>{fmtH(expectedDailyHours({ ...editEmp, breakMinutes: Number(editEmp.breakMinutes) }))}</strong> al día.
+                Salir más tarde cuenta como horas extra, no como incidencia.
+              </small>
             </div>
             <div className="dialog-actions">
               <button className="btn" onClick={() => setEditEmp(null)}>Cancelar</button>
@@ -1167,6 +1223,8 @@ export default function AdminPanel() {
                     cedula: editEmp.cedula,
                     sede: editEmp.sede,
                     expectedEntry: editEmp.expectedEntry,
+                    expectedExit: editEmp.expectedExit,
+                    breakMinutes: Number(editEmp.breakMinutes),
                   });
                   if (r.error) { showToast(r.error); return; }
                   setEditEmp(null);
@@ -1177,7 +1235,24 @@ export default function AdminPanel() {
                 Guardar cambios
               </button>
             </div>
-          </div>
+
+            <div className="danger-zone">
+              <button
+                className="btn danger-btn block"
+                onClick={() => {
+                  if (confirm(`¿Eliminar a ${editEmp.name}? Ya no podrá marcar asistencia.`)) {
+                    removePerson(editEmp.id);
+                    setEditEmp(null);
+                    refresh();
+                    showToast(`${editEmp.name} eliminado`);
+                  }
+                }}
+              >
+                Eliminar empleado
+              </button>
+            </div>
+            </div>
+          </aside>
         </div>
       )}
 
@@ -1374,6 +1449,9 @@ const CSS = `
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .field label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .field input, .field select { font-family: var(--f-data); font-size: 14px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); color-scheme: light; }
+.hours-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.hours-row .sub-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.hours-row .sub-field input { font-family: var(--f-data); font-size: 14px; font-weight: 400; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); color-scheme: light; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; font-family: var(--f-data); font-size: 13.5px; padding: 9px 18px; border-radius: 8px; z-index: 60; box-shadow: var(--elev-2); }
@@ -1393,6 +1471,10 @@ const CSS = `
 .att-table tbody tr.static { cursor: default; }
 .att-table tbody tr.static:hover td { background: transparent; }
 .att-table td .tl-actions { justify-content: flex-end; }
+
+/* Zona de acciones destructivas al pie de los drawers de edición */
+.danger-zone { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--grid); }
+.danger-zone .btn.block, .btn.danger-btn.block { display: block; width: 100%; text-align: center; }
 .att-table .att-name { font-weight: 600; }
 .att-table .att-sede { color: var(--muted); }
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 10px; font-size: 12.5px; color: var(--muted); }

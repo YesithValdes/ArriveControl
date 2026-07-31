@@ -18,6 +18,18 @@ import { getSedes } from '../services/sedesService.js';
 
 const FACEAPI_MODEL_URL = '/models';
 
+/** Muestra la jornada esperada resultante: salida − entrada − almuerzo. */
+function fmtExpected(entry, exit, breakMin) {
+  if (!/^\d{2}:\d{2}$/.test(entry) || !/^\d{2}:\d{2}$/.test(exit)) return '—';
+  const [eh, em] = entry.split(':').map(Number);
+  const [xh, xm] = exit.split(':').map(Number);
+  let mins = (xh * 60 + xm) - (eh * 60 + em);
+  if (mins <= 0) mins += 24 * 60; // cruza medianoche
+  mins -= Number(breakMin) || 0;
+  if (mins <= 0) return '—';
+  return `${(mins / 60).toFixed(1).replace('.', ',')} h`;
+}
+
 export default function EmployeeRegister() {
   const faceapiRef = useRef(null);
   const fileRef = useRef(null);
@@ -27,6 +39,8 @@ export default function EmployeeRegister() {
   const [name, setName] = useState('');
   const [cedula, setCedula] = useState('');
   const [expectedEntry, setExpectedEntry] = useState('08:00');
+  const [expectedExit, setExpectedExit] = useState('19:00');
+  const [breakMinutes, setBreakMinutes] = useState('60');
   const [sedes, setSedes] = useState([]);
   const [sede, setSede] = useState('');
   useEffect(() => {
@@ -100,7 +114,7 @@ export default function EmployeeRegister() {
   const canRegister = ready && !analyzing && name.trim().length >= 3 && cedula.trim().length >= 5 && photo;
 
   const handleRegister = () => {
-    const result = addPerson(name, photo.descriptor, cedula, expectedEntry, sede);
+    const result = addPerson(name, photo.descriptor, { cedula, sede, expectedEntry, expectedExit, breakMinutes: Number(breakMinutes) });
     if (result.error) {
       setStatus(`❌ ${result.error}`);
       return;
@@ -158,9 +172,23 @@ export default function EmployeeRegister() {
         </div>
 
         <div className="field">
-          <label htmlFor="r-hora">Hora esperada de entrada</label>
-          <input id="r-hora" type="time" value={expectedEntry} onChange={(e) => setExpectedEntry(e.target.value)} />
-          <small className="field-hint">Se usa para avisar a RRHH si su primera marcación del día es mucho más tarde de lo normal.</small>
+          <label>Horario esperado</label>
+          <div className="hours-row">
+            <label className="sub-field">Entrada
+              <input type="time" value={expectedEntry} onChange={(e) => setExpectedEntry(e.target.value)} />
+            </label>
+            <label className="sub-field">Salida
+              <input type="time" value={expectedExit} onChange={(e) => setExpectedExit(e.target.value)} />
+            </label>
+            <label className="sub-field">Almuerzo
+              <input type="number" min="0" max="240" step="15" value={breakMinutes}
+                onChange={(e) => setBreakMinutes(e.target.value)} />
+            </label>
+          </div>
+          <small className="field-hint">
+            Jornada esperada: <strong>{fmtExpected(expectedEntry, expectedExit, breakMinutes)}</strong> al día.
+            Salir más tarde no genera alerta (se cuenta como horas extra); solo se avisa si sale mucho antes.
+          </small>
         </div>
 
         <div className="field">
@@ -245,6 +273,9 @@ const CSS = `
 .field label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .field input[type="text"], .field input[type="time"], .field select { font: inherit; font-size: 15px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
 .field-hint { color: var(--muted); font-size: 12px; }
+.hours-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.sub-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.sub-field input { font: inherit; font-size: 15px; font-weight: 400; color: var(--ink); padding: 9px 10px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--page); }
 .field input:focus-visible, .btn:focus-visible, .photo-drop:focus-visible, .del:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .photo-drop { font: inherit; width: 100%; padding: 22px 12px; border: 2px dashed var(--border); border-radius: 12px; background: var(--page); color: var(--ink-2); font-size: 22px; cursor: pointer; line-height: 1.5; }

@@ -16,7 +16,7 @@ globalThis.localStorage = {
   removeItem: (k) => store.delete(k),
 };
 
-const { registerPassage, getJourneys, _resetJourneys } = await import('../services/journeyService.js');
+const { registerPassage, getJourneys, listJourneyEvents, _resetJourneys } = await import('../services/journeyService.js');
 const { euclideanDistance } = await import('../utils/faceMath.js');
 const { addPerson, listPeople } = await import('../services/rosterService.js');
 
@@ -113,17 +113,48 @@ await test('si guardar el evento falla, registerPassage devuelve storageError en
 console.log('\n👥 CASO 7 · Colisión de IDs al registrar dos empleados en el mismo milisegundo');
 await test('dos addPerson simultáneos no deben poder chocar de id', () => {
   const d = new Array(128).fill(0.2);
-  const a = addPerson('Gemela Uno', d, '111111');
-  const b = addPerson('Gemela Dos', d, '222222');
+  const a = addPerson('Gemela Uno', d, { cedula: '111111' });
+  const b = addPerson('Gemela Dos', d, { cedula: '222222' });
   assert.notEqual(a.id, b.id);
 });
 
 console.log('\n🔢 CASO 8 · Cédula con formato distinto ("1.085.312" vs "1085312")');
 await test('la misma cédula con puntos no debería registrarse dos veces', () => {
   const d = new Array(128).fill(0.3);
-  addPerson('Puntos', d, '1085312456');
-  const dup = addPerson('Sin Puntos', d, '1.085.312.456');
+  addPerson('Puntos', d, { cedula: '1085312456' });
+  const dup = addPerson('Sin Puntos', d, { cedula: '1.085.312.456' });
   assert.ok(dup.error, 'formatos distintos de la misma cédula crean duplicados');
+});
+
+console.log('\n🍴 CASO 9 · Jornada partida (8–19 con almuerzo) y salida esperada');
+const JP = { id: 'PJ', name: 'Jornada Partida', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 };
+_resetJourneys();
+await test('salir a almorzar (12:00) NO debe quedar marcado como salida temprana', () => {
+  registerPassage(JP, at('2026-07-30T08:00:00'));
+  const lunch = registerPassage(JP, at('2026-07-30T12:00:00'));
+  assert.equal(lunch.type, 'out');
+  // Al marcar la salida se marca provisionalmente...
+  assert.equal(lunch.flag, 'early-exit');
+  // ...pero al REGRESAR del almuerzo la bandera se limpia.
+  const back = registerPassage(JP, at('2026-07-30T14:00:00'));
+  assert.equal(back.type, 'in');
+  const events = listJourneyEvents().filter((e) => e.personId === 'PJ' && e.type === 'out');
+  assert.equal(events[0].flag, null, 'la salida del almuerzo quedó marcada como incidencia');
+});
+await test('salida final a las 19:05 (se alargó) NO es anomalía', () => {
+  const out = registerPassage(JP, at('2026-07-30T19:05:00'));
+  assert.equal(out.type, 'out');
+  assert.equal(out.flag, null, 'alargarse debe contar como extra, no como incidencia');
+});
+_resetJourneys();
+await test('irse a las 15:00 sin volver SÍ es salida temprana', () => {
+  registerPassage(JP, at('2026-07-31T08:00:00'));
+  const out = registerPassage(JP, at('2026-07-31T15:00:00'));
+  assert.equal(out.flag, 'early-exit');
+});
+await test('horas esperadas de 8–19 con 60 min de almuerzo = 10 h', async () => {
+  const { expectedDailyHours } = await import('../services/rosterService.js');
+  assert.equal(expectedDailyHours(JP), 10);
 });
 
 console.log(`\n${pass} casos OK · ${fail} debilidades encontradas\n`);

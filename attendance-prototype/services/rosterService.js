@@ -34,7 +34,21 @@ export function findByCedula(cedula) {
   return listPeople().find((p) => p.cedula === c) || null;
 }
 
-export function addPerson(name, descriptor, cedula = '', expectedEntry = '08:00', sede = '') {
+const HHMM = /^\d{2}:\d{2}$/;
+
+/**
+ * Registra un empleado.
+ * @param {string} name
+ * @param {number[]} descriptor - vector facial de 128 floats
+ * @param {object} [opts]
+ * @param {string} [opts.cedula]
+ * @param {string} [opts.sede]           - limita su validación GPS a esa sede
+ * @param {string} [opts.expectedEntry]  - "HH:MM" hora esperada de entrada
+ * @param {string} [opts.expectedExit]   - "HH:MM" hora esperada de salida
+ * @param {number} [opts.breakMinutes]   - pausa de almuerzo (para horas esperadas)
+ */
+export function addPerson(name, descriptor, opts = {}) {
+  const { cedula = '', sede = '', expectedEntry = '08:00', expectedExit = '19:00', breakMinutes = 60 } = opts;
   const people = listPeople();
   const c = normalizeCedula(cedula);
   if (c && people.some((p) => p.cedula === c)) {
@@ -45,9 +59,13 @@ export function addPerson(name, descriptor, cedula = '', expectedEntry = '08:00'
     id,
     name: name.trim() || id,
     cedula: c,
-    // Hora esperada de entrada ("HH:MM"): la alerta de entrada tardía se
-    // calcula respecto a ESTE horario, no a una hora fija global.
-    expectedEntry: /^\d{2}:\d{2}$/.test(expectedEntry) ? expectedEntry : '08:00',
+    // Horario esperado ("HH:MM"). La entrada regula la alerta de tardanza;
+    // la salida, la de salida temprana y el cálculo de horas esperadas.
+    expectedEntry: HHMM.test(expectedEntry) ? expectedEntry : '08:00',
+    expectedExit: HHMM.test(expectedExit) ? expectedExit : '19:00',
+    // Pausa de almuerzo en minutos: se descuenta de las horas ESPERADAS
+    // del día (salida − entrada − pausa). 0 = jornada continua.
+    breakMinutes: Number.isFinite(breakMinutes) && breakMinutes >= 0 ? breakMinutes : 60,
     // Sede asignada: se usa para filtrar el dashboard por sede y para
     // limitar la validación GPS a la sede del empleado (no a cualquiera).
     sede: String(sede || '').trim(),
@@ -57,6 +75,17 @@ export function addPerson(name, descriptor, cedula = '', expectedEntry = '08:00'
   people.push(person);
   save(PEOPLE_KEY, people);
   return person;
+}
+
+/** Horas que se esperan del empleado en un día: salida − entrada − pausa. */
+export function expectedDailyHours(person) {
+  if (!person || !HHMM.test(person.expectedEntry || '') || !HHMM.test(person.expectedExit || '')) return null;
+  const [eh, em] = person.expectedEntry.split(':').map(Number);
+  const [xh, xm] = person.expectedExit.split(':').map(Number);
+  let mins = (xh * 60 + xm) - (eh * 60 + em);
+  if (mins <= 0) mins += 24 * 60; // turno que cruza medianoche
+  mins -= person.breakMinutes ?? 0;
+  return Math.max(0, mins) / 60;
 }
 
 export function removePerson(id) {
@@ -76,8 +105,16 @@ export function updatePerson(id, partial) {
     }
   }
   if (partial.name !== undefined) next.name = String(partial.name).trim() || people[i].name;
-  if (partial.expectedEntry !== undefined && !/^\d{2}:\d{2}$/.test(partial.expectedEntry)) {
+  if (partial.expectedEntry !== undefined && !HHMM.test(partial.expectedEntry)) {
     next.expectedEntry = people[i].expectedEntry;
+  }
+  if (partial.expectedExit !== undefined && !HHMM.test(partial.expectedExit)) {
+    next.expectedExit = people[i].expectedExit ?? '19:00';
+  }
+  if (partial.breakMinutes !== undefined) {
+    next.breakMinutes = Number.isFinite(partial.breakMinutes) && partial.breakMinutes >= 0
+      ? partial.breakMinutes
+      : (people[i].breakMinutes ?? 60);
   }
   people[i] = next;
   save(PEOPLE_KEY, people);

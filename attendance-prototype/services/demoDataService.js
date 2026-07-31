@@ -17,16 +17,16 @@ const EVENTS_KEY = 'attendance_journey_events';
 const PEOPLE_KEY = 'attendance_roster_people';
 
 const PEOPLE = [
-  { id: 'EMP-001', name: 'Laura Gómez',   cedula: '1085245631', sede: 'Sede 1', expectedEntry: '09:00' },
-  { id: 'EMP-002', name: 'Carlos Ruiz',   cedula: '1085312478', sede: 'Sede 1', expectedEntry: '09:00' },
-  { id: 'EMP-003', name: 'Ana Martínez',  cedula: '1086529814', sede: 'Sede 2', expectedEntry: '09:00' },
-  { id: 'EMP-004', name: 'Jorge Delgado', cedula: '1085774102', sede: 'Sede 1', expectedEntry: '09:00' },
-  { id: 'EMP-005', name: 'María Torres',  cedula: '1087163925', sede: 'Sede 2', expectedEntry: '09:00' },
-  { id: 'EMP-006', name: 'Pedro Salazar', cedula: '1085901347', sede: 'Sede 3', expectedEntry: '09:00' },
-  { id: 'EMP-007', name: 'Sofía Ríos',    cedula: '1086420589', sede: 'Sede 2', expectedEntry: '09:00' },
-  { id: 'EMP-008', name: 'Andrés Peña',   cedula: '1085637201', sede: 'Sede 3', expectedEntry: '09:00' },
-  { id: 'EMP-009', name: 'Diana López',   cedula: '108735846',  sede: 'Sede 1', expectedEntry: '09:00' },
-  { id: 'EMP-010', name: 'Camilo Vela',   cedula: '1086194753', sede: 'Sede 3', expectedEntry: '09:00' },
+  { id: 'EMP-001', name: 'Laura Gómez',   cedula: '1085245631', sede: 'Sede 1', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 },
+  { id: 'EMP-002', name: 'Carlos Ruiz',   cedula: '1085312478', sede: 'Sede 1', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 },
+  { id: 'EMP-003', name: 'Ana Martínez',  cedula: '1086529814', sede: 'Sede 2', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 },
+  { id: 'EMP-004', name: 'Jorge Delgado', cedula: '1085774102', sede: 'Sede 1', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 },
+  { id: 'EMP-005', name: 'María Torres',  cedula: '1087163925', sede: 'Sede 2', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 },
+  { id: 'EMP-006', name: 'Pedro Salazar', cedula: '1085901347', sede: 'Sede 3', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 },
+  { id: 'EMP-007', name: 'Sofía Ríos',    cedula: '1086420589', sede: 'Sede 2', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 },
+  { id: 'EMP-008', name: 'Andrés Peña',   cedula: '1085637201', sede: 'Sede 3', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 },
+  { id: 'EMP-009', name: 'Diana López',   cedula: '108735846',  sede: 'Sede 1', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 },
+  { id: 'EMP-010', name: 'Camilo Vela',   cedula: '1086194753', sede: 'Sede 3', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 },
 ];
 
 /** Fecha local de hace `daysAgo` días a la hora hh:mm. */
