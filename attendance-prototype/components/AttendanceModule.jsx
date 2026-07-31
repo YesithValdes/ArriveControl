@@ -18,6 +18,7 @@
 
 import { useEffect, useState } from 'react';
 import { isWithinOfficeRadius, MAX_RADIUS_METERS } from '../utils/haversine.js';
+import { getSedes } from '../services/sedesService.js';
 import {
   isWebAuthnAvailable,
   hasPlatformAuthenticator,
@@ -128,7 +129,7 @@ export default function AttendanceModule({
       }
 
       const { latitude, longitude, accuracy } = best.coords;
-      const { inRange, distance, nearest } = isWithinOfficeRadius(latitude, longitude);
+      const { inRange, distance, nearest } = isWithinOfficeRadius(latitude, longitude, undefined, getSedes());
       setLocationInfo({ distance, accuracy: Math.round(accuracy), nearest });
 
       if (inRange) {

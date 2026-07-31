@@ -8,14 +8,17 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { haversineDistance, OFFICE_LOCATIONS, MAX_RADIUS_METERS } from '../utils/haversine.js';
+import { haversineDistance, MAX_RADIUS_METERS } from '../utils/haversine.js';
+import { getSedes } from '../services/sedesService.js';
 
 export default function GpsDebug() {
   const [reading, setReading] = useState(null);
   const [best, setBest] = useState(null); // mejor precisión observada
   const [error, setError] = useState(null);
   const [samples, setSamples] = useState(0);
+  const [sedes, setSedes] = useState([]);
   const watchId = useRef(null);
+  useEffect(() => { setSedes(getSedes()); }, []);
 
   const start = () => {
     setError(null);
@@ -50,8 +53,8 @@ export default function GpsDebug() {
   useEffect(() => stop, []);
 
   const distances = (coord) =>
-    OFFICE_LOCATIONS.map((o) => ({
-      name: o.name,
+    sedes.map((o) => ({
+      name: `${o.name} (radio ${o.radius ?? MAX_RADIUS_METERS} m)`,
       d: Math.round(haversineDistance(coord.lat, coord.lon, o.lat, o.lon) * 10) / 10,
     }));
 

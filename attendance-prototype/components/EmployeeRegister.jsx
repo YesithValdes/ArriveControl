@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { listPeople, addPerson, removePerson } from '../services/rosterService.js';
-import { OFFICE_LOCATIONS } from '../utils/haversine.js';
+import { getSedes } from '../services/sedesService.js';
 
 const FACEAPI_MODEL_URL = '/models';
 
@@ -27,7 +27,13 @@ export default function EmployeeRegister() {
   const [name, setName] = useState('');
   const [cedula, setCedula] = useState('');
   const [expectedEntry, setExpectedEntry] = useState('08:00');
-  const [sede, setSede] = useState(OFFICE_LOCATIONS[0]?.name || '');
+  const [sedes, setSedes] = useState([]);
+  const [sede, setSede] = useState('');
+  useEffect(() => {
+    const list = getSedes();
+    setSedes(list);
+    setSede((s) => s || list[0]?.name || '');
+  }, []);
   const [photo, setPhoto] = useState(null);      // { previewUrl, descriptor } | null
   const [analyzing, setAnalyzing] = useState(false);
   const [people, setPeople] = useState([]);
@@ -144,7 +150,7 @@ export default function EmployeeRegister() {
         <div className="field">
           <label htmlFor="r-sede">Sede asignada</label>
           <select id="r-sede" value={sede} onChange={(e) => setSede(e.target.value)}>
-            {OFFICE_LOCATIONS.map((o) => (
+            {sedes.map((o) => (
               <option key={o.name} value={o.name}>{o.name}</option>
             ))}
           </select>

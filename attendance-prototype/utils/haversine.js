@@ -53,20 +53,20 @@ export function haversineDistance(lat1, lon1, lat2, lon2) {
  * @returns {{ inRange: boolean, distance: number, nearest: string }}
  *   distance en metros hasta la sede más cercana evaluada.
  */
-export function isWithinOfficeRadius(userLat, userLon, onlySede) {
+export function isWithinOfficeRadius(userLat, userLon, onlySede, locations = OFFICE_LOCATIONS) {
   const candidates = onlySede
-    ? OFFICE_LOCATIONS.filter((o) => o.name === onlySede)
-    : OFFICE_LOCATIONS;
+    ? locations.filter((o) => o.name === onlySede)
+    : locations;
   // Sede desconocida → cae a todas (mejor validar de más que bloquear).
-  const list = candidates.length > 0 ? candidates : OFFICE_LOCATIONS;
+  const list = candidates.length > 0 ? candidates : locations;
 
-  let best = { distance: Infinity, name: null };
+  let best = { distance: Infinity, name: null, radius: MAX_RADIUS_METERS };
   for (const office of list) {
     const d = haversineDistance(userLat, userLon, office.lat, office.lon);
-    if (d < best.distance) best = { distance: d, name: office.name };
+    if (d < best.distance) best = { distance: d, name: office.name, radius: office.radius ?? MAX_RADIUS_METERS };
   }
   return {
-    inRange: best.distance <= MAX_RADIUS_METERS,
+    inRange: best.distance <= best.radius, // radio propio de cada sede
     distance: Math.round(best.distance * 100) / 100,
     nearest: best.name,
   };

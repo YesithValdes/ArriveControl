@@ -63,6 +63,27 @@ export function removePerson(id) {
   save(PEOPLE_KEY, listPeople().filter((p) => p.id !== id));
 }
 
+/** Actualiza datos del empleado (no el rostro). Valida cédula única. */
+export function updatePerson(id, partial) {
+  const people = listPeople();
+  const i = people.findIndex((p) => p.id === id);
+  if (i < 0) return { error: 'Empleado no encontrado.' };
+  const next = { ...people[i], ...partial };
+  if (partial.cedula !== undefined) {
+    next.cedula = normalizeCedula(partial.cedula);
+    if (next.cedula && people.some((p) => p.id !== id && p.cedula === next.cedula)) {
+      return { error: `Otra persona ya tiene la cédula ${next.cedula}.` };
+    }
+  }
+  if (partial.name !== undefined) next.name = String(partial.name).trim() || people[i].name;
+  if (partial.expectedEntry !== undefined && !/^\d{2}:\d{2}$/.test(partial.expectedEntry)) {
+    next.expectedEntry = people[i].expectedEntry;
+  }
+  people[i] = next;
+  save(PEOPLE_KEY, people);
+  return next;
+}
+
 export function getPerson(id) {
   return listPeople().find((p) => p.id === id) || null;
 }

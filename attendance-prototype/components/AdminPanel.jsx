@@ -16,12 +16,38 @@ import {
   _resetJourneys,
   NIGHT_WINDOW_MS,
 } from '../services/journeyService.js';
-import { listPeople, removePerson } from '../services/rosterService.js';
+import { listPeople, removePerson, updatePerson } from '../services/rosterService.js';
 import { getLaborConfig, saveLaborConfig } from '../services/configService.js';
-import { OFFICE_LOCATIONS } from '../utils/haversine.js';
+import { getSedes, addSede, updateSede, removeSede } from '../services/sedesService.js';
 
 const ADMIN_PIN = '1234'; // prototipo — en producción: roles/login en Supabase
 import { loadDemoData } from '../services/demoDataService.js';
+
+/** Iconos de línea (estilo Lucide, inline SVG): heredan el color del texto. */
+function Icon({ name, size = 17 }) {
+  const paths = {
+    dashboard: <><rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" /></>,
+    alert: <><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></>,
+    clock: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
+    user: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
+    file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></>,
+    history: <><path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l4 2" /></>,
+    settings: <><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></>,
+    lock: <><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
+    monitor: <><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></>,
+    pin: <><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></>,
+    database: <><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></>,
+    trash: <><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></>,
+    download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></>,
+    chevronLeft: <polyline points="15 18 9 12 15 6" />,
+    chevronRight: <polyline points="9 18 15 12 9 6" />,
+  };
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {paths[name]}
+    </svg>
+  );
+}
 
 const dayKey = (iso) => iso.slice(0, 10);
 const todayKey = () => dayKey(new Date().toISOString());
@@ -82,6 +108,15 @@ export default function AdminPanel() {
     setCfg(saveLaborConfig(partial));
     showToast('Reglamento actualizado');
   };
+
+  // Sedes editables (fuente: sedesService; se relee con cada refresh).
+  const [sedes, setSedes] = useState([]);
+  useEffect(() => { setSedes(getSedes()); }, [tick]);
+  const [newSede, setNewSede] = useState({ name: '', lat: '', lon: '', radius: '50' });
+  const [newHoliday, setNewHoliday] = useState('');
+
+  // Edición de empleado (CRUD): diálogo con datos no biométricos.
+  const [editEmp, setEditEmp] = useState(null); // { id, name, cedula, sede, expectedEntry }
   const [toast, setToast] = useState(null);
   const [dialog, setDialog] = useState(null); // { personId, personName, type, time, reason, eventId? }
   const refresh = () => setTick((t) => t + 1);
@@ -149,7 +184,7 @@ export default function AdminPanel() {
     });
 
     // Comparativa por sede (siempre sobre TODAS las filas, sin filtro).
-    const sedeNames = OFFICE_LOCATIONS.map((o) => o.name);
+    const sedeNames = getSedes().map((o) => o.name);
     const sedeStats = sedeNames.map((name) => {
       const rs = rows.filter((r) => r.sede === name);
       return {
@@ -210,6 +245,10 @@ export default function AdminPanel() {
       return dayKey(d.toISOString());
     };
 
+    // ¿La jornada empezó en domingo o festivo? (recargo dominical/festivo)
+    const holidaySet = new Set(cfg.holidays);
+    const isDomFest = (iso) => new Date(iso).getDay() === 0 || holidaySet.has(dayKey(iso));
+
     return [...byPerson.entries()]
       .map(([id, r]) => {
         // Horas extra: por cada semana del rango, lo que exceda la jornada legal.
@@ -223,6 +262,17 @@ export default function AdminPanel() {
         for (const evts of byWeek.values()) {
           extras += Math.max(0, pairedHours(evts, nowMs) - cfg.weeklyHours);
         }
+
+        // Horas trabajadas en domingo/festivo (el par se atribuye al día de la entrada).
+        let domFest = 0;
+        let openIn = null;
+        for (const e of r.events) {
+          if (e.type === 'in') openIn = e;
+          else if (e.type === 'out' && openIn) {
+            if (isDomFest(openIn.ts)) domFest += (new Date(e.ts) - new Date(openIn.ts)) / 3600000;
+            openIn = null;
+          }
+        }
         return {
           id,
           name: r.name,
@@ -231,6 +281,7 @@ export default function AdminPanel() {
           days: new Set(r.events.filter((e) => e.type === 'in').map((e) => dayKey(e.ts))).size,
           hours: pairedHours(r.events, nowMs),
           extras,
+          domFest,
           lateCount: r.events.filter((e) => e.flag === 'late-entry').length,
         };
       })
@@ -240,8 +291,8 @@ export default function AdminPanel() {
 
   // Exporta el reporte visible a CSV (separador ; — Excel en español).
   const exportCSV = () => {
-    const head = ['Empleado', 'Cédula', 'Sede', 'Días trabajados', 'Horas totales', `Horas extra (>${cfg.weeklyHours}h/sem)`, 'Entradas tardías'];
-    const lines = report.map((r) => [r.name, r.cedula, r.sede, r.days, r.hours.toFixed(2).replace('.', ','), r.extras.toFixed(2).replace('.', ','), r.lateCount]);
+    const head = ['Empleado', 'Cédula', 'Sede', 'Días trabajados', 'Horas totales', `Horas extra (>${cfg.weeklyHours}h/sem)`, 'Horas dominicales/festivas', 'Entradas tardías'];
+    const lines = report.map((r) => [r.name, r.cedula, r.sede, r.days, r.hours.toFixed(2).replace('.', ','), r.extras.toFixed(2).replace('.', ','), r.domFest.toFixed(2).replace('.', ','), r.lateCount]);
     const csv = [head, ...lines]
       .map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';'))
       .join('\r\n');
@@ -296,13 +347,13 @@ export default function AdminPanel() {
   };
 
   const tabs = [
-    { id: 'dashboard', icon: '📊', label: 'Dashboard' },
-    { id: 'anomalias', icon: '⚠️', label: 'Anomalías', badge: data.anomalies.length },
-    { id: 'equipo', icon: '🕐', label: 'Asistencia' },
-    { id: 'empleados', icon: '👤', label: 'Empleados' },
-    { id: 'reportes', icon: '📄', label: 'Reportes' },
-    { id: 'historial', icon: '📋', label: 'Historial' },
-    { id: 'ajustes', icon: '⚙️', label: 'Ajustes' },
+    { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
+    { id: 'anomalias', icon: 'alert', label: 'Anomalías', badge: data.anomalies.length },
+    { id: 'equipo', icon: 'clock', label: 'Asistencia' },
+    { id: 'empleados', icon: 'user', label: 'Empleados' },
+    { id: 'reportes', icon: 'file', label: 'Reportes' },
+    { id: 'historial', icon: 'history', label: 'Historial' },
+    { id: 'ajustes', icon: 'settings', label: 'Ajustes' },
   ];
 
   const chip = (cls, text) => <span className={`chip ${cls}`}>{text}</span>;
@@ -330,9 +381,9 @@ export default function AdminPanel() {
         value={sedeFilter}
         onChange={(e) => setSedeFilter(e.target.value)}
       >
-        <option value="all">🌐 Todas las sedes</option>
-        {OFFICE_LOCATIONS.map((o) => (
-          <option key={o.name} value={o.name}>📍 {o.name}</option>
+        <option value="all">Todas las sedes</option>
+        {sedes.map((o) => (
+          <option key={o.name} value={o.name}>{o.name}</option>
         ))}
       </select>
     </div>
@@ -345,7 +396,7 @@ export default function AdminPanel() {
         <style>{CSS}</style>
         <div className="pin-gate">
           <div className="pin-card">
-            <span className="logo big" aria-hidden="true">⏱</span>
+            <span className="logo big" aria-hidden="true">AC</span>
             <h1>Panel del administrador</h1>
             <p className="hint">Ingresa el PIN para continuar.</p>
             <input
@@ -413,7 +464,7 @@ export default function AdminPanel() {
                   </div>
                   {data.sedeStats.map((s) => (
                     <div className="sede-row" role="row" key={s.name}>
-                      <span className="sede-name">📍 {s.name}</span>
+                      <span className="sede-name">{s.name}</span>
                       <span>{s.present}/{s.total}</span>
                       <span className={s.absent > 0 ? 'warn-num' : ''}>{s.absent}</span>
                       <span>{fmtH(s.hours)}</span>
@@ -422,7 +473,7 @@ export default function AdminPanel() {
                   ))}
                 </div>
                 {data.sinSede > 0 && (
-                  <p className="axis-note">⚠️ {data.sinSede} empleado(s) sin sede asignada — re-regístralos o asígnales sede al migrar a base de datos.</p>
+                  <p className="axis-note">{data.sinSede} empleado(s) sin sede asignada — re-regístralos o asígnales sede al migrar a base de datos.</p>
                 )}
               </section>
             )}
@@ -461,7 +512,7 @@ export default function AdminPanel() {
             <h2>Anomalías por resolver</h2>
             <p className="hint">Marcaciones que no cierran una jornada normal. Cada corrección queda en el historial.</p>
             <div className="scrollable">
-              {view.anomalies.length === 0 && <p className="empty">✓ No hay anomalías pendientes. Todo en orden.</p>}
+              {view.anomalies.length === 0 && <p className="empty">Sin anomalías pendientes.</p>}
               {view.anomalies.map((a, i) => (
                 <div className="anomaly" key={a.event.id + i}>
                   {a.kind === 'missing-exit' ? chip('crit', 'Salida faltante') : chip('warn', 'Entrada tardía')}
@@ -514,7 +565,7 @@ export default function AdminPanel() {
           <section className="card grow">
             <h2>Empleados registrados <span className="muted-count">{roster.length}</span></h2>
             <p className="hint">Personas que pueden marcar en el kiosco. El registro es por foto, con cédula, sede y horario.</p>
-            <Link className="btn primary block" href="/admin/registro">＋ Registrar empleado</Link>
+            <Link className="btn primary block" href="/admin/registro">Registrar empleado</Link>
             <div className="scrollable">
               {roster.length === 0 && <p className="empty">No hay empleados {sedeFilter === 'all' ? 'registrados' : `en ${sedeFilter}`}.</p>}
               {roster.map((p) => (
@@ -524,18 +575,26 @@ export default function AdminPanel() {
                       <span className="emp-name">{p.name}</span>
                       <span className="emp-id"> · {p.cedula ? `C.C. ${p.cedula}` : 'sin cédula'}</span>
                     </div>
-                    <button
-                      className="btn danger-btn"
-                      onClick={() => {
-                        if (confirm(`¿Eliminar a ${p.name}? Ya no podrá marcar asistencia.`)) {
-                          removePerson(p.id);
-                          refresh();
-                          showToast(`${p.name} eliminado`);
-                        }
-                      }}
-                    >
-                      Eliminar
-                    </button>
+                    <div className="emp-actions">
+                      <button
+                        className="btn"
+                        onClick={() => setEditEmp({ id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '', expectedEntry: p.expectedEntry || '08:00' })}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="btn danger-btn"
+                        onClick={() => {
+                          if (confirm(`¿Eliminar a ${p.name}? Ya no podrá marcar asistencia.`)) {
+                            removePerson(p.id);
+                            refresh();
+                            showToast(`${p.name} eliminado`);
+                          }
+                        }}
+                      >
+                        Eliminar
+                      </button>
+                    </div>
                   </div>
                   <div className="emp-data">
                     <span><b>Sede</b> {p.sede || '—'}</span>
@@ -555,14 +614,14 @@ export default function AdminPanel() {
             <div className="rep-controls">
               <label>Desde <input type="date" value={repFrom} max={repTo} onChange={(e) => setRepFrom(e.target.value)} /></label>
               <label>Hasta <input type="date" value={repTo} min={repFrom} max={todayKey()} onChange={(e) => setRepTo(e.target.value)} /></label>
-              <button className="btn primary" onClick={exportCSV} disabled={report.length === 0}>⬇ Exportar CSV</button>
+              <button className="btn primary" onClick={exportCSV} disabled={report.length === 0}>Exportar CSV</button>
             </div>
             <div className="scrollable">
               {report.length === 0 && <p className="empty">Sin marcaciones en este período{sedeFilter !== 'all' ? ` para ${sedeFilter}` : ''}.</p>}
               {report.length > 0 && (
                 <div className="rep-table" role="table">
                   <div className="rep-row head" role="row">
-                    <span>Empleado</span><span>Sede</span><span>Días</span><span>Horas</span><span>Extras</span><span>Tardías</span>
+                    <span>Empleado</span><span>Sede</span><span>Días</span><span>Horas</span><span>Extras</span><span>Dom/Fest</span><span>Tardías</span>
                   </div>
                   {report.map((r) => (
                     <div className="rep-row" role="row" key={r.id}>
@@ -571,6 +630,7 @@ export default function AdminPanel() {
                       <span>{r.days}</span>
                       <span>{fmtH(r.hours)}</span>
                       <span className={r.extras > 0 ? 'warn-num' : ''}>{r.extras > 0 ? fmtH(r.extras) : '—'}</span>
+                      <span className={r.domFest > 0 ? 'warn-num' : ''}>{r.domFest > 0 ? fmtH(r.domFest) : '—'}</span>
                       <span className={r.lateCount > 0 ? 'warn-num' : ''}>{r.lateCount}</span>
                     </div>
                   ))}
@@ -601,11 +661,60 @@ export default function AdminPanel() {
         {tab === 'ajustes' && (
           <section className="card grow">
             <h2>Ajustes</h2>
-            <p className="hint">Reglamento laboral y herramientas del sistema.</p>
+            <p className="hint">Configuración del sistema. Cada opción se edita en su propia pantalla.</p>
             <div className="scrollable">
-              {/* Reglamento interno — regula extras y puntualidad en todo el panel */}
+              <button className="tool" onClick={() => setTab('cfg-reglamento')}>
+                <span className="icon"><Icon name="file" size={19} /></span>
+                <span><b>Reglamento laboral</b><br /><small>Jornada legal ({cfg.weeklyHours} h/sem), gracia de puntualidad y festivos ({cfg.holidays.length}).</small></span>
+              </button>
+              <button className="tool" onClick={() => setTab('cfg-sedes')}>
+                <span className="icon"><Icon name="pin" size={19} /></span>
+                <span><b>Sedes</b><br /><small>{sedes.length} sede(s) registradas — agregar, mover o cambiar el radio GPS.</small></span>
+              </button>
+              <Link className="tool" href="/">
+                <span className="icon"><Icon name="monitor" size={19} /></span>
+                <span><b>Ir al kiosco</b><br /><small>Pantalla de marcación facial (1:N).</small></span>
+              </Link>
+              <Link className="tool" href="/gps">
+                <span className="icon"><Icon name="pin" size={19} /></span>
+                <span><b>Diagnóstico GPS</b><br /><small>Precisión y distancia a cada sede desde este dispositivo.</small></span>
+              </Link>
+              <button
+                className="tool"
+                onClick={() => {
+                  const r = loadDemoData();
+                  refresh();
+                  showToast(`Datos de prueba cargados: ${r.people} empleados, ${r.events} eventos`);
+                }}
+              >
+                <span className="icon"><Icon name="database" size={19} /></span>
+                <span><b>Cargar datos de prueba</b><br /><small>Una semana de jornadas, anomalías y correcciones de ejemplo.</small></span>
+              </button>
+              <button
+                className="tool danger"
+                onClick={() => {
+                  if (confirm('¿Borrar todos los eventos de jornada de este dispositivo? Esta acción no se puede deshacer.')) {
+                    _resetJourneys();
+                    refresh();
+                    showToast('Eventos de jornada borrados');
+                  }
+                }}
+              >
+                <span className="icon"><Icon name="trash" size={19} /></span>
+                <span><b>Restablecer datos de jornadas</b><br /><small>Borra los eventos guardados en este dispositivo.</small></span>
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* ── Sub-pantalla: Reglamento laboral ── */}
+        {tab === 'cfg-reglamento' && (
+          <section className="card grow">
+            <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
+            <h2>Reglamento laboral</h2>
+            <p className="hint">Regula las horas extra y la puntualidad en todo el panel.</p>
+            <div className="scrollable">
               <div className="cfg-group">
-                <h3>⚖️ Reglamento laboral</h3>
                 <div className="cfg-row">
                   <label htmlFor="cfg-week">
                     Jornada legal semanal
@@ -632,51 +741,105 @@ export default function AdminPanel() {
                 </div>
               </div>
 
-              {/* Sedes (solo lectura por ahora) */}
               <div className="cfg-group">
-                <h3>📍 Sedes registradas</h3>
-                {OFFICE_LOCATIONS.map((o) => (
-                  <div className="cfg-sede" key={o.name}>
-                    <span>{o.name}</span>
-                    <small>{o.lat.toFixed(5)}, {o.lon.toFixed(5)}</small>
-                  </div>
-                ))}
-                <p className="cfg-note">Para agregar o mover sedes, edita <code>utils/haversine.js</code> (editable desde el panel al migrar a base de datos).</p>
+                <h3>Días festivos y dominicales</h3>
+                <p className="cfg-note">Las horas trabajadas en domingo o festivo se desglosan aparte en Reportes (recargo dominical/festivo). Festivos de Colombia 2026 precargados.</p>
+                <div className="holiday-add">
+                  <input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} aria-label="Nuevo festivo" />
+                  <button
+                    className="btn primary"
+                    disabled={!newHoliday || cfg.holidays.includes(newHoliday)}
+                    onClick={() => { updateCfg({ holidays: [...cfg.holidays, newHoliday].sort() }); setNewHoliday(''); }}
+                  >
+                    ＋ Agregar
+                  </button>
+                </div>
+                <div className="holiday-list">
+                  {cfg.holidays.map((d) => (
+                    <span className="holiday-chip" key={d}>
+                      {new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}
+                      <button aria-label={`Quitar festivo ${d}`} onClick={() => updateCfg({ holidays: cfg.holidays.filter((x) => x !== d) })}>✕</button>
+                    </span>
+                  ))}
+                </div>
               </div>
+            </div>
+          </section>
+        )}
 
-              <h3 className="tools-title">Herramientas</h3>
-              <Link className="tool" href="/">
-                <span className="icon">🖥️</span>
-                <span><b>Ir al kiosco</b><br /><small>La pantalla de marcación facial (1:N).</small></span>
-              </Link>
-              <Link className="tool" href="/gps">
-                <span className="icon">📍</span>
-                <span><b>Diagnóstico GPS</b><br /><small>Verifica precisión y distancia a cada sede desde este dispositivo.</small></span>
-              </Link>
-              <button
-                className="tool"
-                onClick={() => {
-                  const r = loadDemoData();
-                  refresh();
-                  showToast(`Datos demo cargados: ${r.people} empleados, ${r.events} eventos`);
-                }}
-              >
-                <span className="icon">✨</span>
-                <span><b>Cargar datos de demostración</b><br /><small>Una semana de jornadas, anomalías y correcciones de ejemplo.</small></span>
-              </button>
-              <button
-                className="tool danger"
-                onClick={() => {
-                  if (confirm('¿Borrar todos los eventos de jornada de este dispositivo? Esta acción no se puede deshacer.')) {
-                    _resetJourneys();
+        {/* ── Sub-pantalla: CRUD de sedes ── */}
+        {tab === 'cfg-sedes' && (
+          <section className="card grow">
+            <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
+            <h2>Sedes</h2>
+            <p className="hint">Cada sede tiene sus coordenadas y su propio radio GPS. El kiosco y el fichaje las usan de inmediato.</p>
+            <div className="scrollable">
+              {sedes.map((o) => (
+                <div className="cfg-group sede-card" key={o.name}>
+                  <div className="sede-card-head">
+                    <h3>{o.name}</h3>
+                    <button
+                      className="btn danger-btn"
+                      onClick={() => {
+                        if (!confirm(`¿Eliminar la sede "${o.name}"? Los empleados asignados a ella quedarán sin sede.`)) return;
+                        const r = removeSede(o.name);
+                        if (r.error) { showToast(r.error); return; }
+                        if (sedeFilter === o.name) setSedeFilter('all');
+                        refresh();
+                        showToast(`Sede "${o.name}" eliminada`);
+                      }}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                  <div className="sede-fields">
+                    <label>Latitud
+                      <input type="number" step="0.000001" defaultValue={o.lat}
+                        onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && Math.abs(v) <= 90 && v !== o.lat) { updateSede(o.name, { lat: v }); refresh(); showToast('Sede actualizada'); } }} />
+                    </label>
+                    <label>Longitud
+                      <input type="number" step="0.000001" defaultValue={o.lon}
+                        onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && Math.abs(v) <= 180 && v !== o.lon) { updateSede(o.name, { lon: v }); refresh(); showToast('Sede actualizada'); } }} />
+                    </label>
+                    <label>Radio (m)
+                      <input type="number" min="10" max="1000" defaultValue={o.radius}
+                        onBlur={(e) => { const v = Number(e.target.value); if (v > 0 && v !== o.radius) { updateSede(o.name, { radius: v }); refresh(); showToast('Radio actualizado'); } }} />
+                    </label>
+                  </div>
+                </div>
+              ))}
+
+              <div className="cfg-group">
+                <h3>＋ Nueva sede</h3>
+                <div className="sede-fields">
+                  <label>Nombre
+                    <input type="text" placeholder="Ej.: Bodega Norte" value={newSede.name} onChange={(e) => setNewSede({ ...newSede, name: e.target.value })} />
+                  </label>
+                  <label>Latitud
+                    <input type="number" step="0.000001" placeholder="1.212981" value={newSede.lat} onChange={(e) => setNewSede({ ...newSede, lat: e.target.value })} />
+                  </label>
+                  <label>Longitud
+                    <input type="number" step="0.000001" placeholder="-77.280157" value={newSede.lon} onChange={(e) => setNewSede({ ...newSede, lon: e.target.value })} />
+                  </label>
+                  <label>Radio (m)
+                    <input type="number" min="10" max="1000" value={newSede.radius} onChange={(e) => setNewSede({ ...newSede, radius: e.target.value })} />
+                  </label>
+                </div>
+                <p className="cfg-note">Consigue lat/lon en Google Maps: clic derecho sobre el punto → copiar coordenadas. Verifica luego con el Diagnóstico GPS.</p>
+                <button
+                  className="btn primary"
+                  disabled={!newSede.name.trim() || newSede.lat === '' || newSede.lon === ''}
+                  onClick={() => {
+                    const r = addSede({ name: newSede.name, lat: Number(newSede.lat), lon: Number(newSede.lon), radius: Number(newSede.radius) || 50 });
+                    if (r.error) { showToast(r.error); return; }
+                    setNewSede({ name: '', lat: '', lon: '', radius: '50' });
                     refresh();
-                    showToast('Eventos de jornada borrados');
-                  }
-                }}
-              >
-                <span className="icon">🗑️</span>
-                <span><b>Restablecer datos de jornadas</b><br /><small>Borra los eventos de prueba guardados en este dispositivo.</small></span>
-              </button>
+                    showToast(`Sede "${r.name}" creada`);
+                  }}
+                >
+                  Guardar sede
+                </button>
+              </div>
             </div>
           </section>
         )}
@@ -685,7 +848,7 @@ export default function AdminPanel() {
       <nav className="tabbar" aria-label="Navegación del panel">
         {/* Cabecera del menú lateral (solo PC): logo + nombre + botón esconder */}
         <div className="side-top">
-          <span className="logo" aria-hidden="true">⏱</span>
+          <span className="logo" aria-hidden="true">AC</span>
           <span className="side-brand">
             ARRIVE<b>CONTROL</b>
             <small>Panel de administración</small>
@@ -696,7 +859,7 @@ export default function AdminPanel() {
             aria-label={collapsed ? 'Mostrar menú' : 'Esconder menú'}
             title={collapsed ? 'Mostrar menú' : 'Esconder menú'}
           >
-            {collapsed ? '»' : '«'}
+            <Icon name={collapsed ? 'chevronRight' : 'chevronLeft'} size={15} />
           </button>
         </div>
 
@@ -705,14 +868,14 @@ export default function AdminPanel() {
 
         {tabs.map((t) => (
           <button key={t.id} aria-pressed={tab === t.id} onClick={() => setTab(t.id)} title={t.label}>
-            <span className="icon">{t.icon}</span>
+            <span className="icon"><Icon name={t.icon} /></span>
             <span className="lbl">{t.label}</span>
             {t.badge ? <span className="badge">{t.badge}</span> : null}
           </button>
         ))}
 
         <button className="lock-btn" onClick={lockPanel} title="Bloquear el panel">
-          <span className="icon">🔒</span>
+          <span className="icon"><Icon name="lock" /></span>
           <span className="lbl">Bloquear</span>
         </button>
 
@@ -756,6 +919,56 @@ export default function AdminPanel() {
         </div>
       )}
 
+      {/* Diálogo de edición de empleado (CRUD: actualizar datos no biométricos) */}
+      {editEmp && (
+        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setEditEmp(null)}>
+          <div className="dialog" role="dialog" aria-modal="true">
+            <h3>Editar empleado — {editEmp.name}</h3>
+            <p className="hint">El rostro no se edita aquí: para cambiarlo, elimina y vuelve a registrar con foto nueva.</p>
+            <div className="field">
+              <label htmlFor="e-nombre">Nombre completo</label>
+              <input id="e-nombre" type="text" value={editEmp.name} onChange={(e) => setEditEmp({ ...editEmp, name: e.target.value })} />
+            </div>
+            <div className="field">
+              <label htmlFor="e-cedula">Cédula</label>
+              <input id="e-cedula" type="text" inputMode="numeric" value={editEmp.cedula} onChange={(e) => setEditEmp({ ...editEmp, cedula: e.target.value.replace(/\D/g, '') })} />
+            </div>
+            <div className="field">
+              <label htmlFor="e-sede">Sede asignada</label>
+              <select id="e-sede" value={editEmp.sede} onChange={(e) => setEditEmp({ ...editEmp, sede: e.target.value })}>
+                <option value="">Sin sede</option>
+                {sedes.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="e-hora">Hora esperada de entrada</label>
+              <input id="e-hora" type="time" value={editEmp.expectedEntry} onChange={(e) => setEditEmp({ ...editEmp, expectedEntry: e.target.value })} />
+            </div>
+            <div className="dialog-actions">
+              <button className="btn" onClick={() => setEditEmp(null)}>Cancelar</button>
+              <button
+                className="btn primary"
+                disabled={!editEmp.name.trim()}
+                onClick={() => {
+                  const r = updatePerson(editEmp.id, {
+                    name: editEmp.name,
+                    cedula: editEmp.cedula,
+                    sede: editEmp.sede,
+                    expectedEntry: editEmp.expectedEntry,
+                  });
+                  if (r.error) { showToast(r.error); return; }
+                  setEditEmp(null);
+                  refresh();
+                  showToast(`${r.name} actualizado`);
+                }}
+              >
+                Guardar cambios
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {toast && <div className="toast show" role="status">{toast}</div>}
     </div>
   );
@@ -765,23 +978,24 @@ const CSS = `
 .admin-root {
   /* Tema claro monocromo: fondo blanco y un solo AZUL en distintas tonalidades
      (de más claro a más profundo: #7cc8f5 → #0d8ce8 → #2b6bff → #1636c8) */
-  --page: #f2f5fb;
+  /* Tema claro corporativo: blanco + un azul sobrio en tonalidades */
+  --page: #f4f6fa;
   --surface: #ffffff;
-  --ink: #0e1a30; --ink-2: #42536e; --muted: #7d8aa3;
-  --grid: #e2e8f4; --border: rgba(13,140,232,0.16);
-  --accent: #0d8ce8; --accent-2: #2b6bff; --accent-ink: #ffffff;
-  --accent-soft: rgba(13,140,232,0.08);
-  --glow: 0 0 14px rgba(13,140,232,0.28);
-  --glow-2: 0 0 14px rgba(43,107,255,0.28);
-  /* Elevaciones (estilo 3D suave): luz desde arriba-izquierda, sombra abajo */
-  --elev-1: 0 1px 2px rgba(14,26,48,0.06), 0 6px 16px rgba(14,26,48,0.09), inset 0 1px 0 rgba(255,255,255,0.9);
-  --elev-2: 0 2px 4px rgba(14,26,48,0.08), 0 14px 34px rgba(14,26,48,0.14), inset 0 1px 0 rgba(255,255,255,0.9);
-  --press: inset 0 2px 6px rgba(14,26,48,0.12), inset 0 -1px 0 rgba(255,255,255,0.7);
-  /* Estados en el mismo azul, diferenciados por tonalidad + texto del chip:
-     ok = azul cielo · aviso = azul medio · crítico = azul eléctrico profundo */
-  --good-text: #0d8ce8; --good-soft: rgba(13,140,232,0.09);
-  --warn-text: #2b6bff; --warn-soft: rgba(43,107,255,0.10);
-  --crit: #1636c8; --crit-text: #1636c8; --crit-soft: rgba(22,54,200,0.10);
+  --ink: #101828; --ink-2: #475467; --muted: #8a94a6;
+  --grid: #e4e8f0; --border: #e4e8f0;
+  --accent: #2563eb; --accent-2: #1e40af; --accent-ink: #ffffff;
+  --accent-soft: rgba(37,99,235,0.07);
+  --glow: 0 1px 3px rgba(16,24,40,0.10);
+  --glow-2: 0 1px 3px rgba(16,24,40,0.10);
+  /* Elevaciones sutiles */
+  --elev-1: 0 1px 2px rgba(16,24,40,0.05), 0 1px 3px rgba(16,24,40,0.06);
+  --elev-2: 0 2px 6px rgba(16,24,40,0.08), 0 6px 16px rgba(16,24,40,0.08);
+  --press: inset 0 1px 3px rgba(16,24,40,0.12);
+  /* Estados en la misma familia azul, diferenciados por tonalidad + texto:
+     ok = azul medio · aviso = azul intenso · crítico = azul marino profundo */
+  --good-text: #2563eb; --good-soft: rgba(37,99,235,0.08);
+  --warn-text: #1e40af; --warn-soft: rgba(30,64,175,0.08);
+  --crit: #172554; --crit-text: #172554; --crit-soft: rgba(23,37,84,0.08);
 
   /* Montserrat para todo; los roles se diferencian por peso y espaciado */
   --f-display: var(--font-montserrat), system-ui, sans-serif;
@@ -791,10 +1005,7 @@ const CSS = `
   font-family: var(--f-body);
   font-weight: 300;
   color: var(--ink);
-  background:
-    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(13,140,232,0.08), transparent),
-    radial-gradient(ellipse 60% 40% at 90% 110%, rgba(43,107,255,0.07), transparent),
-    var(--page);
+  background: var(--page);
   height: 100dvh; max-width: 560px; margin: 0 auto;
   display: flex; flex-direction: column; gap: 10px;
   padding: 14px 12px 10px; box-sizing: border-box;
@@ -804,9 +1015,8 @@ const CSS = `
 
 .app-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; flex: 0 0 auto; }
 .app-header .brand {
-  font-family: var(--f-display); font-size: 11px; letter-spacing: .32em;
+  font-family: var(--f-display); font-size: 11px; letter-spacing: .24em;
   text-transform: uppercase; color: var(--accent); font-weight: 700;
-  text-shadow: var(--glow);
 }
 .app-header h1 { font-family: var(--f-display); font-size: 17px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .app-header .date-note { color: var(--muted); font-size: 12.5px; font-family: var(--f-data); }
@@ -814,7 +1024,7 @@ const CSS = `
 .screen { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--elev-1); }
 .card.grow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.card h2 { font-family: var(--f-display); font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 2px; color: var(--accent); }
+.card h2 { font-family: var(--f-display); font-size: 13.5px; font-weight: 700; letter-spacing: .02em; margin-bottom: 2px; color: var(--ink); }
 .card .hint { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
 .scrollable { overflow-y: auto; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; padding-right: 2px; }
 .axis-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
@@ -822,13 +1032,13 @@ const CSS = `
 
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: 0 0 auto; }
 .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; box-shadow: var(--elev-1); }
-.tile .label { font-family: var(--f-display); font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
-.tile .value { font-family: var(--f-data); font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--accent); text-shadow: var(--glow); }
+.tile .label { font-family: var(--f-display); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.tile .value { font-family: var(--f-data); font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--ink); }
 .tile .sub { font-size: 12.5px; color: var(--ink-2); }
-.tile.alerta .value { color: var(--crit-text); text-shadow: 0 0 14px rgba(22,54,200,0.30); }
+.tile.alerta .value { color: var(--accent); }
 
-.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-data); font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; white-space: nowrap; border: 1px solid currentColor; }
-.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-data); font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+.chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .chip.crit { color: var(--crit-text); background: var(--crit-soft); }
 .chip.warn { color: var(--warn-text); background: var(--warn-soft); }
 .chip.good { color: var(--good-text); background: var(--good-soft); }
@@ -858,7 +1068,7 @@ const CSS = `
 .pin-card .hint { font-size: 13px; color: var(--muted); }
 .pin-card input { font: inherit; font-size: 24px; letter-spacing: 10px; text-align: center; padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
 .pin-error { color: var(--crit-text); font-size: 13px; }
-.logo.big { width: 52px; height: 52px; font-size: 26px; margin: 0 auto; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-ink); }
+.logo.big { width: 48px; height: 48px; font-size: 18px; margin: 0 auto; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--accent-ink); font-family: var(--f-display); font-weight: 800; letter-spacing: .04em; }
 
 /* Empleados / Reportes */
 .muted-count { color: var(--muted); font-weight: 400; }
@@ -869,7 +1079,22 @@ const CSS = `
 .rep-controls label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
 .rep-controls input { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
 .rep-table { display: flex; flex-direction: column; font-size: 13px; font-variant-numeric: tabular-nums; }
-.rep-row { display: grid; grid-template-columns: 1.6fr 1fr 0.6fr 0.9fr 0.7fr; gap: 6px; padding: 8px 0; border-top: 1px solid var(--grid); align-items: center; }
+.rep-row { display: grid; grid-template-columns: 1.5fr 0.9fr 0.5fr 0.8fr 0.8fr 0.8fr 0.6fr; gap: 6px; padding: 8px 0; border-top: 1px solid var(--grid); align-items: center; }
+
+/* Sub-pantallas de Ajustes */
+.back-btn { align-self: flex-start; margin-bottom: 8px; }
+.emp-actions { display: flex; gap: 6px; }
+.holiday-add { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.holiday-add input { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+.holiday-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.holiday-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 4px 8px 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--ink-2); text-transform: capitalize; }
+.holiday-chip button { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0 2px; }
+.holiday-chip button:hover { color: var(--crit-text); }
+.sede-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.sede-card-head h3 { margin-bottom: 0; }
+.sede-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.sede-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.sede-fields input { font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font-variant-numeric: tabular-nums; }
 .rep-row:first-child { border-top: 0; }
 .rep-row.head { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
 .rep-row .rep-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -892,7 +1117,7 @@ const CSS = `
 
 /* Horas extra en el gráfico semanal */
 .hrow .track { position: relative; }
-.hrow .fill.over { background: linear-gradient(90deg, var(--accent), var(--warn-text)); }
+.hrow .fill.over { background: var(--accent-2); }
 .hrow .limit { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--crit); opacity: .7; }
 .hrow .val .extra { display: block; font-style: normal; font-size: 10.5px; color: var(--warn-text); font-weight: 700; }
 
@@ -900,10 +1125,11 @@ const CSS = `
 .lock-btn { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; }
 .lock-btn:hover { background: var(--crit-soft); color: var(--crit-text); }
 
-.btn { border: 1px solid var(--border); background: var(--surface); color: var(--accent); font-family: var(--f-data); font-size: 13.5px; padding: 7px 14px; border-radius: 8px; cursor: pointer; box-shadow: 0 1px 2px rgba(14,26,48,0.08), 0 3px 8px rgba(14,26,48,0.08); }
-.btn:hover { background: var(--accent-soft); box-shadow: var(--glow); }
-.btn:active { box-shadow: var(--press); transform: translateY(1px); }
-.btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent; color: var(--accent-ink); font-weight: 700; box-shadow: 0 2px 4px rgba(14,26,48,0.15), 0 8px 20px rgba(13,140,232,0.35), inset 0 1px 0 rgba(255,255,255,0.25); }
+.btn { border: 1px solid var(--grid); background: var(--surface); color: var(--ink-2); font-family: var(--f-data); font-size: 13.5px; font-weight: 600; padding: 7px 14px; border-radius: 6px; cursor: pointer; box-shadow: var(--elev-1); }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn:active { box-shadow: var(--press); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; box-shadow: var(--elev-1); }
+.btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); color: var(--accent-ink); }
 .btn.primary:disabled { opacity: .5; cursor: not-allowed; }
 .btn:focus-visible, .tabbar button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -924,7 +1150,7 @@ const CSS = `
 .hrow { display: grid; grid-template-columns: 96px 1fr 52px; align-items: center; gap: 10px; font-size: 12.5px; }
 .hrow .name { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hrow .track { height: 14px; position: relative; background: var(--page); border-radius: 0 4px 4px 0; box-shadow: inset 0 1px 3px rgba(14,26,48,0.10); }
-.hrow .fill { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 0 4px 4px 0; min-width: 2px; box-shadow: 0 0 10px rgba(13,140,232,0.35); }
+.hrow .fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 0 3px 3px 0; min-width: 2px; }
 .hrow .val { text-align: right; font-family: var(--f-data); font-variant-numeric: tabular-nums; color: var(--ink-2); }
 
 .log-item { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 9px 0; border-top: 1px solid var(--grid); font-size: 13px; }
@@ -939,28 +1165,28 @@ const CSS = `
 .tool small { color: var(--muted); }
 .tool.danger:hover { background: var(--crit-soft); }
 
-.tabbar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; flex: 0 0 auto; padding: 6px 4px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 2px 14px rgba(14,26,48,0.06); }
+.tabbar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; flex: 0 0 auto; padding: 6px 4px 8px; background: var(--surface); border: 1px solid var(--grid); border-radius: 10px; box-shadow: var(--elev-1); }
 /* móvil: el botón bloquear se integra a la rejilla de pestañas */
 .tabbar .lock-btn { flex-direction: column; gap: 2px; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; padding: 6px 2px; justify-content: center; align-items: center; }
 .tabbar .lock-btn .icon { font-size: 18px; }
-.tabbar > button { position: relative; border: 0; background: transparent; color: var(--muted); font-family: var(--f-display); font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; border-radius: 12px; }
-.tabbar > button .icon { font-size: 18px; line-height: 1; }
-.tabbar > button[aria-pressed="true"] { color: var(--accent-ink); background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: var(--glow), var(--glow-2); }
-.tabbar .badge { position: absolute; top: 2px; right: calc(50% - 20px); min-width: 16px; height: 16px; border-radius: 999px; background: var(--crit); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 4px; box-shadow: 0 0 10px rgba(22,54,200,0.4); }
+.tabbar > button { position: relative; border: 0; background: transparent; color: var(--muted); font-family: var(--f-display); font-size: 9px; font-weight: 600; letter-spacing: .04em; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 2px; border-radius: 8px; }
+.tabbar > button .icon { display: flex; line-height: 1; }
+.tabbar > button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.tabbar .badge { position: absolute; top: 2px; right: calc(50% - 20px); min-width: 16px; height: 16px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 4px; }
 
 /* Cabecera y pie del menú lateral: solo existen en la vista PC */
 .side-top, .side-foot { display: none; }
 
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
-.dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--accent); border-radius: 14px; padding: 18px 20px; max-width: 400px; width: 100%; box-shadow: var(--glow), 0 12px 40px rgba(14,26,48,0.18); }
-.dialog h3 { font-family: var(--f-display); font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin-bottom: 2px; }
+.dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--grid); border-radius: 10px; padding: 18px 20px; max-width: 400px; width: 100%; box-shadow: 0 12px 40px rgba(16,24,40,0.18); }
+.dialog h3 { font-family: var(--f-display); font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 2px; }
 .dialog .hint { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .field label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .field input, .field select { font-family: var(--f-data); font-size: 14px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); color-scheme: light; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
-.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--surface); color: var(--accent); border: 1px solid var(--accent); font-family: var(--f-data); font-size: 14px; padding: 9px 18px; border-radius: 999px; z-index: 60; box-shadow: var(--glow); }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; font-family: var(--f-data); font-size: 13.5px; padding: 9px 18px; border-radius: 8px; z-index: 60; box-shadow: var(--elev-2); }
 
 /* ─── Vista PC (≥900px): barra lateral + contenido ancho ─── */
 @media (min-width: 900px) {
@@ -997,10 +1223,10 @@ const CSS = `
   /* cabecera del menú: logo + nombre + botón esconder */
   .side-top { display: flex; align-items: center; gap: 10px; padding: 4px 6px 14px; border-bottom: 1px solid var(--grid); margin-bottom: 10px; }
   .logo {
-    flex: 0 0 auto; width: 38px; height: 38px; border-radius: 11px;
-    display: flex; align-items: center; justify-content: center; font-size: 20px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    box-shadow: var(--glow); color: var(--accent-ink);
+    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--f-display); font-size: 13px; font-weight: 800; letter-spacing: .04em;
+    background: var(--accent); color: var(--accent-ink);
   }
   .side-brand { font-family: var(--f-display); font-size: 12px; font-weight: 400; letter-spacing: .14em; color: var(--ink); line-height: 1.3; }
   .side-brand b { font-weight: 800; color: var(--accent); }
@@ -1011,7 +1237,7 @@ const CSS = `
     font-size: 14px; line-height: 1; cursor: pointer; padding: 0;
     display: flex; align-items: center; justify-content: center;
   }
-  .side-top .collapse-btn:hover { background: var(--accent-soft); box-shadow: var(--glow); }
+  .side-top .collapse-btn:hover { background: var(--accent-soft); }
   .side-foot { display: block; padding: 10px 6px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
 
   /* PC: bloquear como fila del menú, anclado al fondo sobre el pie */
@@ -1038,19 +1264,17 @@ const CSS = `
      El lienzo es gris muy suave y las piezas "flotan" en blanco (estilo 3D). */
   .screen { grid-column: 2; grid-row: 2; padding: 22px 26px; gap: 18px; background: var(--page); }
   .admin-root { background: var(--page); }
-  .card { border: none; border-radius: 14px; padding: 18px 20px; background: var(--surface); box-shadow: var(--elev-1); }
+  .card { border: 1px solid var(--grid); border-radius: 8px; padding: 18px 20px; background: var(--surface); box-shadow: var(--elev-1); }
   .tiles { gap: 14px; }
-  .tile { border: none; background: var(--surface); box-shadow: var(--elev-1); transition: box-shadow .2s, transform .2s; }
-  .tile:hover { box-shadow: var(--elev-2); transform: translateY(-2px); }
-  .tool, .emp-card { border: none; background: var(--surface); box-shadow: var(--elev-1); transition: box-shadow .2s, transform .2s; }
-  .tool:hover { box-shadow: var(--elev-2); transform: translateY(-2px); background: var(--surface); }
+  .tile { border: 1px solid var(--grid); border-radius: 8px; background: var(--surface); box-shadow: var(--elev-1); }
+  .tool, .emp-card { border: 1px solid var(--grid); border-radius: 8px; background: var(--surface); box-shadow: var(--elev-1); }
+  .tool:hover { background: var(--accent-soft); }
   .emp-card:hover { box-shadow: var(--elev-2); }
 
-  /* sidebar y encabezado proyectan sombra sobre el contenido */
-  .tabbar { background: var(--surface); box-shadow: 6px 0 20px rgba(14,26,48,0.07); border-right: none; }
-  .app-header { box-shadow: 0 6px 18px rgba(14,26,48,0.06); border-bottom: none; position: relative; z-index: 2; }
-  .dialog { box-shadow: var(--elev-2), 0 24px 70px rgba(14,26,48,0.25); }
-  .card { padding: 18px 22px; border-radius: 14px; }
+  /* sidebar y encabezado separados por línea divisoria sobria */
+  .tabbar { background: var(--surface); border-right: 1px solid var(--grid); box-shadow: none; }
+  .app-header { border-bottom: 1px solid var(--grid); box-shadow: none; position: relative; z-index: 2; }
+  .card { padding: 18px 22px; }
   .card h2 { font-size: 16px; }
 
   .tiles { grid-template-columns: repeat(4, 1fr); gap: 12px; }
