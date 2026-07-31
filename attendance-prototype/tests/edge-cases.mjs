@@ -30,25 +30,20 @@ const P = { id: 'PX', name: 'Prueba' };
 
 console.log('\n🕛 CASO 1 · Cruce de medianoche y fin de año');
 _resetJourneys();
-await test('entra 23:50 del 31 dic, sale 00:10 del 1 ene → la salida cierra la jornada', () => {
+await test('reinicio diario: entra 23:50 del 31 dic, marca 00:10 del 1 ene → nueva ENTRADA (nuevo día)', () => {
   registerPassage(P, at('2026-12-31T23:50:00'));
   const r = registerPassage(P, at('2027-01-01T00:10:00'));
-  assert.equal(r.type, 'out');
-});
-await test('esa jornada nocturna se muestra coherente en getJourneys (no dos días rotos)', () => {
-  const js = getJourneys().filter((j) => j.personId === 'PX');
-  // La entrada queda en un día y la salida en otro: ¿la entrada aparece como "sin salida"?
-  const dayWithIn = js.find((j) => j.events.some((e) => e.type === 'in'));
-  const entry = dayWithIn.events.find((e) => e.type === 'in');
-  assert.equal(entry.missingExit, false, 'la entrada del 31 no debe marcarse "sin salida": sí tiene salida (el 1 ene)');
+  // Con reinicio diario la jornada no cruza la medianoche: la entrada del 31
+  // quedará como "salida faltante" y el admin la cierra desde el panel.
+  assert.equal(r.type, 'in');
 });
 
-console.log('\n⏰ CASO 2 · Frontera exacta de la ventana nocturna (12 h)');
+console.log('\n⏰ CASO 2 · Reinicio diario en la frontera de medianoche');
 _resetJourneys();
-await test('turno de EXACTAMENTE 12 h: entra 19:00, sale 07:00 → debería ser salida', () => {
+await test('entra 19:00 de ayer, marca 07:00 de hoy → ENTRADA (el día nuevo arranca de cero)', () => {
   registerPassage(P, at('2026-07-29T19:00:00'));
   const r = registerPassage(P, at('2026-07-30T07:00:00'));
-  assert.equal(r.type, 'out', `dio '${r.type}': la ventana usa < estricto y 12h exactas quedan fuera`);
+  assert.equal(r.type, 'in', `dio '${r.type}': al cambiar de día la alternancia se reinicia`);
 });
 
 console.log('\n🕰️ CASO 3 · El reloj del dispositivo se ATRASA (ajuste de hora, fallo de batería)');

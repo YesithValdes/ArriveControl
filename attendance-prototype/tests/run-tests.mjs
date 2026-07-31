@@ -184,10 +184,10 @@ await test('olvido de salida: al otro día vuelve a ENTRADA (no salida)', () => 
   assert.equal(r.type, 'in', 'la entrada vieja (>12h) no debe alternar');
 });
 _resetJourneys();
-await test('turno nocturno: salida a las 6 a.m. cierra la entrada de las 10 p.m.', () => {
+await test('reinicio diario: la marcación de las 6 a.m. del día siguiente es ENTRADA', () => {
   registerPassage(person, at('2026-07-29T22:00:00'));
   const r = registerPassage(person, at('2026-07-30T06:00:00'));
-  assert.equal(r.type, 'out', 'dentro de la ventana de 12h debe ser salida');
+  assert.equal(r.type, 'in', 'cambió el día calendario: la alternancia se reinicia');
 });
 _resetJourneys();
 await test('entrada tardía (primera del día en la tarde) queda marcada', () => {

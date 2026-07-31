@@ -1,2 +1,11 @@
 .vercel
 .env*
+node_modules/
+.next/
+out/
+certificates/
+*.log
+*.tsbuildinfo
+.eslintcache
+.DS_Store
+Thumbs.db

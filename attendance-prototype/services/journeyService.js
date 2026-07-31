@@ -4,11 +4,13 @@
  * negocio, detecta anomalías y permite correcciones del administrador.
  *
  * Reglas:
- *  - Alternancia: si el último evento es una ENTRADA de hace < 12 h → este
- *    paso es SALIDA; en cualquier otro caso → ENTRADA.
- *    · Cubre el olvido de salida de ayer (la entrada vieja ya no alterna).
- *    · Cubre turnos nocturnos (la salida de las 6 a.m. cierra la entrada
- *      de las 10 p.m. aunque cambie la fecha).
+ *  - Alternancia CON REINICIO DIARIO: si el último evento es una ENTRADA de
+ *    HOY (mismo día calendario local) → este paso es SALIDA; en cualquier
+ *    otro caso → ENTRADA. Cada día empieza de cero:
+ *    · El olvido de salida de ayer nunca contamina el día siguiente.
+ *    · Nota: una jornada que cruce la medianoche (turno nocturno) NO se
+ *      cierra sola — la operación es diurna (8–19); si algún día se
+ *      necesitan turnos nocturnos, este es el punto a revisar.
  *  - Anti-rebote: si el último evento fue hace < 3 min, no se registra otro.
  *  - Anomalías:
  *    · 'late-entry'   → primera ENTRADA del día después del mediodía.
@@ -56,12 +58,12 @@ export function registerPassage(person, now = new Date()) {
     return { duplicate: true, last };
   }
 
-  // Alternancia con ventana nocturna. <= incluye el turno de 12 h EXACTAS
-  // (entra 19:00, sale 07:00): esa salida debe cerrar la jornada.
-  const type =
-    last && last.type === 'in' && nowMs - new Date(last.ts).getTime() <= NIGHT_WINDOW_MS
-      ? 'out'
-      : 'in';
+  // Alternancia con reinicio diario: solo una ENTRADA de HOY (mismo día
+  // calendario LOCAL) alterna a salida; cualquier otro caso arranca el día
+  // con ENTRADA. Se compara en hora local (no dayKey/UTC) para que las
+  // marcaciones de la noche no caigan en el "día" equivocado.
+  const sameLocalDay = last && new Date(last.ts).toDateString() === now.toDateString();
+  const type = last && last.type === 'in' && sameLocalDay ? 'out' : 'in';
 
   // Anomalía: primera entrada del día mucho después del horario ESPERADO
   // del empleado (posible olvido de marcación anterior). Si la persona no
