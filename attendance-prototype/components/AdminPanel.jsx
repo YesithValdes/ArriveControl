@@ -13,6 +13,8 @@ import {
   listJourneyEvents,
   addManualEvent,
   updateEventTime,
+  updateEventType,
+  deleteEvent,
   _resetJourneys,
   NIGHT_WINDOW_MS,
 } from '../services/journeyService.js';
@@ -118,7 +120,16 @@ export default function AdminPanel() {
   // Edición de empleado (CRUD): diálogo con datos no biométricos.
   const [editEmp, setEditEmp] = useState(null); // { id, name, cedula, sede, expectedEntry }
   const [toast, setToast] = useState(null);
-  const [dialog, setDialog] = useState(null); // { personId, personName, type, time, reason, eventId? }
+
+  // Tabla de asistencia: búsqueda + filtro por estado + paginación.
+  const PAGE_SIZE = 25;
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all'); // all|present|absent|anomaly
+  const [page, setPage] = useState(0);
+
+  // Drawer de detalle: línea de tiempo de marcaciones de una persona en un día.
+  const [drawer, setDrawer] = useState(null); // { personId, personName, day }
+  const [evForm, setEvForm] = useState(null); // { mode:'add'|'edit', eventId?, type, time, reason }
   const refresh = () => setTick((t) => t + 1);
 
   useEffect(() => {
@@ -327,24 +338,68 @@ export default function AdminPanel() {
     setTimeout(() => setToast(null), 2600);
   };
 
-  const saveAdjust = () => {
-    const { personId, personName, type, time, reason, eventId } = dialog;
-    if (!time || !reason.trim()) return;
-    const iso = new Date(`${todayKey()}T${time}:00`).toISOString();
-    if (eventId) updateEventTime(eventId, iso, 'admin');
-    else addManualEvent(personId, personName, type, iso, 'admin');
-    setDialog(null);
-    refresh();
-    showToast(`Ajuste guardado para ${personName}`);
+  // Abre el drawer de detalle de una persona en un día concreto.
+  const openDrawer = (personId, personName, day = todayKey()) => {
+    setEvForm(null);
+    setDrawer({ personId, personName, day });
   };
 
+  // Anomalías: abren el drawer en el día del evento, con el formulario
+  // preconfigurado según el tipo de anomalía.
   const openFix = (a) => {
+    openDrawer(a.person.id, a.person.name, dayKey(a.event.ts));
     if (a.kind === 'missing-exit') {
-      setDialog({ personId: a.person.id, personName: a.person.name, type: 'out', time: '17:00', reason: '' });
+      setEvForm({ mode: 'add', type: 'out', time: '17:00', reason: '' });
     } else {
-      setDialog({ personId: a.person.id, personName: a.person.name, type: 'in', time: '08:00', reason: '', eventId: a.event.id });
+      const d = new Date(a.event.ts);
+      setEvForm({ mode: 'edit', eventId: a.event.id, type: 'in', time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, reason: '' });
     }
   };
+
+  // Eventos del día abierto en el drawer (orden cronológico).
+  const drawerEvents = useMemo(() => {
+    if (!drawer) return [];
+    return listJourneyEvents()
+      .filter((e) => e.personId === drawer.personId && dayKey(e.ts) === drawer.day)
+      .sort((a, b) => a.ts.localeCompare(b.ts));
+  }, [drawer, tick]);
+
+  const saveEvForm = () => {
+    if (!evForm?.time || !evForm.reason.trim()) return;
+    const iso = new Date(`${drawer.day}T${evForm.time}:00`).toISOString();
+    if (evForm.mode === 'edit') {
+      updateEventTime(evForm.eventId, iso, 'admin');
+      const original = drawerEvents.find((e) => e.id === evForm.eventId);
+      if (original && original.type !== evForm.type) updateEventType(evForm.eventId, evForm.type, 'admin');
+    } else {
+      addManualEvent(drawer.personId, drawer.personName, evForm.type, iso, 'admin');
+    }
+    setEvForm(null);
+    refresh();
+    showToast(`Ajuste guardado para ${drawer.personName}`);
+  };
+
+  const removeEv = (e) => {
+    if (confirm(`¿Eliminar la marcación de ${e.type === 'in' ? 'entrada' : 'salida'} de las ${fmt12(e.ts)}? Úsalo solo para marcaciones erróneas.`)) {
+      deleteEvent(e.id);
+      refresh();
+      showToast('Marcación eliminada');
+    }
+  };
+
+  // Tabla de asistencia: filas tras búsqueda + filtro de estado, paginadas.
+  const attRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let rs = view.rows;
+    if (q) rs = rs.filter((r) => r.person.name.toLowerCase().includes(q) || r.person.id.toLowerCase().includes(q));
+    if (statusFilter === 'present') rs = rs.filter((r) => r.present);
+    if (statusFilter === 'absent') rs = rs.filter((r) => !r.firstIn);
+    if (statusFilter === 'anomaly') rs = rs.filter((r) => data.anomalies.some((a) => a.person.id === r.person.id));
+    return rs;
+  }, [view, search, statusFilter, data]);
+  const pageCount = Math.max(1, Math.ceil(attRows.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = attRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   const tabs = [
     { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
@@ -392,7 +447,7 @@ export default function AdminPanel() {
   // ── Pantalla de bloqueo: PIN antes de mostrar cualquier dato ──────────
   if (locked) {
     return (
-      <div className="admin-root">
+      <div className="admin-root locked">
         <style>{CSS}</style>
         <div className="pin-gate">
           <div className="pin-card">
@@ -531,33 +586,54 @@ export default function AdminPanel() {
 
         {tab === 'equipo' && (
           <section className="card grow">
-            <h2>Asistencia de hoy</h2>
-            <p className="hint">Entrada, salida y horas por empleado. Usa «Ajustar» para agregar o corregir una marcación.</p>
-            <div className="scrollable">
-              {view.rows.length === 0 && <p className="empty">No hay personas {sedeFilter === 'all' ? 'registradas' : `en ${sedeFilter}`}.</p>}
-              {view.rows.map((r) => (
-                <div className="emp-card" key={r.person.id}>
-                  <div className="emp-head">
-                    <div>
-                      <span className="emp-name">{r.person.name}</span>
-                      <span className="emp-id"> · {r.sede || 'sin sede'}</span>
-                    </div>
-                    {statusChip(r)}
-                  </div>
-                  <div className="emp-data">
-                    <span><b>Entrada</b> {fmt12(r.firstIn?.ts)}</span>
-                    <span><b>Salida</b> {fmt12(r.lastOut?.ts)}</span>
-                    <span><b>Horas</b> {fmtH(r.hoursToday)}</span>
-                  </div>
-                  <button
-                    className="btn"
-                    onClick={() => setDialog({ personId: r.person.id, personName: r.person.name, type: 'out', time: '17:00', reason: '' })}
-                  >
-                    Ajustar
-                  </button>
-                </div>
+            <h2>Asistencia de hoy <span className="muted-count">{attRows.length}</span></h2>
+            <p className="hint">Primera entrada, última salida y horas del día. Clic en una fila para ver y corregir sus marcaciones.</p>
+            <div className="att-controls">
+              <input
+                className="att-search" type="search" placeholder="Buscar por nombre o código…"
+                value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+              />
+              {[['all', 'Todos'], ['present', 'Presentes'], ['absent', 'Ausentes'], ['anomaly', 'Con anomalía']].map(([id, lbl]) => (
+                <button
+                  key={id} className="fchip" aria-pressed={statusFilter === id}
+                  onClick={() => { setStatusFilter(id); setPage(0); }}
+                >
+                  {lbl}
+                </button>
               ))}
             </div>
+            <div className="scrollable">
+              {attRows.length === 0 && <p className="empty">Sin resultados{search ? ` para «${search}»` : ''}.</p>}
+              {attRows.length > 0 && (
+                <div className="att-tablewrap">
+                  <table className="att-table">
+                    <thead>
+                      <tr><th>Empleado</th><th>Sede</th><th>Entrada</th><th>Salida</th><th className="num">Horas</th><th>Estado</th></tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.map((r) => (
+                        <tr key={r.person.id} onClick={() => openDrawer(r.person.id, r.person.name)} tabIndex={0}
+                          onKeyDown={(e) => e.key === 'Enter' && openDrawer(r.person.id, r.person.name)}>
+                          <td className="att-name">{r.person.name}</td>
+                          <td className="att-sede">{r.sede || '—'}</td>
+                          <td>{fmt12(r.firstIn?.ts)}</td>
+                          <td>{fmt12(r.lastOut?.ts)}</td>
+                          <td className="num">{fmtH(r.hoursToday)}</td>
+                          <td>{statusChip(r)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            {pageCount > 1 && (
+              <div className="pager">
+                <button className="btn" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>Anterior</button>
+                <span>Página {safePage + 1} de {pageCount}</span>
+                <button className="btn" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>Siguiente</button>
+              </div>
+            )}
           </section>
         )}
 
@@ -882,40 +958,85 @@ export default function AdminPanel() {
         <div className="side-foot">v0.1 · prototipo</div>
       </nav>
 
-      {dialog && (
-        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setDialog(null)}>
-          <div className="dialog" role="dialog" aria-modal="true">
-            <h3>{dialog.eventId ? 'Corregir marcación' : 'Ajustar marcación'} — {dialog.personName}</h3>
-            <p className="hint">
-              {dialog.eventId
-                ? 'Cambia la hora del evento a la hora real. Quedará marcado como corregido.'
-                : 'Agrega una entrada o salida manual de hoy. Quedará marcada como manual.'}
-            </p>
-            {!dialog.eventId && (
-              <div className="field">
-                <label htmlFor="f-tipo">Tipo de marcación</label>
-                <select id="f-tipo" value={dialog.type} onChange={(e) => setDialog({ ...dialog, type: e.target.value })}>
-                  <option value="in">Entrada</option>
-                  <option value="out">Salida</option>
-                </select>
+      {/* Drawer de detalle: marcaciones de una persona en un día, editables */}
+      {drawer && (
+        <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setDrawer(null)}>
+          <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Marcaciones de ${drawer.personName}`}>
+            <div className="drawer-head">
+              <div>
+                <h3>{drawer.personName}</h3>
+                <span className="drawer-id">{drawer.personId}</span>
               </div>
-            )}
-            <div className="field">
-              <label htmlFor="f-hora">Hora</label>
-              <input id="f-hora" type="time" value={dialog.time} onChange={(e) => setDialog({ ...dialog, time: e.target.value })} />
+              <button className="btn" onClick={() => setDrawer(null)}>Cerrar</button>
             </div>
-            <div className="field">
-              <label htmlFor="f-motivo">Motivo del ajuste</label>
+
+            <div className="drawer-day">
+              <label htmlFor="d-day">Día</label>
               <input
-                id="f-motivo" type="text" placeholder="Ej.: olvidó marcar la salida"
-                value={dialog.reason} onChange={(e) => setDialog({ ...dialog, reason: e.target.value })}
+                id="d-day" type="date" value={drawer.day} max={todayKey()}
+                onChange={(e) => { setDrawer({ ...drawer, day: e.target.value }); setEvForm(null); }}
               />
+              <span className="drawer-hours">{fmtH(pairedHours(drawerEvents, Date.now()))} trabajadas</span>
             </div>
-            <div className="dialog-actions">
-              <button className="btn" onClick={() => setDialog(null)}>Cancelar</button>
-              <button className="btn primary" disabled={!dialog.reason.trim()} onClick={saveAdjust}>Guardar ajuste</button>
+
+            <div className="drawer-body">
+              {drawerEvents.length === 0 && <p className="empty">Sin marcaciones este día. Agrega la entrada y la salida si la persona sí trabajó.</p>}
+              {drawerEvents.map((e) => (
+                <div className="tl-row" key={e.id}>
+                  <span className={`tl-type ${e.type}`}>{e.type === 'in' ? 'Entrada' : 'Salida'}</span>
+                  <span className="tl-time">{fmt12(e.ts)}</span>
+                  <span className="tl-flag">
+                    {e.flag === 'manual' ? 'manual' : e.flag === 'corrected' ? 'corregida' : e.flag === 'late-entry' ? 'tardía' : 'kiosco'}
+                  </span>
+                  <span className="tl-actions">
+                    <button
+                      className="btn small"
+                      onClick={() => {
+                        const d = new Date(e.ts);
+                        setEvForm({ mode: 'edit', eventId: e.id, type: e.type, time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, reason: '' });
+                      }}
+                    >
+                      Editar
+                    </button>
+                    <button className="btn small danger-btn" onClick={() => removeEv(e)}>Eliminar</button>
+                  </span>
+                </div>
+              ))}
+
+              {!evForm && (
+                <button className="btn block" onClick={() => setEvForm({ mode: 'add', type: drawerEvents.length % 2 === 0 ? 'in' : 'out', time: '08:00', reason: '' })}>
+                  Agregar marcación
+                </button>
+              )}
+
+              {evForm && (
+                <div className="ev-form">
+                  <h4>{evForm.mode === 'edit' ? 'Editar marcación' : 'Nueva marcación'}</h4>
+                  <div className="ev-form-row">
+                    <label>Tipo
+                      <select value={evForm.type} onChange={(e) => setEvForm({ ...evForm, type: e.target.value })}>
+                        <option value="in">Entrada</option>
+                        <option value="out">Salida</option>
+                      </select>
+                    </label>
+                    <label>Hora
+                      <input type="time" value={evForm.time} onChange={(e) => setEvForm({ ...evForm, time: e.target.value })} />
+                    </label>
+                  </div>
+                  <label className="ev-form-reason">Motivo del ajuste
+                    <input
+                      type="text" placeholder="Ej.: olvidó marcar la salida" value={evForm.reason}
+                      onChange={(e) => setEvForm({ ...evForm, reason: e.target.value })}
+                    />
+                  </label>
+                  <div className="dialog-actions">
+                    <button className="btn" onClick={() => setEvForm(null)}>Cancelar</button>
+                    <button className="btn primary" disabled={!evForm.reason.trim()} onClick={saveEvForm}>Guardar</button>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
+          </aside>
         </div>
       )}
 
@@ -1061,8 +1182,10 @@ const CSS = `
 .warn-num { color: var(--warn-text); font-weight: 700; }
 .crit-num { color: var(--crit-text); font-weight: 700; }
 
-/* Pantalla de bloqueo (PIN) */
-.pin-gate { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+/* Pantalla de bloqueo (PIN) — .locked anula el grid del escritorio para que
+   el PIN quede centrado en toda la pantalla (no en la columna del sidebar) */
+.admin-root.locked { display: flex; align-items: center; justify-content: center; max-width: none; height: 100dvh; padding: 20px; }
+.pin-gate { display: flex; align-items: center; justify-content: center; width: 100%; }
 .pin-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px 24px; max-width: 320px; width: 100%; text-align: center; display: flex; flex-direction: column; gap: 10px; }
 .pin-card h1 { font-size: 17px; font-weight: 650; }
 .pin-card .hint { font-size: 13px; color: var(--muted); }
@@ -1187,6 +1310,47 @@ const CSS = `
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; font-family: var(--f-data); font-size: 13.5px; padding: 9px 18px; border-radius: 8px; z-index: 60; box-shadow: var(--elev-2); }
+
+/* Tabla de asistencia: controles, tabla, paginación */
+.att-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+.att-search { flex: 1 1 180px; font: inherit; font-size: 13.5px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
+.fchip { border: 1px solid var(--grid); background: var(--surface); color: var(--ink-2); font-family: var(--f-data); font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+.fchip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.att-tablewrap { overflow-x: auto; }
+.att-table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.att-table th { text-align: left; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--grid); }
+.att-table td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--grid); }
+.att-table th.num, .att-table td.num { text-align: right; }
+.att-table tbody tr { cursor: pointer; }
+.att-table tbody tr:hover td { background: var(--accent-soft); }
+.att-table .att-name { font-weight: 600; }
+.att-table .att-sede { color: var(--muted); }
+.pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 10px; font-size: 12.5px; color: var(--muted); }
+
+/* Drawer de detalle (marcaciones del día) */
+.overlay.right { justify-content: flex-end; padding: 0; }
+.drawer { background: var(--surface); color: var(--ink); width: 100%; max-width: 420px; height: 100%; display: flex; flex-direction: column; border-left: 1px solid var(--grid); box-shadow: -8px 0 30px rgba(16,24,40,0.12); }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--grid); }
+.drawer-head h3 { font-family: var(--f-display); font-size: 15px; font-weight: 700; }
+.drawer-id { font-size: 12px; color: var(--muted); }
+.drawer-day { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--grid); font-size: 12.5px; color: var(--muted); }
+.drawer-day input { font: inherit; font-size: 13.5px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
+.drawer-hours { margin-left: auto; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.drawer-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; }
+.tl-row { display: grid; grid-template-columns: 64px 84px 1fr auto; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--grid); font-size: 13px; }
+.tl-type { font-weight: 700; font-size: 12px; }
+.tl-type.in { color: var(--good-text); }
+.tl-type.out { color: var(--warn-text); }
+.tl-time { font-variant-numeric: tabular-nums; font-weight: 600; }
+.tl-flag { color: var(--muted); font-size: 11.5px; }
+.tl-actions { display: flex; gap: 6px; }
+.btn.small { font-size: 12px; padding: 4px 10px; }
+.ev-form { border: 1px solid var(--grid); border-radius: 8px; padding: 12px; background: var(--page); display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.ev-form h4 { font-size: 13px; font-weight: 700; }
+.ev-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.ev-form-row { display: flex; gap: 10px; }
+.ev-form-row label { flex: 1; }
+.ev-form input, .ev-form select { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
 
 /* ─── Vista PC (≥900px): barra lateral + contenido ancho ─── */
 @media (min-width: 900px) {

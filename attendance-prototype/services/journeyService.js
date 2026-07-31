@@ -165,6 +165,19 @@ export function updateEventTime(eventId, isoTs, correctedBy = 'admin') {
   return true;
 }
 
+/** Corrección del admin: cambia el tipo (entrada↔salida) de un evento. */
+export function updateEventType(eventId, type, correctedBy = 'admin') {
+  if (type !== 'in' && type !== 'out') return false;
+  const events = load();
+  const e = events.find((x) => x.id === eventId);
+  if (!e) return false;
+  e.type = type;
+  e.flag = e.flag === 'manual' ? 'manual' : 'corrected';
+  e.correctedBy = correctedBy;
+  save(events);
+  return true;
+}
+
 export function deleteEvent(eventId) {
   save(load().filter((e) => e.id !== eventId));
 }
