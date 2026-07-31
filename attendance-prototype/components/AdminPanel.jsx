@@ -16,8 +16,10 @@ import {
   _resetJourneys,
   NIGHT_WINDOW_MS,
 } from '../services/journeyService.js';
-import { listPeople } from '../services/rosterService.js';
+import { listPeople, removePerson } from '../services/rosterService.js';
 import { OFFICE_LOCATIONS } from '../utils/haversine.js';
+
+const ADMIN_PIN = '1234'; // prototipo — en producción: roles/login en Supabase
 import { loadDemoData } from '../services/demoDataService.js';
 
 const dayKey = (iso) => iso.slice(0, 10);
@@ -58,6 +60,19 @@ export default function AdminPanel() {
   const [collapsed, setCollapsed] = useState(false); // menú lateral escondido (solo PC)
   const [sedeFilter, setSedeFilter] = useState('all'); // 'all' | nombre de sede
   const [tick, setTick] = useState(0); // fuerza relectura de localStorage
+
+  // Bloqueo del panel con PIN (persistente durante la sesión de la pestaña).
+  const [locked, setLocked] = useState(true);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
+  useEffect(() => {
+    if (sessionStorage.getItem('admin_unlocked') === '1') setLocked(false);
+  }, []);
+
+  // Reportes: rango de fechas (por defecto, el mes en curso).
+  const monthStart = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; };
+  const [repFrom, setRepFrom] = useState(monthStart());
+  const [repTo, setRepTo] = useState(todayKey());
   const [toast, setToast] = useState(null);
   const [dialog, setDialog] = useState(null); // { personId, personName, type, time, reason, eventId? }
   const refresh = () => setTick((t) => t + 1);
@@ -158,6 +173,73 @@ export default function AdminPanel() {
     };
   }, [data, sedeFilter]);
 
+  // Roster completo para la pestaña Empleados (con cédula, sede, horario).
+  const roster = useMemo(() => {
+    const all = listPeople();
+    return (sedeFilter === 'all' ? all : all.filter((p) => (p.sede || '') === sedeFilter))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [tick, sedeFilter]);
+
+  // Reporte por rango de fechas: días trabajados y horas por empleado.
+  const report = useMemo(() => {
+    if (!repFrom || !repTo) return [];
+    const events = listJourneyEvents()
+      .filter((e) => { const d = dayKey(e.ts); return d >= repFrom && d <= repTo; })
+      .sort((a, b) => a.ts.localeCompare(b.ts));
+    const nowMs = Date.now();
+    const byPerson = new Map();
+    for (const e of events) {
+      if (!byPerson.has(e.personId)) byPerson.set(e.personId, { name: e.personName, sede: e.sede || '', events: [] });
+      byPerson.get(e.personId).events.push(e);
+    }
+    const rosterById = new Map(listPeople().map((p) => [p.id, p]));
+    return [...byPerson.entries()]
+      .map(([id, r]) => ({
+        id,
+        name: r.name,
+        cedula: rosterById.get(id)?.cedula || '',
+        sede: r.sede || rosterById.get(id)?.sede || '',
+        days: new Set(r.events.filter((e) => e.type === 'in').map((e) => dayKey(e.ts))).size,
+        hours: pairedHours(r.events, nowMs),
+        lateCount: r.events.filter((e) => e.flag === 'late-entry').length,
+      }))
+      .filter((r) => sedeFilter === 'all' || r.sede === sedeFilter)
+      .sort((a, b) => b.hours - a.hours);
+  }, [tick, repFrom, repTo, sedeFilter]);
+
+  // Exporta el reporte visible a CSV (separador ; — Excel en español).
+  const exportCSV = () => {
+    const head = ['Empleado', 'Cédula', 'Sede', 'Días trabajados', 'Horas totales', 'Entradas tardías'];
+    const lines = report.map((r) => [r.name, r.cedula, r.sede, r.days, r.hours.toFixed(2).replace('.', ','), r.lateCount]);
+    const csv = [head, ...lines]
+      .map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';'))
+      .join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }); // BOM para tildes en Excel
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `asistencia_${repFrom}_a_${repTo}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('Reporte CSV descargado');
+  };
+
+  // Desbloqueo / bloqueo del panel.
+  const tryUnlock = () => {
+    if (pinInput === ADMIN_PIN) {
+      sessionStorage.setItem('admin_unlocked', '1');
+      setLocked(false);
+      setPinInput('');
+      setPinError(false);
+    } else {
+      setPinInput('');
+      setPinError(true);
+    }
+  };
+  const lockPanel = () => {
+    sessionStorage.removeItem('admin_unlocked');
+    setLocked(true);
+  };
+
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2600);
@@ -185,7 +267,9 @@ export default function AdminPanel() {
   const tabs = [
     { id: 'dashboard', icon: '📊', label: 'Dashboard' },
     { id: 'anomalias', icon: '⚠️', label: 'Anomalías', badge: data.anomalies.length },
-    { id: 'equipo', icon: '👥', label: 'Equipo' },
+    { id: 'equipo', icon: '🕐', label: 'Asistencia' },
+    { id: 'empleados', icon: '👤', label: 'Empleados' },
+    { id: 'reportes', icon: '📄', label: 'Reportes' },
     { id: 'historial', icon: '📋', label: 'Historial' },
     { id: 'ajustes', icon: '⚙️', label: 'Ajustes' },
   ];
@@ -222,6 +306,35 @@ export default function AdminPanel() {
       </select>
     </div>
   );
+
+  // ── Pantalla de bloqueo: PIN antes de mostrar cualquier dato ──────────
+  if (locked) {
+    return (
+      <div className="admin-root">
+        <style>{CSS}</style>
+        <div className="pin-gate">
+          <div className="pin-card">
+            <span className="logo big" aria-hidden="true">⏱</span>
+            <h1>Panel del administrador</h1>
+            <p className="hint">Ingresa el PIN para continuar.</p>
+            <input
+              type="password"
+              inputMode="numeric"
+              maxLength={4}
+              placeholder="••••"
+              value={pinInput}
+              autoFocus
+              onChange={(e) => { setPinInput(e.target.value.replace(/\D/g, '')); setPinError(false); }}
+              onKeyDown={(e) => e.key === 'Enter' && tryUnlock()}
+              aria-label="PIN de administrador"
+            />
+            {pinError && <p className="pin-error">PIN incorrecto. Inténtalo de nuevo.</p>}
+            <button className="btn primary" onClick={tryUnlock} disabled={pinInput.length < 4}>Entrar</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`admin-root${collapsed ? ' nav-collapsed' : ''}`}>
@@ -356,6 +469,75 @@ export default function AdminPanel() {
           </section>
         )}
 
+        {tab === 'empleados' && (
+          <section className="card grow">
+            <h2>Empleados registrados <span className="muted-count">{roster.length}</span></h2>
+            <p className="hint">Personas que pueden marcar en el kiosco. El registro es por foto, con cédula, sede y horario.</p>
+            <Link className="btn primary block" href="/admin/registro">＋ Registrar empleado</Link>
+            <div className="scrollable">
+              {roster.length === 0 && <p className="empty">No hay empleados {sedeFilter === 'all' ? 'registrados' : `en ${sedeFilter}`}.</p>}
+              {roster.map((p) => (
+                <div className="emp-card" key={p.id}>
+                  <div className="emp-head">
+                    <div>
+                      <span className="emp-name">{p.name}</span>
+                      <span className="emp-id"> · {p.cedula ? `C.C. ${p.cedula}` : 'sin cédula'}</span>
+                    </div>
+                    <button
+                      className="btn danger-btn"
+                      onClick={() => {
+                        if (confirm(`¿Eliminar a ${p.name}? Ya no podrá marcar asistencia.`)) {
+                          removePerson(p.id);
+                          refresh();
+                          showToast(`${p.name} eliminado`);
+                        }
+                      }}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                  <div className="emp-data">
+                    <span><b>Sede</b> {p.sede || '—'}</span>
+                    <span><b>Entrada esperada</b> {p.expectedEntry || '—'}</span>
+                    <span><b>Registro</b> {new Date(p.createdAt).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {tab === 'reportes' && (
+          <section className="card grow">
+            <h2>Reporte por período</h2>
+            <p className="hint">Días trabajados y horas por empleado en el rango elegido. Exporta a CSV para nómina.</p>
+            <div className="rep-controls">
+              <label>Desde <input type="date" value={repFrom} max={repTo} onChange={(e) => setRepFrom(e.target.value)} /></label>
+              <label>Hasta <input type="date" value={repTo} min={repFrom} max={todayKey()} onChange={(e) => setRepTo(e.target.value)} /></label>
+              <button className="btn primary" onClick={exportCSV} disabled={report.length === 0}>⬇ Exportar CSV</button>
+            </div>
+            <div className="scrollable">
+              {report.length === 0 && <p className="empty">Sin marcaciones en este período{sedeFilter !== 'all' ? ` para ${sedeFilter}` : ''}.</p>}
+              {report.length > 0 && (
+                <div className="rep-table" role="table">
+                  <div className="rep-row head" role="row">
+                    <span>Empleado</span><span>Sede</span><span>Días</span><span>Horas</span><span>Tardías</span>
+                  </div>
+                  {report.map((r) => (
+                    <div className="rep-row" role="row" key={r.id}>
+                      <span className="rep-name">{r.name}</span>
+                      <span>{r.sede || '—'}</span>
+                      <span>{r.days}</span>
+                      <span>{fmtH(r.hours)}</span>
+                      <span className={r.lateCount > 0 ? 'warn-num' : ''}>{r.lateCount}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {tab === 'historial' && (
           <section className="card grow">
             <h2>Historial de ajustes</h2>
@@ -456,6 +638,11 @@ export default function AdminPanel() {
             {t.badge ? <span className="badge">{t.badge}</span> : null}
           </button>
         ))}
+
+        <button className="lock-btn" onClick={lockPanel} title="Bloquear el panel">
+          <span className="icon">🔒</span>
+          <span className="lbl">Bloquear</span>
+        </button>
 
         <div className="side-foot">v0.1 · prototipo</div>
       </nav>
@@ -592,6 +779,33 @@ const CSS = `
 .warn-num { color: var(--warn-text); font-weight: 700; }
 .crit-num { color: var(--crit-text); font-weight: 700; }
 
+/* Pantalla de bloqueo (PIN) */
+.pin-gate { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.pin-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px 24px; max-width: 320px; width: 100%; text-align: center; display: flex; flex-direction: column; gap: 10px; }
+.pin-card h1 { font-size: 17px; font-weight: 650; }
+.pin-card .hint { font-size: 13px; color: var(--muted); }
+.pin-card input { font: inherit; font-size: 24px; letter-spacing: 10px; text-align: center; padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
+.pin-error { color: var(--crit-text); font-size: 13px; }
+.logo.big { width: 52px; height: 52px; font-size: 26px; margin: 0 auto; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-ink); }
+
+/* Empleados / Reportes */
+.muted-count { color: var(--muted); font-weight: 400; }
+.btn.block { display: block; width: 100%; text-align: center; text-decoration: none; margin-bottom: 10px; box-sizing: border-box; }
+.danger-btn { color: var(--crit-text); border-color: var(--crit-soft); }
+.danger-btn:hover { background: var(--crit-soft); }
+.rep-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-bottom: 10px; }
+.rep-controls label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.rep-controls input { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
+.rep-table { display: flex; flex-direction: column; font-size: 13px; font-variant-numeric: tabular-nums; }
+.rep-row { display: grid; grid-template-columns: 1.6fr 1fr 0.6fr 0.9fr 0.7fr; gap: 6px; padding: 8px 0; border-top: 1px solid var(--grid); align-items: center; }
+.rep-row:first-child { border-top: 0; }
+.rep-row.head { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.rep-row .rep-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Botón bloquear del menú */
+.lock-btn { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; }
+.lock-btn:hover { background: var(--crit-soft); color: var(--crit-text); }
+
 .btn { border: 1px solid var(--border); background: var(--surface); color: var(--accent); font-family: var(--f-data); font-size: 13.5px; padding: 7px 14px; border-radius: 8px; cursor: pointer; box-shadow: 0 1px 2px rgba(14,26,48,0.08), 0 3px 8px rgba(14,26,48,0.08); }
 .btn:hover { background: var(--accent-soft); box-shadow: var(--glow); }
 .btn:active { box-shadow: var(--press); transform: translateY(1px); }
@@ -631,7 +845,10 @@ const CSS = `
 .tool small { color: var(--muted); }
 .tool.danger:hover { background: var(--crit-soft); }
 
-.tabbar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; flex: 0 0 auto; padding: 6px 4px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 2px 14px rgba(14,26,48,0.06); }
+.tabbar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; flex: 0 0 auto; padding: 6px 4px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 2px 14px rgba(14,26,48,0.06); }
+/* móvil: el botón bloquear se integra a la rejilla de pestañas */
+.tabbar .lock-btn { flex-direction: column; gap: 2px; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; padding: 6px 2px; justify-content: center; align-items: center; }
+.tabbar .lock-btn .icon { font-size: 18px; }
 .tabbar > button { position: relative; border: 0; background: transparent; color: var(--muted); font-family: var(--f-display); font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; border-radius: 12px; }
 .tabbar > button .icon { font-size: 18px; line-height: 1; }
 .tabbar > button[aria-pressed="true"] { color: var(--accent-ink); background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: var(--glow), var(--glow-2); }
@@ -701,7 +918,11 @@ const CSS = `
     display: flex; align-items: center; justify-content: center;
   }
   .side-top .collapse-btn:hover { background: var(--accent-soft); box-shadow: var(--glow); }
-  .side-foot { display: block; margin-top: auto; padding: 10px 6px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
+  .side-foot { display: block; padding: 10px 6px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
+
+  /* PC: bloquear como fila del menú, anclado al fondo sobre el pie */
+  .tabbar .lock-btn { flex-direction: row; justify-content: flex-start; gap: 10px; width: 100%; font-size: 12px; padding: 10px 14px; margin-top: auto; text-transform: none; letter-spacing: normal; }
+  .tabbar .lock-btn .icon { font-size: 18px; }
 
   /* PC: el filtro de sede va ARRIBA del menú, en columna, bajo la cabecera */
   .side-sede { flex-direction: column; align-items: stretch; gap: 4px; padding: 0 6px 12px; margin-bottom: 8px; border-bottom: 1px solid var(--grid); }
