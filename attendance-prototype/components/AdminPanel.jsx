@@ -17,6 +17,7 @@ import {
   NIGHT_WINDOW_MS,
 } from '../services/journeyService.js';
 import { listPeople, removePerson } from '../services/rosterService.js';
+import { getLaborConfig, saveLaborConfig } from '../services/configService.js';
 import { OFFICE_LOCATIONS } from '../utils/haversine.js';
 
 const ADMIN_PIN = '1234'; // prototipo — en producción: roles/login en Supabase
@@ -67,12 +68,20 @@ export default function AdminPanel() {
   const [pinError, setPinError] = useState(false);
   useEffect(() => {
     if (sessionStorage.getItem('admin_unlocked') === '1') setLocked(false);
+    setCfg(getLaborConfig()); // hidratar config real del dispositivo
   }, []);
 
   // Reportes: rango de fechas (por defecto, el mes en curso).
   const monthStart = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; };
   const [repFrom, setRepFrom] = useState(monthStart());
   const [repTo, setRepTo] = useState(todayKey());
+
+  // Reglamento laboral (jornada legal semanal + gracia de puntualidad).
+  const [cfg, setCfg] = useState(getLaborConfig);
+  const updateCfg = (partial) => {
+    setCfg(saveLaborConfig(partial));
+    showToast('Reglamento actualizado');
+  };
   const [toast, setToast] = useState(null);
   const [dialog, setDialog] = useState(null); // { personId, personName, type, time, reason, eventId? }
   const refresh = () => setTick((t) => t + 1);
@@ -118,12 +127,12 @@ export default function AdminPanel() {
 
       const corrected = mine.some((e) => e.correctedBy && dayKey(e.ts) === todayKey());
 
-      // Puntualidad: primera entrada vs horario esperado (+15 min de gracia).
+      // Puntualidad: primera entrada vs horario esperado (+ gracia configurable).
       let onTime = null;
       if (firstIn && /^\d{2}:\d{2}$/.test(p.expectedEntry)) {
         const [h, m] = p.expectedEntry.split(':').map(Number);
         const d = new Date(firstIn.ts);
-        onTime = d.getHours() * 60 + d.getMinutes() <= h * 60 + m + 15;
+        onTime = d.getHours() * 60 + d.getMinutes() <= h * 60 + m + cfg.graceMinutes;
       }
 
       return {
@@ -156,7 +165,7 @@ export default function AdminPanel() {
 
     const audit = listJourneyEvents().filter((e) => e.correctedBy);
     return { rows, anomalies, audit, sedeStats, sinSede };
-  }, [tick]);
+  }, [tick, cfg]);
 
   // Vista filtrada por sede: alimenta tarjetas, listas y anomalías.
   const view = useMemo(() => {
@@ -193,24 +202,46 @@ export default function AdminPanel() {
       byPerson.get(e.personId).events.push(e);
     }
     const rosterById = new Map(listPeople().map((p) => [p.id, p]));
+
+    // Semana calendario (lunes) de un evento — para liquidar extras por semana.
+    const weekOf = (iso) => {
+      const d = new Date(iso);
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      return dayKey(d.toISOString());
+    };
+
     return [...byPerson.entries()]
-      .map(([id, r]) => ({
-        id,
-        name: r.name,
-        cedula: rosterById.get(id)?.cedula || '',
-        sede: r.sede || rosterById.get(id)?.sede || '',
-        days: new Set(r.events.filter((e) => e.type === 'in').map((e) => dayKey(e.ts))).size,
-        hours: pairedHours(r.events, nowMs),
-        lateCount: r.events.filter((e) => e.flag === 'late-entry').length,
-      }))
+      .map(([id, r]) => {
+        // Horas extra: por cada semana del rango, lo que exceda la jornada legal.
+        const byWeek = new Map();
+        for (const e of r.events) {
+          const w = weekOf(e.ts);
+          if (!byWeek.has(w)) byWeek.set(w, []);
+          byWeek.get(w).push(e);
+        }
+        let extras = 0;
+        for (const evts of byWeek.values()) {
+          extras += Math.max(0, pairedHours(evts, nowMs) - cfg.weeklyHours);
+        }
+        return {
+          id,
+          name: r.name,
+          cedula: rosterById.get(id)?.cedula || '',
+          sede: r.sede || rosterById.get(id)?.sede || '',
+          days: new Set(r.events.filter((e) => e.type === 'in').map((e) => dayKey(e.ts))).size,
+          hours: pairedHours(r.events, nowMs),
+          extras,
+          lateCount: r.events.filter((e) => e.flag === 'late-entry').length,
+        };
+      })
       .filter((r) => sedeFilter === 'all' || r.sede === sedeFilter)
       .sort((a, b) => b.hours - a.hours);
-  }, [tick, repFrom, repTo, sedeFilter]);
+  }, [tick, repFrom, repTo, sedeFilter, cfg]);
 
   // Exporta el reporte visible a CSV (separador ; — Excel en español).
   const exportCSV = () => {
-    const head = ['Empleado', 'Cédula', 'Sede', 'Días trabajados', 'Horas totales', 'Entradas tardías'];
-    const lines = report.map((r) => [r.name, r.cedula, r.sede, r.days, r.hours.toFixed(2).replace('.', ','), r.lateCount]);
+    const head = ['Empleado', 'Cédula', 'Sede', 'Días trabajados', 'Horas totales', `Horas extra (>${cfg.weeklyHours}h/sem)`, 'Entradas tardías'];
+    const lines = report.map((r) => [r.name, r.cedula, r.sede, r.days, r.hours.toFixed(2).replace('.', ','), r.extras.toFixed(2).replace('.', ','), r.lateCount]);
     const csv = [head, ...lines]
       .map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';'))
       .join('\r\n');
@@ -401,16 +432,26 @@ export default function AdminPanel() {
               <div className="scrollable">
                 <div className="chart">
                   {view.rows.length === 0 && <p className="empty">No hay personas {sedeFilter === 'all' ? 'registradas' : `en ${sedeFilter}`}.</p>}
-                  {[...view.rows].sort((a, b) => b.weekHours - a.weekHours).map((r) => (
-                    <div className="hrow" key={r.person.id} title={`${r.person.name}: ${fmtH(r.weekHours)}`}>
-                      <span className="name">{r.person.name}</span>
-                      <span className="track"><span className="fill" style={{ width: `${(r.weekHours / maxWeek) * 100}%` }} /></span>
-                      <span className="val">{fmtH(r.weekHours)}</span>
-                    </div>
-                  ))}
+                  {[...view.rows].sort((a, b) => b.weekHours - a.weekHours).map((r) => {
+                    const extra = Math.max(0, r.weekHours - cfg.weeklyHours);
+                    return (
+                      <div className="hrow" key={r.person.id} title={`${r.person.name}: ${fmtH(r.weekHours)}${extra > 0 ? ` (${fmtH(extra)} extra)` : ''}`}>
+                        <span className="name">{r.person.name}</span>
+                        <span className="track">
+                          <span className={`fill${extra > 0 ? ' over' : ''}`} style={{ width: `${(r.weekHours / maxWeek) * 100}%` }} />
+                          {/* línea de la jornada legal semanal */}
+                          <span className="limit" style={{ left: `${Math.min(100, (cfg.weeklyHours / maxWeek) * 100)}%` }} />
+                        </span>
+                        <span className="val">
+                          {fmtH(r.weekHours)}
+                          {extra > 0 && <em className="extra">+{fmtH(extra)} extra</em>}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-              <p className="axis-note">Jornada esperada: 8 h por día trabajado</p>
+              <p className="axis-note">Jornada legal: {cfg.weeklyHours} h semanales — la línea marca el límite; lo que exceda son horas extra</p>
             </section>
           </>
         )}
@@ -521,7 +562,7 @@ export default function AdminPanel() {
               {report.length > 0 && (
                 <div className="rep-table" role="table">
                   <div className="rep-row head" role="row">
-                    <span>Empleado</span><span>Sede</span><span>Días</span><span>Horas</span><span>Tardías</span>
+                    <span>Empleado</span><span>Sede</span><span>Días</span><span>Horas</span><span>Extras</span><span>Tardías</span>
                   </div>
                   {report.map((r) => (
                     <div className="rep-row" role="row" key={r.id}>
@@ -529,6 +570,7 @@ export default function AdminPanel() {
                       <span>{r.sede || '—'}</span>
                       <span>{r.days}</span>
                       <span>{fmtH(r.hours)}</span>
+                      <span className={r.extras > 0 ? 'warn-num' : ''}>{r.extras > 0 ? fmtH(r.extras) : '—'}</span>
                       <span className={r.lateCount > 0 ? 'warn-num' : ''}>{r.lateCount}</span>
                     </div>
                   ))}
@@ -558,28 +600,58 @@ export default function AdminPanel() {
 
         {tab === 'ajustes' && (
           <section className="card grow">
-            <h2>Ajustes y herramientas</h2>
-            <p className="hint">Pantallas técnicas del prototipo, ahora agrupadas aquí.</p>
+            <h2>Ajustes</h2>
+            <p className="hint">Reglamento laboral y herramientas del sistema.</p>
             <div className="scrollable">
-              <Link className="tool" href="/admin/registro">
-                <span className="icon">🪪</span>
-                <span><b>Registrar empleado</b><br /><small>Por foto: nombre, cédula y rostro. Queda listo para el kiosco.</small></span>
-              </Link>
+              {/* Reglamento interno — regula extras y puntualidad en todo el panel */}
+              <div className="cfg-group">
+                <h3>⚖️ Reglamento laboral</h3>
+                <div className="cfg-row">
+                  <label htmlFor="cfg-week">
+                    Jornada legal semanal
+                    <small>Colombia: 42 h (Ley 2101 de 2021). Por encima cuentan como horas extra.</small>
+                  </label>
+                  <div className="cfg-input">
+                    <input
+                      id="cfg-week" type="number" min="1" max="84" value={cfg.weeklyHours}
+                      onChange={(e) => { const v = Number(e.target.value); if (v > 0) updateCfg({ weeklyHours: v }); }}
+                    /> h
+                  </div>
+                </div>
+                <div className="cfg-row">
+                  <label htmlFor="cfg-grace">
+                    Gracia de puntualidad
+                    <small>Minutos después de la hora esperada sin contar como entrada tardía.</small>
+                  </label>
+                  <div className="cfg-input">
+                    <input
+                      id="cfg-grace" type="number" min="0" max="120" value={cfg.graceMinutes}
+                      onChange={(e) => { const v = Number(e.target.value); if (v >= 0) updateCfg({ graceMinutes: v }); }}
+                    /> min
+                  </div>
+                </div>
+              </div>
+
+              {/* Sedes (solo lectura por ahora) */}
+              <div className="cfg-group">
+                <h3>📍 Sedes registradas</h3>
+                {OFFICE_LOCATIONS.map((o) => (
+                  <div className="cfg-sede" key={o.name}>
+                    <span>{o.name}</span>
+                    <small>{o.lat.toFixed(5)}, {o.lon.toFixed(5)}</small>
+                  </div>
+                ))}
+                <p className="cfg-note">Para agregar o mover sedes, edita <code>utils/haversine.js</code> (editable desde el panel al migrar a base de datos).</p>
+              </div>
+
+              <h3 className="tools-title">Herramientas</h3>
               <Link className="tool" href="/">
                 <span className="icon">🖥️</span>
-                <span><b>Volver al kiosco</b><br /><small>La pantalla principal: registro y fichaje facial (1:N).</small></span>
-              </Link>
-              <Link className="tool" href="/fichaje">
-                <span className="icon">🕐</span>
-                <span><b>Fichaje individual</b><br /><small>Desde el celular del empleado: GPS + biometría del dispositivo.</small></span>
+                <span><b>Ir al kiosco</b><br /><small>La pantalla de marcación facial (1:N).</small></span>
               </Link>
               <Link className="tool" href="/gps">
                 <span className="icon">📍</span>
-                <span><b>Diagnóstico GPS</b><br /><small>Coordenadas, precisión y distancia a cada sede en vivo.</small></span>
-              </Link>
-              <Link className="tool" href="/demo">
-                <span className="icon">🧪</span>
-                <span><b>Laboratorio biométrico</b><br /><small>Prueba de vida 3D + identidad, y métricas FAR/FRR.</small></span>
+                <span><b>Diagnóstico GPS</b><br /><small>Verifica precisión y distancia a cada sede desde este dispositivo.</small></span>
               </Link>
               <button
                 className="tool"
@@ -801,6 +873,28 @@ const CSS = `
 .rep-row:first-child { border-top: 0; }
 .rep-row.head { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
 .rep-row .rep-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Reglamento laboral (Ajustes) */
+.cfg-group { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; background: var(--page); }
+.cfg-group h3 { font-size: 13.5px; font-weight: 650; margin-bottom: 10px; }
+.cfg-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 0; border-top: 1px solid var(--grid); }
+.cfg-row:first-of-type { border-top: 0; }
+.cfg-row label { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.cfg-row label small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); max-width: 320px; }
+.cfg-input { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); flex-shrink: 0; }
+.cfg-input input { width: 64px; font: inherit; font-size: 15px; font-weight: 600; text-align: center; padding: 7px 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+.cfg-sede { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 6px 0; border-top: 1px solid var(--grid); font-size: 13.5px; }
+.cfg-sede:first-of-type { border-top: 0; }
+.cfg-sede small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cfg-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.cfg-note code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+.tools-title { font-size: 13.5px; font-weight: 650; margin: 14px 0 8px; }
+
+/* Horas extra en el gráfico semanal */
+.hrow .track { position: relative; }
+.hrow .fill.over { background: linear-gradient(90deg, var(--accent), var(--warn-text)); }
+.hrow .limit { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--crit); opacity: .7; }
+.hrow .val .extra { display: block; font-style: normal; font-size: 10.5px; color: var(--warn-text); font-weight: 700; }
 
 /* Botón bloquear del menú */
 .lock-btn { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; }
