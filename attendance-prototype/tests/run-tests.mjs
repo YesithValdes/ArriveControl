@@ -8,12 +8,6 @@ import assert from 'node:assert/strict';
 import { haversineDistance, isWithinOfficeRadius, OFFICE_LOCATION, OFFICE_LOCATIONS } from '../utils/haversine.js';
 import { euclideanDistance, compareFaces, MATCH_THRESHOLD } from '../utils/faceMath.js';
 import { bufferToBase64url, base64urlToBuffer, stringToBuffer } from '../utils/base64url.js';
-import {
-  registerEmployee,
-  checkInEmployee,
-  getAttendanceLog,
-  _resetMockDatabase,
-} from '../services/attendanceService.js';
 
 let passed = 0;
 const test = async (name, fn) => {
@@ -115,35 +109,8 @@ await test('comparación de código: trim quita espacios de los extremos', () =>
   assert.equal(stored === String('004522').trim(), false);   // código distinto: rechaza
 });
 
-console.log('\n🗄️ Servicio de asistencia (Supabase mock)');
-_resetMockDatabase();
-await test('registro inicial exitoso', async () => {
-  const r = await registerEmployee('EMP-001', fakeEmbedding(7));
-  assert.equal(r.success, true);
-});
-await test('registro rechaza embedding inválido', async () => {
-  const r = await registerEmployee('EMP-002', [1, 2, 3]);
-  assert.equal(r.success, false);
-});
-await test('fichaje exitoso (misma persona)', async () => {
-  const live = fakeEmbedding(7).map((n) => n + 0.02);
-  const r = await checkInEmployee('EMP-001', live);
-  assert.equal(r.success, true, r.error);
-  assert.ok(r.distance < 0.55);
-});
-await test('fichaje rechazado (otra persona)', async () => {
-  const r = await checkInEmployee('EMP-001', fakeEmbedding(99));
-  assert.equal(r.success, false);
-});
-await test('fichaje rechazado (empleado no registrado)', async () => {
-  const r = await checkInEmployee('EMP-999', fakeEmbedding(7));
-  assert.equal(r.success, false);
-});
-await test('log de asistencia contiene solo el fichaje exitoso', () => {
-  const log = getAttendanceLog();
-  assert.equal(log.length, 1);
-  assert.equal(log[0].employeeId, 'EMP-001');
-});
+// (El bloque "Servicio de asistencia (Supabase mock)" se eliminó junto con
+// services/attendanceService.js: era del prototipo demo pre-Postgres.)
 
 console.log('\n📅 Lógica de jornadas (entrada/salida)');
 // Node no trae localStorage: shim en memoria ANTES de importar el servicio.

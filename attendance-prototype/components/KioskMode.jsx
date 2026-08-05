@@ -64,14 +64,17 @@ export default function KioskMode() {
   const [peopleCount, setPeopleCount] = useState(0);
   const [pendientes, setPendientes] = useState(0); // cola offline sin sincronizar
 
-  // Configuración del dispositivo (una sola vez): a qué SEDE pertenece.
+  // ACTIVACIÓN del dispositivo (una sola vez, con sesión de admin): el
+  // servidor genera la clave propia de este aparato y aquí queda persistida.
+  // Un dispositivo sin activar no puede marcar ni descargar el roster.
   const [configurado, setConfigurado] = useState(true); // se evalúa al montar
   const [cfgSedes, setCfgSedes] = useState([]);
   const [cfgSede, setCfgSede] = useState('');
-  const [cfgClave, setCfgClave] = useState(() => getDeviceKey());
+  const [cfgNombre, setCfgNombre] = useState('');
   const [cfgError, setCfgError] = useState(null);
+  const [activando, setActivando] = useState(false);
   useEffect(() => {
-    const listo = Boolean(getSedeId());
+    const listo = Boolean(getSedeId()) && Boolean(getDeviceKey());
     setConfigurado(listo);
     setPendientes(pendientesEnCola());
     if (!listo) {
@@ -90,12 +93,33 @@ export default function KioskMode() {
     return () => { window.removeEventListener('online', flush); clearInterval(id); };
   }, []);
 
-  const guardarConfig = () => {
+  const activarEsteDispositivo = async () => {
     if (!cfgSede) { setCfgError('Elige la sede de este dispositivo.'); return; }
-    setSedeId(cfgSede);
-    setDeviceKey(cfgClave.trim());
-    setConfigurado(true);
-    setStatusNote('Dispositivo configurado. Listo para iniciar.');
+    if (!cfgNombre.trim()) { setCfgError('Ponle un nombre (p. ej. "Tablet recepción").'); return; }
+    setCfgError(null);
+    setActivando(true);
+    try {
+      const r = await fetch('/api/dispositivos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre: cfgNombre.trim(), sede_id: cfgSede }),
+      });
+      const d = await r.json().catch(() => null);
+      if (r.status === 401) {
+        setCfgError('Necesitas sesión de administrador. Inicia sesión y vuelve.');
+        return;
+      }
+      if (!r.ok || !d?.ok) { setCfgError(d?.error || `El servidor respondió ${r.status}.`); return; }
+      // La clave se recibe UNA sola vez: queda en este aparato y en ningún otro lado.
+      setDeviceKey(d.dispositivo.clave);
+      setSedeId(cfgSede);
+      setConfigurado(true);
+      setStatusNote(`Dispositivo "${d.dispositivo.nombre}" activado. Listo para iniciar.`);
+    } catch (e) {
+      setCfgError(`Sin conexión con el servidor: ${e.message}`);
+    } finally {
+      setActivando(false);
+    }
   };
 
   // Reloj del estado de reposo
@@ -104,7 +128,7 @@ export default function KioskMode() {
     const update = () => {
       const d = new Date();
       setClock({
-        time: d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false }),
+        time: d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
         date: d.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }),
       });
     };
@@ -339,7 +363,7 @@ export default function KioskMode() {
       livenessOk: !failReason?.includes('parpadeo'),
     });
 
-    const time = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+    const time = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 
     if (!ok) {
       setResult({ kind: 'no', name: person?.name, time, distance, reason: failReason });
@@ -370,13 +394,13 @@ export default function KioskMode() {
         return;
       }
       if (paso.duplicado) {
-        const lastTime = new Date(paso.ultima.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+        const lastTime = new Date(paso.ultima.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
         const lastLabel = paso.ultima.tipo === 'entrada' ? 'ENTRADA' : 'SALIDA';
         setResult({ kind: 'dup', name: person.name, time, lastLabel, lastTime });
         setUi('ok');
         return;
       }
-      const tsOficial = new Date(paso.marcacion.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+      const tsOficial = new Date(paso.marcacion.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
       setResult({
         kind: paso.tipo === 'entrada' ? 'in' : 'out',
         name: person.name,
@@ -414,25 +438,30 @@ export default function KioskMode() {
           </div>
           <div style={s.idleCta}>{running ? 'Acércate para marcar tu asistencia' : statusNote}</div>
 
-          {/* Configuración del dispositivo (una sola vez): elegir su sede */}
+          {/* Activación del dispositivo (una sola vez, con sesión de admin) */}
           {!running && !configurado && (
             <div style={s.cfgBox}>
-              <div style={s.cfgTitle}>¿En qué sede está este dispositivo?</div>
+              <div style={s.cfgTitle}>Activar este dispositivo</div>
+              <input
+                style={s.cfgInput}
+                type="text"
+                placeholder='Nombre (p. ej. "Tablet recepción")'
+                value={cfgNombre}
+                onChange={(e) => setCfgNombre(e.target.value)}
+              />
               <select style={s.cfgInput} value={cfgSede} onChange={(e) => setCfgSede(e.target.value)}>
                 <option value="">— Elegir sede —</option>
                 {cfgSedes.map((x) => <option key={x.id} value={x.id}>{x.nombre}</option>)}
               </select>
-              <input
-                style={s.cfgInput}
-                type="password"
-                placeholder="Clave del dispositivo (opcional)"
-                value={cfgClave}
-                onChange={(e) => setCfgClave(e.target.value)}
-              />
-              <button style={s.startBtn} onClick={guardarConfig} disabled={!cfgSede}>
-                Guardar
+              <button style={s.startBtn} onClick={activarEsteDispositivo} disabled={!cfgSede || !cfgNombre.trim() || activando}>
+                {activando ? 'Activando…' : '🔑 Activar dispositivo'}
               </button>
-              {cfgError && <div style={s.errNote}>{cfgError}</div>}
+              {cfgError && (
+                <div style={s.errNote}>
+                  {cfgError}{' '}
+                  {cfgError.includes('sesión') && <a href="/login?destino=/">Iniciar sesión →</a>}
+                </div>
+              )}
             </div>
           )}
 

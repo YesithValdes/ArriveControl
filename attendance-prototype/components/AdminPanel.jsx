@@ -91,15 +91,22 @@ function AccList({ items }) {
 const dayKey = (iso) => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
 const todayKey = () => dayKey(new Date().toISOString());
 
+// Hora del día en formato hh:mm:ss (24 h). Conserva el nombre fmt12 para no
+// tocar todos los puntos de uso.
 const fmt12 = (iso) => {
   if (!iso) return '—';
   const d = new Date(iso);
-  let h = d.getHours();
-  const ap = h >= 12 ? 'p. m.' : 'a. m.';
-  h = h % 12 || 12;
-  return `${h}:${String(d.getMinutes()).padStart(2, '0')} ${ap}`;
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
 };
-const fmtH = (n) => (n == null ? '—' : n.toFixed(1).replace('.', ',') + ' h');
+// Duración en hh:mm:ss (antes "7,5 h"): 7.5 → "07:30:00".
+const fmtH = (n) => {
+  if (n == null) return '—';
+  const total = Math.round(n * 3600);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
 const fmtTs = (iso) =>
   new Date(iso).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) + ', ' + fmt12(iso);
 
@@ -160,6 +167,24 @@ export default function AdminPanel() {
   const [newSede, setNewSede] = useState({ name: '', lat: '', lon: '', radius: '50' });
   const [editSede, setEditSede] = useState(null); // { original, name, lat, lon, radius }
   const [newSedeOpen, setNewSedeOpen] = useState(false); // drawer de "Nueva sede"
+
+  // Dispositivos del kiosco activados (para listar y revocar).
+  const [dispositivos, setDispositivos] = useState([]);
+  const [dispError, setDispError] = useState(null);
+  const cargarDispositivos = () => {
+    fetch('/api/dispositivos')
+      .then((r) => r.json())
+      .then((d) => { if (d.ok) { setDispositivos(d.dispositivos); setDispError(null); } else setDispError(d.error); })
+      .catch((e) => setDispError(e.message));
+  };
+  const revocarDispositivo = async (d) => {
+    if (!confirm(`¿Revocar "${d.nombre}"? Ese aparato no podrá marcar más hasta activarse de nuevo.`)) return;
+    const r = await fetch(`/api/dispositivos/${d.id}`, { method: 'DELETE' });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j?.ok) { showToast(`No se pudo revocar: ${j?.error ?? r.status}`); return; }
+    showToast(`"${d.nombre}" revocado`);
+    cargarDispositivos();
+  };
 
   // Edición de empleado (CRUD): diálogo con datos no biométricos.
   const [editEmp, setEditEmp] = useState(null); // { id, name, cedula, sede, expectedEntry }
@@ -973,6 +998,10 @@ export default function AdminPanel() {
                 <span className="icon"><Icon name="pin" size={19} /></span>
                 <span><b>Sedes</b><br /><small>{sedes.length} sede(s) registradas — agregar, mover o cambiar el radio GPS.</small></span>
               </button>
+              <button className="tool" onClick={() => { setTab('cfg-dispositivos'); cargarDispositivos(); }}>
+                <span className="icon"><Icon name="monitor" size={19} /></span>
+                <span><b>Dispositivos del kiosco</b><br /><small>Tablets/celulares activados para marcar — revocar el acceso de un aparato perdido.</small></span>
+              </button>
               <Link className="tool" href="/">
                 <span className="icon"><Icon name="monitor" size={19} /></span>
                 <span><b>Ir al kiosco</b><br /><small>Pantalla de marcación facial (1:N).</small></span>
@@ -981,6 +1010,47 @@ export default function AdminPanel() {
                 <span className="icon"><Icon name="pin" size={19} /></span>
                 <span><b>Diagnóstico GPS</b><br /><small>Precisión y distancia a cada sede desde este dispositivo.</small></span>
               </Link>
+            </div>
+          </section>
+        )}
+
+        {/* ── Sub-pantalla: Dispositivos del kiosco ── */}
+        {tab === 'cfg-dispositivos' && (
+          <section className="card grow">
+            <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
+            <h2>Dispositivos del kiosco <span className="muted-count">{dispositivos.length}</span></h2>
+            <p className="hint">
+              Cada tablet/celular se activa una vez desde la pantalla del kiosco (con tu sesión) y recibe su clave propia.
+              Si un aparato se pierde, revócalo aquí: deja de poder marcar al instante, sin afectar a los demás.
+            </p>
+            {dispError && <p className="empty">⚠ {dispError}</p>}
+            <div className="scrollable">
+              {dispositivos.length === 0 && !dispError && <p className="empty">Aún no hay dispositivos activados. Abre el kiosco en la tablet y actívala desde allí.</p>}
+              {dispositivos.length > 0 && (
+                <div className="att-tablewrap">
+                  <table className="att-table">
+                    <thead>
+                      <tr><th>Dispositivo</th><th>Sede</th><th>Estado</th><th>Último uso</th><th>Activado por</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {dispositivos.map((d) => (
+                        <tr key={d.id}>
+                          <td className="att-name">{d.nombre}</td>
+                          <td>{d.sede_nombre ?? '—'}</td>
+                          <td>{d.activo ? '🟢 activo' : '⛔ revocado'}</td>
+                          <td>{d.ultimo_uso ? fmtTs(d.ultimo_uso) : 'nunca'}</td>
+                          <td>{d.activado_por ?? '—'}</td>
+                          <td>
+                            {d.activo && (
+                              <button className="btn small danger-btn" onClick={() => revocarDispositivo(d)}>Revocar</button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </section>
         )}

@@ -192,6 +192,9 @@ export async function addPerson(name, descriptor, extra = {}) {
     const d = await api('/api/empleados', {
       method: 'POST',
       body: JSON.stringify({
+        // Identidad: el servidor la toma del gestor vía colaborador_id; el
+        // nombre/cédula del cliente son solo referencia.
+        colaborador_id: extra.colaboradorId ?? null,
         nombre: name,
         cedula: extra.cedula || null,
         sede_id: sede?.id ?? extra.sedeId ?? null,

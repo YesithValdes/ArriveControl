@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { haversineDistance, MAX_RADIUS_METERS } from '../utils/haversine.js';
-import { getSedes } from '../services/sedesService.js';
+import { cargarSedes } from '../services/kioskoApi.js';
 
 export default function GpsDebug() {
   const [reading, setReading] = useState(null);
@@ -18,7 +18,13 @@ export default function GpsDebug() {
   const [samples, setSamples] = useState(0);
   const [sedes, setSedes] = useState([]);
   const watchId = useRef(null);
-  useEffect(() => { setSedes(getSedes()); }, []);
+  // Sedes REALES desde la base de datos (/api/sedes) — nunca del viejo
+  // sedesService de localStorage, que mostraba sedes de prueba sembradas.
+  useEffect(() => {
+    cargarSedes()
+      .then((rows) => setSedes(rows.map((r) => ({ name: r.nombre, lat: r.lat, lon: r.lon, radius: r.radio_m }))))
+      .catch((e) => setError(`No se pudieron cargar las sedes: ${e.message}`));
+  }, []);
 
   const start = () => {
     setError(null);

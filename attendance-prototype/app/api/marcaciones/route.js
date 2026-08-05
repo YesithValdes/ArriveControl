@@ -11,28 +11,31 @@
 import { NextResponse, after } from 'next/server'
 import { registrarPaso, listarMarcaciones } from '../../../lib/marcaciones'
 import { estadoAcceso } from '../../../lib/sesion'
+import { dispositivoDeLaPeticion } from '../../../lib/dispositivos.js'
 import { sincronizar, fechasAfectadas } from '../../../lib/sincronizarNomina.js'
 
 export const runtime = 'nodejs'
 
 export async function POST(req) {
-  // Autenticación en dos vías (una basta):
-  //  a) Clave de dispositivo (X-Device-Key = KIOSCO_DEVICE_KEY): para tablets
-  //     dedicadas sin usuario. Se guarda en el dispositivo, no en el código.
-  //  b) Sesión con permiso `asistencia` (VER): el celular del administrador de
-  //     la sede, que ya inició sesión — la cookie viaja sola.
-  // Sin ninguna de las dos se rechaza: una marcación falsa se convierte en
-  // horas extra pagadas (la sincronización con nómina es automática).
-  // En desarrollo, si KIOSCO_DEVICE_KEY no está configurada, se permite sin
-  // credencial para poder probar el kiosco local.
-  const claveDispositivo = process.env.KIOSCO_DEVICE_KEY
+  // Autenticación en tres vías (una basta):
+  //  a) Dispositivo ACTIVADO (X-Device-Key registrada en asistencia.dispositivos):
+  //     la vía normal — cada tablet se activa una vez con sesión de admin y su
+  //     clave propia se puede revocar individualmente desde el panel.
+  //  b) KIOSCO_DEVICE_KEY (env, clave compartida): compatibilidad con
+  //     dispositivos configurados a mano antes de la activación por aparato.
+  //  c) Sesión con permiso `asistencia` (VER): el celular del administrador.
+  // Sin ninguna se rechaza: una marcación falsa se convierte en horas extra
+  // pagadas (la sincronización con nómina es automática).
+  // En desarrollo, sin KIOSCO_DEVICE_KEY configurada, se permite sin credencial.
   const claveEnviada = req.headers.get('x-device-key')
-  const conClave = !!claveDispositivo && claveEnviada === claveDispositivo
-  if (!conClave && (process.env.NODE_ENV === 'production' || claveDispositivo)) {
+  const claveEnv = process.env.KIOSCO_DEVICE_KEY
+  const conClaveEnv = !!claveEnv && claveEnviada === claveEnv
+  const dispositivo = claveEnviada && !conClaveEnv ? await dispositivoDeLaPeticion(req) : null
+  if (!conClaveEnv && !dispositivo && (process.env.NODE_ENV === 'production' || claveEnv)) {
     const { estado } = await estadoAcceso('VER')
     if (estado !== 'OK') {
       return NextResponse.json(
-        { ok: false, error: 'Kiosco no autorizado: inicia sesión o configura la clave del dispositivo.' },
+        { ok: false, error: 'DISPOSITIVO_NO_ACTIVADO', detalle: 'Este dispositivo no está activado. Actívalo desde la pantalla del kiosco con una sesión de administrador.' },
         { status: 401 },
       )
     }

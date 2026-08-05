@@ -10,13 +10,29 @@
 import { NextResponse } from 'next/server'
 import { pool } from '../../../lib/db.js'
 import { estadoAcceso } from '../../../lib/sesion'
+import { dispositivoDeLaPeticion } from '../../../lib/dispositivos.js'
 
 export const runtime = 'nodejs'
 
 export async function GET(req) {
-  // ?rostros=1 → modo KIOSCO (sin autenticación, ver nota en /api/marcaciones):
-  // solo id + nombre + descriptor, lo mínimo para la comparación facial 1:N.
+  // ?rostros=1 → modo KIOSCO: id + nombre + descriptor para la comparación 1:N.
+  // Los descriptores son DATO BIOMÉTRICO (Ley 1581): solo los baja un
+  // dispositivo activado (o la clave compartida de compatibilidad, o una
+  // sesión). En desarrollo sin KIOSCO_DEVICE_KEY se permite para probar.
   if (new URL(req.url).searchParams.get('rostros') === '1') {
+    const claveEnviada = req.headers.get('x-device-key')
+    const claveEnv = process.env.KIOSCO_DEVICE_KEY
+    const conClaveEnv = !!claveEnv && claveEnviada === claveEnv
+    const dispositivo = claveEnviada && !conClaveEnv ? await dispositivoDeLaPeticion(req) : null
+    if (!conClaveEnv && !dispositivo && (process.env.NODE_ENV === 'production' || claveEnv)) {
+      const { estado } = await estadoAcceso('VER')
+      if (estado !== 'OK') {
+        return NextResponse.json(
+          { ok: false, error: 'DISPOSITIVO_NO_ACTIVADO', detalle: 'Solo un dispositivo activado puede descargar el roster facial.' },
+          { status: 401 },
+        )
+      }
+    }
     const { rows } = await pool.query(
       `select id, nombre, sede_id, descriptor_facial
          from asistencia.empleados where activo order by nombre`,
@@ -47,9 +63,30 @@ export async function POST(req) {
 
   let c
   try { c = await req.json() } catch { return NextResponse.json({ ok: false, error: 'JSON inválido.' }, { status: 400 }) }
-  const nombre = String(c?.nombre ?? '').trim()
-  if (!nombre) return NextResponse.json({ ok: false, error: 'El nombre es obligatorio.' }, { status: 400 })
-  const cedula = c?.cedula ? String(c.cedula).replace(/\D/g, '') : null
+
+  // El gestor es la UNICA fuente de identidad: el alta exige elegir un
+  // colaborador ACTIVO del gestor, y nombre/cedula se toman de la base — lo
+  // que mande el navegador se ignora (evita cedulas que no cruzan con nomina).
+  const colaboradorId = String(c?.colaborador_id ?? '').trim()
+  if (!colaboradorId) {
+    return NextResponse.json(
+      { ok: false, error: 'Elige el colaborador desde el gestor de empleados: el registro libre ya no existe.' },
+      { status: 400 },
+    )
+  }
+  const { rows: colabRows } = await pool.query(
+    `select id, nombres || ' ' || apellidos as nombre, numero_documento as cedula
+       from public.colaborador where id = $1::uuid and estado = 'ACTIVO'`,
+    [colaboradorId],
+  ).catch(() => ({ rows: [] }))
+  if (colabRows.length === 0) {
+    return NextResponse.json(
+      { ok: false, error: 'Ese colaborador no existe o no está activo en el gestor de empleados.' },
+      { status: 404 },
+    )
+  }
+  const nombre = colabRows[0].nombre
+  const cedula = colabRows[0].cedula
   const descriptor = Array.isArray(c?.descriptor_facial) && c.descriptor_facial.length === 128 ? c.descriptor_facial : null
   // Jornada distribuida (opcional): [lun..sáb], 6 horas-por-día entre 0 y 12.
   const jornada = Array.isArray(c?.jornada_semanal)
@@ -60,15 +97,15 @@ export async function POST(req) {
   try {
     const { rows } = await pool.query(
       `insert into asistencia.empleados
-         (nombre, cedula, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_semanal, descriptor_facial)
-       values ($1,$2,$3,$4,$5,$6,$7,$8)
-       returning id, nombre, cedula, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_semanal, activo, creado_en`,
-      [nombre, cedula, c.sede_id ?? null, c.entrada_esperada ?? null, c.salida_esperada ?? null,
+         (nombre, cedula, colaborador_id, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_semanal, descriptor_facial)
+       values ($1,$2,$3::uuid,$4,$5,$6,$7,$8,$9)
+       returning id, nombre, cedula, colaborador_id, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_semanal, activo, creado_en`,
+      [nombre, cedula, colaboradorId, c.sede_id ?? null, c.entrada_esperada ?? null, c.salida_esperada ?? null,
        c.almuerzo_min ?? 60, jornada, descriptor],
     )
     return NextResponse.json({ ok: true, empleado: rows[0] })
   } catch (e) {
-    if (e.code === '23505') return NextResponse.json({ ok: false, error: 'Ya existe un empleado con esa cédula.' }, { status: 409 })
+    if (e.code === '23505') return NextResponse.json({ ok: false, error: 'Ese colaborador ya está registrado en asistencia.' }, { status: 409 })
     throw e
   }
 }

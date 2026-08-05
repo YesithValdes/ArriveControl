@@ -36,8 +36,11 @@ export default function EmployeeRegister() {
 
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState('Cargando el modelo facial…');
-  const [name, setName] = useState('');
-  const [cedula, setCedula] = useState('');
+  // Identidad: se ELIGE desde el gestor de empleados (fuente única), no se digita.
+  const [busqueda, setBusqueda] = useState('');
+  const [resultados, setResultados] = useState([]);
+  const [buscando, setBuscando] = useState(false);
+  const [colaborador, setColaborador] = useState(null); // { id, nombres, apellidos, cedula, sede_gestor }
   // Horario OPCIONAL: vacío por defecto. Sin él, el sistema igual registra
   // por alternancia (entrada→salida) y calcula las horas reales.
   const [expectedEntry, setExpectedEntry] = useState('');
@@ -90,6 +93,26 @@ export default function EmployeeRegister() {
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2800); };
 
+  // Búsqueda en el gestor con debounce corto: escribir 2+ letras consulta.
+  useEffect(() => {
+    if (colaborador) return; // ya eligió: no buscar más
+    const q = busqueda.trim();
+    if (q.length < 2) { setResultados([]); return; }
+    const id = setTimeout(async () => {
+      setBuscando(true);
+      try {
+        const r = await fetch(`/api/colaboradores-gestor?buscar=${encodeURIComponent(q)}`);
+        const d = await r.json();
+        setResultados(d.ok ? d.colaboradores : []);
+      } catch {
+        setResultados([]);
+      } finally {
+        setBuscando(false);
+      }
+    }, 300);
+    return () => clearTimeout(id);
+  }, [busqueda, colaborador]);
+
   // Analiza la foto apenas se selecciona: detecta el rostro y extrae el vector.
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
@@ -121,11 +144,13 @@ export default function EmployeeRegister() {
     }
   };
 
-  const canRegister = ready && !analyzing && name.trim().length >= 3 && cedula.trim().length >= 5 && photo;
+  const canRegister = ready && !analyzing && colaborador && photo;
 
   const handleRegister = async () => {
-    const result = await addPerson(name, photo.descriptor, {
-      cedula, sede, expectedEntry, expectedExit,
+    const result = await addPerson(`${colaborador.nombres} ${colaborador.apellidos}`, photo.descriptor, {
+      colaboradorId: colaborador.id,
+      cedula: colaborador.cedula,
+      sede, expectedEntry, expectedExit,
       breakMinutes: breakMinutes === '' ? null : Number(breakMinutes),
     });
     if (result.error) {
@@ -133,8 +158,8 @@ export default function EmployeeRegister() {
       return;
     }
     showToast(`${result.name} registrado correctamente`);
-    setName('');
-    setCedula('');
+    setColaborador(null);
+    setBusqueda('');
     if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
     setPhoto(null);
     setStatus('Empleado registrado. Puedes agregar otro.');
@@ -168,14 +193,39 @@ export default function EmployeeRegister() {
 
       <section className="card">
         <div className="field">
-          <label htmlFor="r-nombre">Nombre completo</label>
-          <input id="r-nombre" type="text" placeholder="Ej.: Carlos Gómez" value={name}
-            onChange={(e) => setName(e.target.value)} autoComplete="off" />
-        </div>
-        <div className="field">
-          <label htmlFor="r-cedula">Cédula</label>
-          <input id="r-cedula" type="text" inputMode="numeric" placeholder="Ej.: 1085312456" value={cedula}
-            onChange={(e) => setCedula(e.target.value.replace(/\D/g, ''))} autoComplete="off" />
+          <label htmlFor="r-buscar">Colaborador (desde el gestor de empleados)</label>
+          {!colaborador ? (
+            <>
+              <input id="r-buscar" type="text" placeholder="Busca por nombre o cédula…" value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)} autoComplete="off" />
+              {buscando && <small className="field-hint">Buscando…</small>}
+              {!buscando && busqueda.trim().length >= 2 && resultados.length === 0 && (
+                <small className="field-hint">
+                  Sin resultados. La persona debe existir como colaborador ACTIVO en el gestor de empleados;
+                  créala allá primero (con su cédula correcta) y vuelve aquí.
+                </small>
+              )}
+              {resultados.length > 0 && (
+                <div className="search-results">
+                  {resultados.map((r) => (
+                    <button key={r.id} type="button" className="search-item" disabled={r.ya_registrado}
+                      onClick={() => { setColaborador(r); setResultados([]); }}>
+                      <b>{r.nombres} {r.apellidos}</b>
+                      <small>C.C. {r.cedula} · {r.sede_gestor}{r.ya_registrado ? ' · ya registrado en asistencia' : ''}</small>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="selected-colab">
+              <span className="pinfo">
+                <b>{colaborador.nombres} {colaborador.apellidos}</b>
+                <small>C.C. {colaborador.cedula} · {colaborador.sede_gestor} · datos del gestor (solo lectura)</small>
+              </span>
+              <button className="btn" type="button" onClick={() => { setColaborador(null); setBusqueda(''); }}>Cambiar</button>
+            </div>
+          )}
         </div>
 
         <div className="field">
@@ -224,7 +274,7 @@ export default function EmployeeRegister() {
           ) : (
             <div className="preview">
               {/* Vista previa local; la imagen NO se guarda en el sistema */}
-              <img src={photo.previewUrl} alt={`Foto de ${name || 'empleado'}`} />
+              <img src={photo.previewUrl} alt={`Foto de ${colaborador ? `${colaborador.nombres} ${colaborador.apellidos}` : 'empleado'}`} />
               <div className="preview-info">
                 <span className="okmark">✅ Rostro detectado</span>
                 <small>Solo se guardará el código facial, no la imagen.</small>
@@ -300,6 +350,14 @@ const CSS = `
 .sub-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .sub-field input { font: inherit; font-size: 15px; font-weight: 400; color: var(--ink); padding: 9px 10px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--page); }
 .field input:focus-visible, .btn:focus-visible, .photo-drop:focus-visible, .del:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.search-results { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-top: 2px; }
+.search-item { font: inherit; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; border: none; border-top: 1px solid var(--grid); background: var(--page); color: var(--ink); cursor: pointer; }
+.search-item:first-child { border-top: 0; }
+.search-item:hover:not(:disabled) { background: var(--accent-soft); }
+.search-item:disabled { opacity: .5; cursor: not-allowed; }
+.search-item small { color: var(--muted); font-size: 12px; }
+.selected-colab { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--good-text); border-radius: 8px; background: var(--page); }
 
 .photo-drop { font: inherit; width: 100%; padding: 22px 12px; border: 2px dashed var(--border); border-radius: 12px; background: var(--page); color: var(--ink-2); font-size: 22px; cursor: pointer; line-height: 1.5; }
 .photo-drop b { font-size: 15px; color: var(--ink); }
