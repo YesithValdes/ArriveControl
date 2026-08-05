@@ -22,3 +22,4 @@ npm-debug.log*
 
 # Grafo de conocimiento local (artefacto de analisis, no del producto)
 graphify-out/
+.gstack/

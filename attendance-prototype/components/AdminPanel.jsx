@@ -9,21 +9,22 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+// Todos los datos vienen de POSTGRES vía API (services/panelStore.js), con
+// las mismas formas que los services locales que reemplaza.
 import {
+  syncPanel,
   listJourneyEvents,
   addManualEvent,
   updateEventTime,
   updateEventType,
   deleteEvent,
-  _resetJourneys,
   NIGHT_WINDOW_MS,
-} from '../services/journeyService.js';
-import { listPeople, removePerson, updatePerson, expectedDailyHours } from '../services/rosterService.js';
-import { getLaborConfig, saveLaborConfig } from '../services/configService.js';
-import { getSedes, addSede, updateSede, removeSede } from '../services/sedesService.js';
-
-const ADMIN_PIN = '1234'; // prototipo — en producción: roles/login en Supabase
-import { loadDemoData } from '../services/demoDataService.js';
+  listPeople, removePerson, updatePerson, expectedDailyHours, jornadaDelDia,
+  getLaborConfig, saveLaborConfig,
+  getSedes, addSede, updateSede, removeSede,
+} from '../services/panelStore.js';
+import { signOut } from '../lib/auth-client';
 
 /** Iconos de línea (estilo Lucide, inline SVG): heredan el color del texto. */
 function Icon({ name, size = 17 }) {
@@ -84,7 +85,10 @@ function AccList({ items }) {
   );
 }
 
-const dayKey = (iso) => iso.slice(0, 10);
+// Día calendario en BOGOTÁ (UTC-5 fijo). Nunca cortar el ISO crudo: una
+// marcación de las 22:00 Bogotá ya es "mañana" en UTC y caería en el día
+// equivocado del acordeón.
+const dayKey = (iso) => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
 const todayKey = () => dayKey(new Date().toISOString());
 
 const fmt12 = (iso) => {
@@ -117,20 +121,25 @@ function pairedHours(events, nowMs) {
   return total;
 }
 
+// Pestañas que se pueden abrir directamente por URL (?tab=…). Se valida contra
+// esta lista para que un valor inventado no deje el panel en blanco.
+const TABS_VALIDAS = ['dashboard', 'anomalias', 'equipo', 'empleados', 'reportes', 'historial', 'ajustes'];
+
 export default function AdminPanel() {
-  const [tab, setTab] = useState('dashboard');
+  // Permite enlazar desde fuera a una pestaña concreta —p. ej. el gestor de
+  // nómina apunta a /admin?tab=equipo para abrir la tabla de asistencia.
+  const searchParams = useSearchParams();
+  const tabPedida = searchParams.get('tab');
+  const [tab, setTab] = useState(TABS_VALIDAS.includes(tabPedida) ? tabPedida : 'dashboard');
   const [collapsed, setCollapsed] = useState(false); // menú lateral escondido (solo PC)
   const [navOpen, setNavOpen] = useState(false); // menú off-canvas abierto (solo móvil)
   const [sedeFilter, setSedeFilter] = useState('all'); // 'all' | nombre de sede
   const [tick, setTick] = useState(0); // fuerza relectura de localStorage
 
-  // Bloqueo del panel con PIN (persistente durante la sesión de la pestaña).
-  const [locked, setLocked] = useState(true);
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
+  // El acceso lo protege la SESIÓN del gestor (app/admin/page.jsx redirige a
+  // /login si no la hay). Aquí ya no existe el PIN de prototipo.
   useEffect(() => {
-    if (sessionStorage.getItem('admin_unlocked') === '1') setLocked(false);
-    setCfg(getLaborConfig()); // hidratar config real del dispositivo
+    setCfg(getLaborConfig()); // hidratar config
   }, []);
 
   // Reportes: rango de fechas (por defecto, el mes en curso).
@@ -151,7 +160,6 @@ export default function AdminPanel() {
   const [newSede, setNewSede] = useState({ name: '', lat: '', lon: '', radius: '50' });
   const [editSede, setEditSede] = useState(null); // { original, name, lat, lon, radius }
   const [newSedeOpen, setNewSedeOpen] = useState(false); // drawer de "Nueva sede"
-  const [newHoliday, setNewHoliday] = useState('');
 
   // Edición de empleado (CRUD): diálogo con datos no biométricos.
   const [editEmp, setEditEmp] = useState(null); // { id, name, cedula, sede, expectedEntry }
@@ -164,14 +172,35 @@ export default function AdminPanel() {
   const [page, setPage] = useState(0);
   const [empSearch, setEmpSearch] = useState(''); // búsqueda de la tabla Empleados
 
+  // Envío de horas con recargo a la plataforma de nómina (RH).
+  const [enviandoRH, setEnviandoRH] = useState(false);
+  const [envioRH, setEnvioRH] = useState(null); // última respuesta del gestor
+
   // Drawer de detalle: línea de tiempo de marcaciones de una persona en un día.
-  const [drawer, setDrawer] = useState(null); // { personId, personName, day }
-  const [evForm, setEvForm] = useState(null); // { mode:'add'|'edit', eventId?, type, time, reason }
-  const refresh = () => setTick((t) => t + 1);
+  const [drawer, setDrawer] = useState(null); // { personId, personName, desde, hasta }
+  const [evForm, setEvForm] = useState(null); // { mode:'add'|'edit', eventId?, fecha, type, time, reason }
+  const [openDia, setOpenDia] = useState(null); // día expandido dentro del drawer
+  // refresh = re-sincronizar desde Postgres y re-renderizar.
+  const refresh = () => {
+    syncPanel()
+      .then(() => { setCfg(getLaborConfig()); setTick((t) => t + 1); })
+      .catch((e) => console.error('No se pudo sincronizar el panel:', e.message));
+  };
 
   useEffect(() => {
-    const id = setInterval(refresh, 60000); // horas "en vivo" cada minuto
-    return () => clearInterval(id);
+    refresh(); // carga inicial desde la API
+    // Casi en vivo: sondeo corto + refresco inmediato al volver a la pestaña,
+    // para que las marcaciones del kiosco (u otro admin) aparezcan enseguida.
+    const id = setInterval(refresh, 10000);
+    const alVolver = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', alVolver);
+    window.addEventListener('focus', alVolver);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', alVolver);
+      window.removeEventListener('focus', alVolver);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const data = useMemo(() => {
@@ -354,21 +383,38 @@ export default function AdminPanel() {
     showToast('Reporte CSV descargado');
   };
 
-  // Desbloqueo / bloqueo del panel.
-  const tryUnlock = () => {
-    if (pinInput === ADMIN_PIN) {
-      sessionStorage.setItem('admin_unlocked', '1');
-      setLocked(false);
-      setPinInput('');
-      setPinError(false);
-    } else {
-      setPinInput('');
-      setPinError(true);
+  // Envía a la plataforma de nómina las horas con recargo del rango del reporte.
+  // El lote se reconstruye en el servidor desde las marcaciones actuales, así que
+  // reenviar tras editar o eliminar marcaciones deja la nómina al día (el gestor
+  // reemplaza tramos solapados y reliquida los periodos afectados).
+  const enviarANomina = async () => {
+    setEnviandoRH(true);
+    setEnvioRH(null);
+    try {
+      const res = await fetch('/api/enviar-horas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ desde: repFrom, hasta: repTo }),
+      });
+      const datos = await res.json();
+      if (!res.ok || datos.ok === false) {
+        showToast(datos.error || 'El gestor rechazó el lote.');
+        setEnvioRH(datos);
+        return;
+      }
+      setEnvioRH(datos);
+      showToast(datos.vacio ? 'No hay horas con recargo en este rango.' : 'Horas enviadas a nómina.');
+    } catch (e) {
+      showToast(`No se pudo enviar: ${e.message}`);
+    } finally {
+      setEnviandoRH(false);
     }
   };
-  const lockPanel = () => {
-    sessionStorage.removeItem('admin_unlocked');
-    setLocked(true);
+
+  // Cerrar sesión: la misma sesión del gestor de empleados.
+  const cerrarSesion = async () => {
+    try { await signOut(); } catch { /* la redirección igual lleva al login */ }
+    window.location.href = '/login';
   };
 
   const showToast = (msg) => {
@@ -377,51 +423,80 @@ export default function AdminPanel() {
   };
 
   // Abre el drawer de detalle de una persona en un día concreto.
-  const openDrawer = (personId, personName, day = todayKey()) => {
+  // Rango por defecto: los últimos 7 días — perspectiva amplia de la semana.
+  const openDrawer = (personId, personName, day = null) => {
     setEvForm(null);
-    setDrawer({ personId, personName, day });
+    setOpenDia(day);
+    const hasta = day ?? todayKey();
+    const desde = day ?? dayKey(new Date(Date.now() - 6 * 24 * 3600000).toISOString());
+    setDrawer({ personId, personName, desde, hasta });
   };
 
   // Anomalías: abren el drawer en el día del evento, con el formulario
   // preconfigurado según el tipo de anomalía.
   const openFix = (a) => {
-    openDrawer(a.person.id, a.person.name, dayKey(a.event.ts));
+    const dia = dayKey(a.event.ts);
+    openDrawer(a.person.id, a.person.name, dia);
     if (a.kind === 'missing-exit') {
-      setEvForm({ mode: 'add', type: 'out', time: '17:00', reason: '' });
+      setEvForm({ mode: 'add', fecha: dia, type: 'out', time: '17:00', reason: '' });
     } else {
       const d = new Date(a.event.ts);
-      setEvForm({ mode: 'edit', eventId: a.event.id, type: 'in', time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, reason: '' });
+      setEvForm({ mode: 'edit', eventId: a.event.id, fecha: dia, type: 'in', time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, reason: '' });
     }
   };
 
-  // Eventos del día abierto en el drawer (orden cronológico).
+  // Eventos del RANGO abierto en el drawer, agrupados por día (desc: el más
+  // reciente arriba) con sus horas — la vista panorámica.
   const drawerEvents = useMemo(() => {
     if (!drawer) return [];
     return listJourneyEvents()
-      .filter((e) => e.personId === drawer.personId && dayKey(e.ts) === drawer.day)
+      .filter((e) => e.personId === drawer.personId && dayKey(e.ts) >= drawer.desde && dayKey(e.ts) <= drawer.hasta)
       .sort((a, b) => a.ts.localeCompare(b.ts));
   }, [drawer, tick]);
 
-  const saveEvForm = () => {
-    if (!evForm?.time || !evForm.reason.trim()) return;
-    const iso = new Date(`${drawer.day}T${evForm.time}:00`).toISOString();
-    if (evForm.mode === 'edit') {
-      updateEventTime(evForm.eventId, iso, 'admin');
-      const original = drawerEvents.find((e) => e.id === evForm.eventId);
-      if (original && original.type !== evForm.type) updateEventType(evForm.eventId, evForm.type, 'admin');
-    } else {
-      addManualEvent(drawer.personId, drawer.personName, evForm.type, iso, 'admin');
+  const drawerDias = useMemo(() => {
+    const map = new Map();
+    for (const e of drawerEvents) {
+      const d = dayKey(e.ts);
+      if (!map.has(d)) map.set(d, []);
+      map.get(d).push(e);
     }
-    setEvForm(null);
-    refresh();
-    showToast(`Ajuste guardado para ${drawer.personName}`);
+    return [...map.entries()]
+      .map(([fecha, evs]) => ({ fecha, evs, horas: pairedHours(evs, Date.now()) }))
+      .sort((a, b) => b.fecha.localeCompare(a.fecha));
+  }, [drawerEvents]);
+
+  const saveEvForm = async () => {
+    if (!evForm?.time || !evForm.reason.trim()) return;
+    const fecha = evForm.fecha || drawer.hasta;
+    // Offset Bogotá EXPLÍCITO: la marcación queda en el día/hora que el admin
+    // ve en pantalla, sin depender de la zona horaria del equipo.
+    const iso = new Date(`${fecha}T${evForm.time}:00-05:00`).toISOString();
+    try {
+      if (evForm.mode === 'edit') {
+        await updateEventTime(evForm.eventId, iso, evForm.reason);
+        const original = drawerEvents.find((e) => e.id === evForm.eventId);
+        if (original && original.type !== evForm.type) await updateEventType(evForm.eventId, evForm.type, evForm.reason);
+      } else {
+        await addManualEvent(drawer.personId, drawer.personName, evForm.type, iso, evForm.reason);
+      }
+      setEvForm(null);
+      refresh();
+      showToast(`Ajuste guardado para ${drawer.personName}`);
+    } catch (e) {
+      showToast(`No se pudo guardar: ${e.message}`);
+    }
   };
 
-  const removeEv = (e) => {
+  const removeEv = async (e) => {
     if (confirm(`¿Eliminar la marcación de ${e.type === 'in' ? 'entrada' : 'salida'} de las ${fmt12(e.ts)}? Úsalo solo para marcaciones erróneas.`)) {
-      deleteEvent(e.id);
-      refresh();
-      showToast('Marcación eliminada');
+      try {
+        await deleteEvent(e.id);
+        refresh();
+        showToast('Marcación eliminada');
+      } catch (err) {
+        showToast(`No se pudo eliminar: ${err.message}`);
+      }
     }
   };
 
@@ -471,6 +546,19 @@ export default function AdminPanel() {
     return chip('crit', 'Sin marcación');
   };
 
+  // Novedades por empleado (como en la demo de nómina): extra semanal,
+  // dominical/festivo trabajado hoy, y correcciones manuales del día.
+  const hoyDominical = new Date().getDay() === 0 || (cfg.holidays || []).includes(todayKey());
+  const novChips = (r) => {
+    const novs = [];
+    const extra = Math.max(0, r.weekHours - cfg.weeklyHours);
+    if (extra > 0.05) novs.push(<span className="nov ex" key="ex">Extra {fmtH(extra)}</span>);
+    if (hoyDominical && r.firstIn) novs.push(<span className="nov dom" key="dom">Dominical</span>);
+    if (r.corrected) novs.push(<span className="nov man" key="man">Corrección ✎</span>);
+    if (novs.length === 0) return <span className="nov none">—</span>;
+    return novs;
+  };
+
   const maxWeek = Math.max(40, ...view.rows.map((r) => r.weekHours));
 
   // Selector de sede (arriba del menú lateral): filtro GLOBAL — aplica a
@@ -491,35 +579,6 @@ export default function AdminPanel() {
       </select>
     </div>
   );
-
-  // ── Pantalla de bloqueo: PIN antes de mostrar cualquier dato ──────────
-  if (locked) {
-    return (
-      <div className="admin-root locked">
-        <style>{CSS}</style>
-        <div className="pin-gate">
-          <div className="pin-card">
-            <span className="logo big" aria-hidden="true">AC</span>
-            <h1>Panel del administrador</h1>
-            <p className="hint">Ingresa el PIN para continuar.</p>
-            <input
-              type="password"
-              inputMode="numeric"
-              maxLength={4}
-              placeholder="••••"
-              value={pinInput}
-              autoFocus
-              onChange={(e) => { setPinInput(e.target.value.replace(/\D/g, '')); setPinError(false); }}
-              onKeyDown={(e) => e.key === 'Enter' && tryUnlock()}
-              aria-label="PIN de administrador"
-            />
-            {pinError && <p className="pin-error">PIN incorrecto. Inténtalo de nuevo.</p>}
-            <button className="btn primary" onClick={tryUnlock} disabled={pinInput.length < 4}>Entrar</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className={`admin-root${collapsed ? ' nav-collapsed' : ''}${navOpen ? ' nav-open' : ''}`}>
@@ -702,7 +761,7 @@ export default function AdminPanel() {
                   <div className="att-tablewrap">
                     <table className="att-table">
                       <thead>
-                        <tr><th>Empleado</th><th>Sede</th><th>Entrada</th><th>Salida</th><th className="num">Horas</th><th>Estado</th></tr>
+                        <tr><th>Empleado</th><th>Sede</th><th>Entrada</th><th>Salida</th><th className="num">Horas</th><th>Estado</th><th>Novedades</th></tr>
                       </thead>
                       <tbody>
                         {pageRows.map((r) => (
@@ -714,6 +773,7 @@ export default function AdminPanel() {
                             <td>{fmt12(r.lastOut?.ts)}</td>
                             <td className="num">{fmtH(r.hoursToday)}</td>
                             <td>{statusChip(r)}</td>
+                            <td><span className="novs">{novChips(r)}</span></td>
                           </tr>
                         ))}
                       </tbody>
@@ -729,6 +789,7 @@ export default function AdminPanel() {
                         ['Entrada', fmt12(r.firstIn?.ts)],
                         ['Salida', fmt12(r.lastOut?.ts)],
                         ['Horas', fmtH(r.hoursToday)],
+                        ['Novedades', <span className="novs" key="n">{novChips(r)}</span>],
                       ],
                       actions: (
                         <button className="btn primary block" onClick={() => openDrawer(r.person.id, r.person.name)}>
@@ -769,6 +830,7 @@ export default function AdminPanel() {
                   expectedEntry: p.expectedEntry || '',
                   expectedExit: p.expectedExit || '',
                   breakMinutes: p.breakMinutes == null ? '' : String(p.breakMinutes),
+                  jornadaSemanal: p.jornadaSemanal ? [...p.jornadaSemanal] : null,
                 });
                 const horario = (p) => (p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : 'horario libre');
                 const jornada = (p) => {
@@ -823,7 +885,22 @@ export default function AdminPanel() {
               <label>Desde <input type="date" value={repFrom} max={repTo} onChange={(e) => setRepFrom(e.target.value)} /></label>
               <label>Hasta <input type="date" value={repTo} min={repFrom} max={todayKey()} onChange={(e) => setRepTo(e.target.value)} /></label>
               <button className="btn primary" onClick={exportCSV} disabled={report.length === 0}>Exportar CSV</button>
+              <button className="btn primary" onClick={enviarANomina} disabled={enviandoRH}>
+                {enviandoRH ? 'Enviando…' : 'Enviar a nómina'}
+              </button>
             </div>
+            {envioRH && !envioRH.vacio && (
+              <p className="hint">
+                {envioRH.ok === false
+                  ? `Error: ${envioRH.error || 'el gestor rechazó el lote.'}`
+                  : <>
+                      Nómina: {envioRH.aplicados ?? 0} aplicadas, {envioRH.reemplazados ?? 0} reemplazadas,
+                      {' '}{envioRH.duplicados ?? 0} duplicadas, {(envioRH.rechazados || []).length} rechazadas.
+                      {(envioRH.periodosRecalculando || []).length > 0 && ` Reliquidando: ${envioRH.periodosRecalculando.join(', ')}.`}
+                      {(envioRH.periodosSinRecalcular || []).length > 0 && ` Pendientes: ${envioRH.periodosSinRecalcular.join(', ')}.`}
+                    </>}
+              </p>
+            )}
             <div className="scrollable">
               {report.length === 0 && <p className="empty">Sin marcaciones en este período{sedeFilter !== 'all' ? ` para ${sedeFilter}` : ''}.</p>}
               {report.length > 0 && (
@@ -890,7 +967,7 @@ export default function AdminPanel() {
             <div className="scrollable">
               <button className="tool" onClick={() => setTab('cfg-reglamento')}>
                 <span className="icon"><Icon name="file" size={19} /></span>
-                <span><b>Reglamento laboral</b><br /><small>Jornada legal ({cfg.weeklyHours} h/sem), gracia de puntualidad y festivos ({cfg.holidays.length}).</small></span>
+                <span><b>Reglamento laboral</b><br /><small>Jornada legal ({cfg.weeklyHours ?? '—'} h/sem), gracia de puntualidad y festivos ({(cfg.holidays ?? []).length}) — jornada y festivos vienen del gestor RH.</small></span>
               </button>
               <button className="tool" onClick={() => setTab('cfg-sedes')}>
                 <span className="icon"><Icon name="pin" size={19} /></span>
@@ -904,30 +981,6 @@ export default function AdminPanel() {
                 <span className="icon"><Icon name="pin" size={19} /></span>
                 <span><b>Diagnóstico GPS</b><br /><small>Precisión y distancia a cada sede desde este dispositivo.</small></span>
               </Link>
-              <button
-                className="tool"
-                onClick={() => {
-                  const r = loadDemoData();
-                  refresh();
-                  showToast(`Datos de prueba cargados: ${r.people} empleados, ${r.events} eventos`);
-                }}
-              >
-                <span className="icon"><Icon name="database" size={19} /></span>
-                <span><b>Cargar datos de prueba</b><br /><small>Una semana de jornadas, anomalías y correcciones de ejemplo.</small></span>
-              </button>
-              <button
-                className="tool danger"
-                onClick={() => {
-                  if (confirm('¿Borrar todos los eventos de jornada de este dispositivo? Esta acción no se puede deshacer.')) {
-                    _resetJourneys();
-                    refresh();
-                    showToast('Eventos de jornada borrados');
-                  }
-                }}
-              >
-                <span className="icon"><Icon name="trash" size={19} /></span>
-                <span><b>Restablecer datos de jornadas</b><br /><small>Borra los eventos guardados en este dispositivo.</small></span>
-              </button>
             </div>
           </section>
         )}
@@ -941,15 +994,12 @@ export default function AdminPanel() {
             <div className="scrollable">
               <div className="cfg-group">
                 <div className="cfg-row">
-                  <label htmlFor="cfg-week">
+                  <label>
                     Jornada legal semanal
-                    <small>Colombia: 42 h (Ley 2101 de 2021). Por encima cuentan como horas extra.</small>
+                    <small>La define el gestor RH según la ley vigente (Ley 2101). Aquí solo se consulta.</small>
                   </label>
                   <div className="cfg-input">
-                    <input
-                      id="cfg-week" type="number" min="1" max="84" value={cfg.weeklyHours}
-                      onChange={(e) => { const v = Number(e.target.value); if (v > 0) updateCfg({ weeklyHours: v }); }}
-                    /> h
+                    <b>{cfg.weeklyHours ?? '—'}</b> h
                   </div>
                 </div>
                 <div className="cfg-row">
@@ -968,22 +1018,22 @@ export default function AdminPanel() {
 
               <div className="cfg-group">
                 <h3>Días festivos y dominicales</h3>
-                <p className="cfg-note">Las horas trabajadas en domingo o festivo se desglosan aparte en Reportes (recargo dominical/festivo). Festivos de Colombia 2026 precargados.</p>
-                <div className="holiday-add">
-                  <input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} aria-label="Nuevo festivo" />
-                  <button
-                    className="btn primary"
-                    disabled={!newHoliday || cfg.holidays.includes(newHoliday)}
-                    onClick={() => { updateCfg({ holidays: [...cfg.holidays, newHoliday].sort() }); setNewHoliday(''); }}
-                  >
-                    ＋ Agregar
-                  </button>
-                </div>
+                <p className="cfg-note">
+                  Calendario oficial de festivos de Colombia, tomado del gestor RH (fuente única).
+                  {cfg.gestorUrl && (
+                    <>
+                      {' '}Para agregar o quitar un festivo decretado,{' '}
+                      <a href={cfg.gestorUrl} target="_blank" rel="noreferrer">edítalo en el gestor ↗</a>.
+                    </>
+                  )}
+                </p>
+                {cfg.gestorError && (
+                  <p className="cfg-note">⚠ No se pudo consultar el gestor: {cfg.gestorError}</p>
+                )}
                 <div className="holiday-list">
-                  {cfg.holidays.map((d) => (
+                  {(cfg.holidays ?? []).map((d) => (
                     <span className="holiday-chip" key={d}>
-                      {new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}
-                      <button aria-label={`Quitar festivo ${d}`} onClick={() => updateCfg({ holidays: cfg.holidays.filter((x) => x !== d) })}>✕</button>
+                      {new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: '2-digit' })}
                     </span>
                   ))}
                 </div>
@@ -1076,9 +1126,9 @@ export default function AdminPanel() {
           </button>
         ))}
 
-        <button className="lock-btn" onClick={lockPanel} title="Bloquear el panel">
+        <button className="lock-btn" onClick={cerrarSesion} title="Cerrar la sesión del gestor">
           <span className="icon"><Icon name="lock" /></span>
-          <span className="lbl">Bloquear</span>
+          <span className="lbl">Cerrar sesión</span>
         </button>
 
         <div className="side-foot">v0.1 · prototipo</div>
@@ -1096,71 +1146,155 @@ export default function AdminPanel() {
               <button className="btn" onClick={() => setDrawer(null)}>Cerrar</button>
             </div>
 
+            {/* Rango de días + total del rango */}
             <div className="drawer-day">
-              <label htmlFor="d-day">Día</label>
               <input
-                id="d-day" type="date" value={drawer.day} max={todayKey()}
-                onChange={(e) => { setDrawer({ ...drawer, day: e.target.value }); setEvForm(null); }}
+                type="date" value={drawer.desde} max={drawer.hasta} aria-label="Desde"
+                onChange={(e) => { setDrawer({ ...drawer, desde: e.target.value }); setEvForm(null); }}
               />
-              <span className="drawer-hours">{fmtH(pairedHours(drawerEvents, Date.now()))} trabajadas</span>
+              <span className="range-sep">–</span>
+              <input
+                type="date" value={drawer.hasta} min={drawer.desde} max={todayKey()} aria-label="Hasta"
+                onChange={(e) => { setDrawer({ ...drawer, hasta: e.target.value }); setEvForm(null); }}
+              />
+              <span className="drawer-hours">{fmtH(pairedHours(drawerEvents, Date.now()))} en el rango</span>
             </div>
 
             <div className="drawer-body">
-              {drawerEvents.length === 0 && <p className="empty">Sin marcaciones este día. Agrega la entrada y la salida si la persona sí trabajó.</p>}
-              {drawerEvents.map((e) => (
-                <div className="tl-row" key={e.id}>
-                  <span className={`tl-type ${e.type}`}>{e.type === 'in' ? 'Entrada' : 'Salida'}</span>
-                  <span className="tl-time">{fmt12(e.ts)}</span>
-                  <span className="tl-flag">
-                    {e.flag === 'manual' ? 'manual' : e.flag === 'corrected' ? 'corregida' : e.flag === 'late-entry' ? 'tardía' : 'kiosco'}
-                  </span>
-                  <span className="tl-actions">
-                    <button
-                      className="btn small"
-                      onClick={() => {
-                        const d = new Date(e.ts);
-                        setEvForm({ mode: 'edit', eventId: e.id, type: e.type, time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, reason: '' });
-                      }}
-                    >
-                      Editar
-                    </button>
-                    <button className="btn small danger-btn" onClick={() => removeEv(e)}>Eliminar</button>
-                  </span>
-                </div>
-              ))}
+              {drawerDias.length === 0 && <p className="empty">Sin marcaciones en este rango.</p>}
 
-              {!evForm && (
-                <button className="btn block" onClick={() => setEvForm({ mode: 'add', type: drawerEvents.length % 2 === 0 ? 'in' : 'out', time: '08:00', reason: '' })}>
-                  Agregar marcación
-                </button>
-              )}
+              {/* El formulario de ajuste se renderiza EN CONTEXTO: bajo la
+                  marcación que se edita, o al final del día donde se agrega. */}
+              {(() => {
+                const formularioEv = evForm && (
+                  <div className="ev-form">
+                    <h4>{evForm.mode === 'edit' ? 'Editar marcación' : 'Nueva marcación'}</h4>
+                    <div className="ev-form-row">
+                      {/* El campo Día solo aparece al agregar "en otro día" (botón
+                          de abajo); dentro del acordeón el día ya está implícito. */}
+                      {evForm.conFecha && (
+                        <label>Día
+                          <input type="date" value={evForm.fecha} max={todayKey()} onChange={(e) => setEvForm({ ...evForm, fecha: e.target.value })} />
+                        </label>
+                      )}
+                      <label>Tipo
+                        <select value={evForm.type} onChange={(e) => setEvForm({ ...evForm, type: e.target.value })}>
+                          <option value="in">Entrada</option>
+                          <option value="out">Salida</option>
+                        </select>
+                      </label>
+                      <label>Hora
+                        <input type="time" value={evForm.time} onChange={(e) => setEvForm({ ...evForm, time: e.target.value })} />
+                      </label>
+                    </div>
+                    <label className="ev-form-reason">Motivo del ajuste
+                      <input
+                        type="text" placeholder="Ej.: olvidó marcar la salida" value={evForm.reason}
+                        onChange={(e) => setEvForm({ ...evForm, reason: e.target.value })}
+                        autoFocus
+                      />
+                    </label>
+                    <div className="dialog-actions">
+                      <button className="btn" onClick={() => setEvForm(null)}>Cancelar</button>
+                      <button className="btn primary" disabled={!evForm.reason.trim()} onClick={saveEvForm}>Guardar</button>
+                    </div>
+                  </div>
+                );
+                const persona = listPeople().find((p) => p.id === drawer.personId);
+                const hh = (ts) => fmt12(ts).replace(/ [ap]\. m\./, '');
 
-              {evForm && (
-                <div className="ev-form">
-                  <h4>{evForm.mode === 'edit' ? 'Editar marcación' : 'Nueva marcación'}</h4>
-                  <div className="ev-form-row">
-                    <label>Tipo
-                      <select value={evForm.type} onChange={(e) => setEvForm({ ...evForm, type: e.target.value })}>
-                        <option value="in">Entrada</option>
-                        <option value="out">Salida</option>
-                      </select>
-                    </label>
-                    <label>Hora
-                      <input type="time" value={evForm.time} onChange={(e) => setEvForm({ ...evForm, time: e.target.value })} />
-                    </label>
-                  </div>
-                  <label className="ev-form-reason">Motivo del ajuste
-                    <input
-                      type="text" placeholder="Ej.: olvidó marcar la salida" value={evForm.reason}
-                      onChange={(e) => setEvForm({ ...evForm, reason: e.target.value })}
-                    />
-                  </label>
-                  <div className="dialog-actions">
-                    <button className="btn" onClick={() => setEvForm(null)}>Cancelar</button>
-                    <button className="btn primary" disabled={!evForm.reason.trim()} onClick={saveEvForm}>Guardar</button>
-                  </div>
-                </div>
-              )}
+                return (
+                  <>
+                    {drawerDias.map((d) => {
+                      const abierto = openDia === d.fecha;
+                      // (+X) = exceso sobre la jornada del día — la MISMA regla
+                      // con que nómina liquida la extra, no el horario esperado.
+                      const exceso = Math.max(0, d.horas - jornadaDelDia(persona, d.fecha));
+                      // Bloques como CHIPS (envuelven a varias líneas: soporta
+                      // cualquier número de pares sin superponerse).
+                      const bloques = [];
+                      for (let i = 0; i < d.evs.length; i++) {
+                        if (d.evs[i].type === 'in' && d.evs[i + 1]?.type === 'out') {
+                          bloques.push({ txt: `${hh(d.evs[i].ts)}–${hh(d.evs[i + 1].ts)}` });
+                          i++;
+                        } else {
+                          bloques.push({ txt: `${d.evs[i].type === 'in' ? 'E' : 'S'} ${hh(d.evs[i].ts)}`, warn: true });
+                        }
+                      }
+                      return (
+                        <div className={`dia${abierto ? ' abierto' : ''}`} key={d.fecha}>
+                          <button className="dia-row" aria-expanded={abierto} onClick={() => { setOpenDia(abierto ? null : d.fecha); setEvForm(null); }}>
+                            <span className="dia-top">
+                              <span className="dia-fecha">
+                                {new Date(`${d.fecha}T12:00:00`).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })}
+                              </span>
+                              <span className={`dia-horas${exceso > 0.05 ? ' extra' : ''}`}>
+                                {fmtH(d.horas)}{exceso > 0.05 ? ` (+${fmtH(exceso)})` : ''}
+                              </span>
+                              <span className="dia-chev">›</span>
+                            </span>
+                            <span className="dia-bloques">
+                              {bloques.length === 0 && <span className="bloque">—</span>}
+                              {bloques.map((b, i) => (
+                                <span key={i} className={`bloque${b.warn ? ' warn' : ''}`}>{b.txt}{b.warn ? ' ⚠' : ''}</span>
+                              ))}
+                            </span>
+                          </button>
+
+                          {abierto && (
+                            <div className="dia-detalle">
+                              {d.evs.map((e) => (
+                                <div key={e.id}>
+                                  <div className="tl-row">
+                                    <span className={`tl-type ${e.type}`}>{e.type === 'in' ? 'Entrada' : 'Salida'}</span>
+                                    <span className="tl-time">{fmt12(e.ts)}</span>
+                                    <span className="tl-flag">
+                                      {e.flag === 'manual' ? 'manual' : e.flag === 'corrected' ? 'corregida' : e.flag === 'late-entry' ? 'tardía' : 'kiosco'}
+                                    </span>
+                                    <span className="tl-actions">
+                                      <button
+                                        className="btn small"
+                                        onClick={() => {
+                                          const dt = new Date(new Date(e.ts).getTime() - 5 * 3600000); // hora Bogotá
+                                          setEvForm({ mode: 'edit', eventId: e.id, fecha: d.fecha, type: e.type, time: `${String(dt.getUTCHours()).padStart(2, '0')}:${String(dt.getUTCMinutes()).padStart(2, '0')}`, reason: '' });
+                                        }}
+                                      >
+                                        Editar
+                                      </button>
+                                      <button className="btn small danger-btn" onClick={() => removeEv(e)}>Eliminar</button>
+                                    </span>
+                                  </div>
+                                  {/* El formulario de edición, JUSTO bajo la marcación editada */}
+                                  {evForm?.mode === 'edit' && evForm.eventId === e.id && formularioEv}
+                                </div>
+                              ))}
+
+                              {/* Alta manual: el formulario aparece bajo el botón, dentro del día */}
+                              {evForm?.mode === 'add' && evForm.fecha === d.fecha
+                                ? formularioEv
+                                : (
+                                  <button className="btn small block" onClick={() => setEvForm({ mode: 'add', fecha: d.fecha, type: d.evs.length % 2 === 0 ? 'in' : 'out', time: '08:00', reason: '' })}>
+                                    Agregar marcación a este día
+                                  </button>
+                                )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Alta en un día que no aparece en el rango (sin marcaciones) */}
+                    {evForm && evForm.mode === 'add' && !drawerDias.some((d) => d.fecha === evForm.fecha && openDia === d.fecha)
+                      ? (!drawerDias.some((d) => d.fecha === evForm.fecha) ? formularioEv : null)
+                      : null}
+                    {!evForm && (
+                      <button className="btn block" onClick={() => setEvForm({ mode: 'add', conFecha: true, fecha: drawer.hasta, type: 'in', time: '08:00', reason: '' })}>
+                        Agregar marcación en otro día
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </aside>
         </div>
@@ -1200,8 +1334,8 @@ export default function AdminPanel() {
                 <button
                   className="btn primary"
                   disabled={!newSede.name.trim() || newSede.lat === '' || newSede.lon === ''}
-                  onClick={() => {
-                    const r = addSede({ name: newSede.name, lat: Number(newSede.lat), lon: Number(newSede.lon), radius: Number(newSede.radius) || 50 });
+                  onClick={async () => {
+                    const r = await addSede({ name: newSede.name, lat: Number(newSede.lat), lon: Number(newSede.lon), radius: Number(newSede.radius) || 50 });
                     if (r.error) { showToast(r.error); return; }
                     setNewSede({ name: '', lat: '', lon: '', radius: '50' });
                     setNewSedeOpen(false);
@@ -1251,7 +1385,7 @@ export default function AdminPanel() {
               <button
                 className="btn primary"
                 disabled={!editSede.name.trim() || editSede.lat === '' || editSede.lon === ''}
-                onClick={() => {
+                onClick={async () => {
                   const name = editSede.name.trim();
                   const lat = Number(editSede.lat);
                   const lon = Number(editSede.lon);
@@ -1262,15 +1396,12 @@ export default function AdminPanel() {
                   if (name !== editSede.original && sedes.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
                     showToast(`Ya existe una sede llamada "${name}"`); return;
                   }
-                  const r = updateSede(editSede.original, { name, lat, lon, radius });
+                  const r = await updateSede(editSede.original, { name, lat, lon, radius });
                   if (r.error) { showToast(r.error); return; }
-                  // Renombrado: propagar a empleados asignados y al filtro activo.
-                  if (name !== editSede.original) {
-                    for (const p of listPeople()) {
-                      if (p.sede === editSede.original) updatePerson(p.id, { sede: name });
-                    }
-                    if (sedeFilter === editSede.original) setSedeFilter(name);
-                  }
+                  // Renombrado: los empleados referencian la sede por ID en la
+                  // base de datos, así que no hay nada que propagar; solo se
+                  // actualiza el filtro activo si apuntaba al nombre viejo.
+                  if (name !== editSede.original && sedeFilter === editSede.original) setSedeFilter(name);
                   setEditSede(null);
                   refresh();
                   showToast('Sede actualizada');
@@ -1283,9 +1414,9 @@ export default function AdminPanel() {
             <div className="danger-zone">
               <button
                 className="btn danger-btn block"
-                onClick={() => {
+                onClick={async () => {
                   if (!confirm(`¿Eliminar la sede "${editSede.original}"? Los empleados asignados a ella quedarán sin sede.`)) return;
-                  const r = removeSede(editSede.original);
+                  const r = await removeSede(editSede.original);
                   if (r.error) { showToast(r.error); return; }
                   if (sedeFilter === editSede.original) setSedeFilter('all');
                   setEditSede(null);
@@ -1352,19 +1483,69 @@ export default function AdminPanel() {
                 )}
               </small>
             </div>
+            <div className="field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={editEmp.jornadaSemanal != null}
+                  onChange={(e) => setEditEmp({
+                    ...editEmp,
+                    // Al activar: arranca en la estándar (7 h L–S) para ajustar.
+                    jornadaSemanal: e.target.checked ? [7, 7, 7, 7, 7, 7] : null,
+                  })}
+                />{' '}
+                Jornada especial (distribuida)
+              </label>
+              <small className="hint">
+                Solo para acuerdos distintos al estándar de {fmtH((cfg.weeklyHours ?? 42) / 6)}/día
+                (p. ej. 7.5 h L–V y el sábado corto). La hora extra del día empieza
+                donde termina la jornada pactada de ese día.
+              </small>
+              {editEmp.jornadaSemanal != null && (() => {
+                const DIAS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+                const total = editEmp.jornadaSemanal.reduce((s, h) => s + (Number(h) || 0), 0);
+                const tope = cfg.weeklyHours ?? 42;
+                return (
+                  <>
+                    <div className="hours-row" style={{ flexWrap: 'wrap' }}>
+                      {DIAS.map((dia, i) => (
+                        <label className="sub-field" key={dia}>{dia}
+                          <input
+                            type="number" min="0" max="12" step="0.5" style={{ width: '4.2em' }}
+                            value={editEmp.jornadaSemanal[i]}
+                            onChange={(e) => {
+                              const j = [...editEmp.jornadaSemanal];
+                              j[i] = e.target.value === '' ? 0 : Math.min(12, Math.max(0, Number(e.target.value)));
+                              setEditEmp({ ...editEmp, jornadaSemanal: j });
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <small className="hint" style={total > tope ? { color: 'var(--danger, #c0392b)', fontWeight: 600 } : undefined}>
+                      Total semanal: {fmtH(total)} / {fmtH(tope)}{' '}
+                      {total > tope
+                        ? '⚠ supera la jornada legal: cada semana generaría horas extra por diseño.'
+                        : total < tope ? '(por debajo de la legal: válido).' : '✓'}
+                    </small>
+                  </>
+                );
+              })()}
+            </div>
             <div className="dialog-actions">
               <button className="btn" onClick={() => setEditEmp(null)}>Cancelar</button>
               <button
                 className="btn primary"
                 disabled={!editEmp.name.trim()}
-                onClick={() => {
-                  const r = updatePerson(editEmp.id, {
+                onClick={async () => {
+                  const r = await updatePerson(editEmp.id, {
                     name: editEmp.name,
                     cedula: editEmp.cedula,
                     sede: editEmp.sede,
                     expectedEntry: editEmp.expectedEntry,
                     expectedExit: editEmp.expectedExit,
                     breakMinutes: editEmp.breakMinutes === '' ? null : Number(editEmp.breakMinutes),
+                    jornadaSemanal: editEmp.jornadaSemanal == null ? null : editEmp.jornadaSemanal.map((h) => Number(h) || 0),
                   });
                   if (r.error) { showToast(r.error); return; }
                   setEditEmp(null);
@@ -1379,12 +1560,16 @@ export default function AdminPanel() {
             <div className="danger-zone">
               <button
                 className="btn danger-btn block"
-                onClick={() => {
+                onClick={async () => {
                   if (confirm(`¿Eliminar a ${editEmp.name}? Ya no podrá marcar asistencia.`)) {
-                    removePerson(editEmp.id);
-                    setEditEmp(null);
-                    refresh();
-                    showToast(`${editEmp.name} eliminado`);
+                    try {
+                      await removePerson(editEmp.id);
+                      setEditEmp(null);
+                      refresh();
+                      showToast(`${editEmp.name} eliminado`);
+                    } catch (e) {
+                      showToast(`No se pudo eliminar: ${e.message}`);
+                    }
                   }
                 }}
               >
@@ -1472,17 +1657,6 @@ const CSS = `
 .sede-row .sede-name { font-weight: 600; }
 .warn-num { color: var(--warn-text); font-weight: 700; }
 .crit-num { color: var(--crit-text); font-weight: 700; }
-
-/* Pantalla de bloqueo (PIN) — .locked anula el grid del escritorio para que
-   el PIN quede centrado en toda la pantalla (no en la columna del sidebar) */
-.admin-root.locked { display: flex; align-items: center; justify-content: center; max-width: none; height: 100dvh; padding: 20px; }
-.pin-gate { display: flex; align-items: center; justify-content: center; width: 100%; }
-.pin-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px 24px; max-width: 320px; width: 100%; text-align: center; display: flex; flex-direction: column; gap: 10px; }
-.pin-card h1 { font-size: 17px; font-weight: 650; }
-.pin-card .hint { font-size: 13px; color: var(--muted); }
-.pin-card input { font: inherit; font-size: 24px; letter-spacing: 10px; text-align: center; padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
-.pin-error { color: var(--crit-text); font-size: 13px; }
-.logo.big { width: 48px; height: 48px; font-size: 18px; margin: 0 auto; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--accent-ink); font-family: var(--f-display); font-weight: 800; letter-spacing: .04em; }
 
 /* Empleados / Reportes */
 .muted-count { color: var(--muted); font-weight: 400; }
@@ -1634,6 +1808,14 @@ const CSS = `
 
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; font-family: var(--f-data); font-size: 13.5px; padding: 9px 18px; border-radius: 8px; z-index: 60; box-shadow: var(--elev-2); }
 
+/* Novedades (como en la demo de nómina): extra, dominical, corrección */
+.novs { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.nov { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 4px; white-space: nowrap; }
+.nov.ex { background: var(--accent-soft); color: var(--accent); }
+.nov.dom { background: rgba(124,58,237,0.09); color: #7c3aed; }
+.nov.man { background: rgba(16,24,40,0.06); color: var(--ink-2); }
+.nov.none { color: var(--muted); font-weight: 500; padding-left: 0; }
+
 /* Tabla de asistencia: controles, tabla, paginación */
 .att-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
 .att-search { flex: 1 1 180px; font: inherit; font-size: 13.5px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
@@ -1663,8 +1845,38 @@ const CSS = `
 .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--grid); }
 .drawer-head h3 { font-family: var(--f-display); font-size: 15px; font-weight: 700; }
 .drawer-id { font-size: 12px; color: var(--muted); }
-.drawer-day { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--grid); font-size: 12.5px; color: var(--muted); }
-.drawer-day input { font: inherit; font-size: 13.5px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
+.drawer-day { display: flex; align-items: center; gap: 6px; padding: 12px 18px; border-bottom: 1px solid var(--grid); font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+.drawer-day input { font: inherit; font-size: 12.5px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
+.range-sep { color: var(--muted); }
+
+/* Vista panorámica por día dentro del drawer: renglones minimalistas.
+   Dos líneas por día: (fecha · horas · flecha) y los bloques como chips
+   que ENVUELVEN — cualquier número de pares sin superponerse. */
+.dia { border-bottom: 1px solid var(--grid); }
+.dia-row {
+  display: flex; flex-direction: column; gap: 5px; width: 100%;
+  border: 0; background: transparent; font: inherit; text-align: left;
+  padding: 9px 4px; cursor: pointer; color: var(--ink);
+  font-variant-numeric: tabular-nums; border-radius: 6px;
+}
+.dia-row:hover { background: var(--accent-soft); }
+.dia-top { display: flex; align-items: baseline; gap: 8px; }
+.dia-fecha { font-size: 12.5px; font-weight: 700; text-transform: capitalize; white-space: nowrap; }
+.dia-horas { margin-left: auto; font-size: 12.5px; font-weight: 700; color: var(--ink-2); white-space: nowrap; }
+.dia-horas.extra { color: var(--accent); }
+.dia-chev { color: var(--muted); font-size: 14px; transition: transform .15s; flex: 0 0 auto; }
+.dia.abierto .dia-chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .dia-chev { transition: none; } }
+.dia-bloques { display: flex; flex-wrap: wrap; gap: 4px; }
+.bloque {
+  font-size: 11px; color: var(--ink-2); background: var(--page);
+  border: 1px solid var(--grid); border-radius: 4px; padding: 1px 6px;
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.bloque.warn { color: var(--crit-text); border-color: var(--crit-soft); background: var(--crit-soft); }
+.dia-detalle { padding: 2px 2px 10px; }
+.dia-detalle .ev-form { margin: 6px 0 10px; }
+.btn.small.block { display: block; width: 100%; text-align: center; margin-top: 6px; }
 .drawer-hours { margin-left: auto; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .drawer-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; }
 .tl-row { display: grid; grid-template-columns: 64px 84px 1fr auto; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--grid); font-size: 13px; }

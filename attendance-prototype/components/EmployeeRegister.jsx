@@ -13,8 +13,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { listPeople, addPerson, removePerson } from '../services/rosterService.js';
-import { getSedes } from '../services/sedesService.js';
+// Roster y sedes desde POSTGRES vía API (mismas formas que los services locales).
+import { syncPanel, listPeople, addPerson, removePerson, getSedes } from '../services/panelStore.js';
 
 const FACEAPI_MODEL_URL = '/models';
 
@@ -45,17 +45,22 @@ export default function EmployeeRegister() {
   const [breakMinutes, setBreakMinutes] = useState('');
   const [sedes, setSedes] = useState([]);
   const [sede, setSede] = useState('');
-  useEffect(() => {
-    const list = getSedes();
-    setSedes(list);
-    setSede((s) => s || list[0]?.name || '');
-  }, []);
   const [photo, setPhoto] = useState(null);      // { previewUrl, descriptor } | null
   const [analyzing, setAnalyzing] = useState(false);
   const [people, setPeople] = useState([]);
   const [toast, setToast] = useState(null);
 
-  const refresh = () => setPeople(listPeople());
+  // Carga inicial desde la API: sedes + roster.
+  const refresh = () => {
+    syncPanel()
+      .then(() => {
+        const list = getSedes();
+        setSedes(list);
+        setSede((s) => s || list[0]?.name || '');
+        setPeople(listPeople());
+      })
+      .catch((e) => setStatus(`No se pudo cargar desde el servidor: ${e.message}`));
+  };
   useEffect(refresh, []);
 
   // Carga de face-api (solo las 3 redes necesarias).
@@ -64,6 +69,9 @@ export default function EmployeeRegister() {
     (async () => {
       try {
         const faceapi = await import('@vladmandic/face-api');
+        // Esperar el backend de TensorFlow antes de cargar modelos (misma
+        // carrera que en KioskMode: "backend 'wasm' has not yet been initialized").
+        try { await faceapi.tf.ready(); } catch { await faceapi.tf.setBackend('cpu'); await faceapi.tf.ready(); }
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(FACEAPI_MODEL_URL),
           faceapi.nets.faceLandmark68Net.loadFromUri(FACEAPI_MODEL_URL),
@@ -115,8 +123,8 @@ export default function EmployeeRegister() {
 
   const canRegister = ready && !analyzing && name.trim().length >= 3 && cedula.trim().length >= 5 && photo;
 
-  const handleRegister = () => {
-    const result = addPerson(name, photo.descriptor, {
+  const handleRegister = async () => {
+    const result = await addPerson(name, photo.descriptor, {
       cedula, sede, expectedEntry, expectedExit,
       breakMinutes: breakMinutes === '' ? null : Number(breakMinutes),
     });
@@ -133,11 +141,15 @@ export default function EmployeeRegister() {
     refresh();
   };
 
-  const handleDelete = (p) => {
+  const handleDelete = async (p) => {
     if (!confirm(`¿Eliminar a ${p.name}? Ya no podrá marcar asistencia en el kiosco.`)) return;
-    removePerson(p.id);
-    refresh();
-    showToast(`${p.name} eliminado`);
+    try {
+      await removePerson(p.id);
+      refresh();
+      showToast(`${p.name} eliminado`);
+    } catch (e) {
+      showToast(`No se pudo eliminar: ${e.message}`);
+    }
   };
 
   return (

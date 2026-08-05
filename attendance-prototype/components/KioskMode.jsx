@@ -16,8 +16,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { euclideanDistance, MATCH_THRESHOLD } from '../utils/faceMath.js';
-import { listPeople, logAttempt } from '../services/rosterService.js';
-import { registerPassage } from '../services/journeyService.js';
+import {
+  cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
+  getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
+} from '../services/kioskoApi.js';
 
 const FACEAPI_MODEL_URL = '/models';
 const MEDIAPIPE_MODEL = '/models/face_landmarker.task';
@@ -60,6 +62,41 @@ export default function KioskMode() {
   const [ui, setUi] = useState('idle');
   const [result, setResult] = useState(null); // { ok, name, time, distance, reason }
   const [peopleCount, setPeopleCount] = useState(0);
+  const [pendientes, setPendientes] = useState(0); // cola offline sin sincronizar
+
+  // Configuración del dispositivo (una sola vez): a qué SEDE pertenece.
+  const [configurado, setConfigurado] = useState(true); // se evalúa al montar
+  const [cfgSedes, setCfgSedes] = useState([]);
+  const [cfgSede, setCfgSede] = useState('');
+  const [cfgClave, setCfgClave] = useState(() => getDeviceKey());
+  const [cfgError, setCfgError] = useState(null);
+  useEffect(() => {
+    const listo = Boolean(getSedeId());
+    setConfigurado(listo);
+    setPendientes(pendientesEnCola());
+    if (!listo) {
+      cargarSedes().then(setCfgSedes).catch((e) => setCfgError(`Sin conexión con el servidor: ${e.message}`));
+    }
+  }, []);
+
+  // Cola offline: reintenta al reconectar y cada minuto.
+  useEffect(() => {
+    const flush = async () => {
+      const n = await sincronizarCola();
+      if (n > 0) setPendientes(pendientesEnCola());
+    };
+    window.addEventListener('online', flush);
+    const id = setInterval(flush, 60000);
+    return () => { window.removeEventListener('online', flush); clearInterval(id); };
+  }, []);
+
+  const guardarConfig = () => {
+    if (!cfgSede) { setCfgError('Elige la sede de este dispositivo.'); return; }
+    setSedeId(cfgSede);
+    setDeviceKey(cfgClave.trim());
+    setConfigurado(true);
+    setStatusNote('Dispositivo configurado. Listo para iniciar.');
+  };
 
   // Reloj del estado de reposo
   const [clock, setClock] = useState({ time: '', date: '' });
@@ -95,6 +132,11 @@ export default function KioskMode() {
         })();
         const loadFa = (async () => {
           const faceapi = await import('@vladmandic/face-api');
+          // El backend de TensorFlow (wasm/webgl) inicializa ASÍNCRONO tras el
+          // import. Cargar los modelos sin esperarlo es una carrera que a veces
+          // revienta con "backend 'wasm' has not yet been initialized". Si el
+          // backend rápido falla, se cae a CPU antes que dejar el kiosco muerto.
+          try { await faceapi.tf.ready(); } catch { await faceapi.tf.setBackend('cpu'); await faceapi.tf.ready(); }
           await Promise.all([
             faceapi.nets.tinyFaceDetector.loadFromUri(FACEAPI_MODEL_URL),
             faceapi.nets.faceLandmark68Net.loadFromUri(FACEAPI_MODEL_URL),
@@ -138,23 +180,34 @@ export default function KioskMode() {
 
   // ── Arranque ──────────────────────────────────────────────────────────
   const handleStart = async () => {
+    // Roster desde la BASE DE DATOS (con caché local para cortes de red).
+    let all = [];
+    try {
+      const { empleados, deCache } = await cargarRoster();
+      all = empleados;
+      if (deCache) setStatusNote('Sin conexión: usando el roster de la última sincronización.');
+    } catch (e) {
+      setStatusNote(`No se pudo cargar el roster: ${e.message}`);
+      return;
+    }
     // Solo personas con descriptor VÁLIDO: un registro corrupto en el roster
     // no debe poder tumbar la comparación 1:N (y con ella, todo el kiosco).
-    const all = listPeople();
     const valid = all.filter(
       (p) => Array.isArray(p.descriptor) && p.descriptor.length === 128 && p.descriptor.every(Number.isFinite)
     );
     if (valid.length < all.length) {
-      console.warn(`Kiosco: ${all.length - valid.length} registro(s) con datos corruptos fueron excluidos.`);
+      console.warn(`Kiosco: ${all.length - valid.length} registro(s) sin rostro o corruptos fueron excluidos.`);
     }
     peopleRef.current = valid;
     setPeopleCount(valid.length);
     if (valid.length === 0) {
       setStatusNote(all.length > 0
-        ? 'Los registros existentes están dañados. Re-registra a los empleados.'
-        : 'No hay personas registradas. Registra primero en el Dashboard.');
+        ? 'Hay empleados pero ninguno tiene rostro registrado. Re-regístralos con foto.'
+        : 'No hay empleados en la base de datos. Regístralos desde el panel.');
       return;
     }
+    // Aprovechar el arranque para vaciar la cola offline pendiente.
+    sincronizarCola().then(() => setPendientes(pendientesEnCola())).catch(() => {});
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
       streamRef.current = stream;
@@ -279,7 +332,12 @@ export default function KioskMode() {
     st.phase = 'result';
     st.autoDismiss = true; // todo resultado se cierra solo (kiosco sin botones)
     st.until = performance.now() + RESULT_SHOW_MS;
-    logAttempt({ targetId: person?.id ?? null, targetName: person?.name ?? '(desconocido)', kind: 'kiosk', distance, livenessOk: !failReason?.includes('parpadeo'), accepted: ok });
+    logIntento({
+      empleadoId: person?.id ?? null,
+      aceptado: ok,
+      distancia: distance,
+      livenessOk: !failReason?.includes('parpadeo'),
+    });
 
     const time = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
 
@@ -289,34 +347,45 @@ export default function KioskMode() {
       return;
     }
 
-    // Identidad confirmada → decidir ENTRADA o SALIDA (lógica de jornadas).
-    const passage = registerPassage(person);
-
-    if (passage.storageError) {
-      // La identidad se verificó pero el registro NO se guardó: jamás mostrar
-      // un éxito falso — la persona debe saber que su marcación no quedó.
-      setResult({ kind: 'no', name: person.name, time, reason: 'Tu identidad fue verificada, pero la marcación NO se pudo guardar. Avisa al administrador.' });
-      setUi('no');
-      return;
-    }
-
-    if (passage.duplicate) {
-      // Anti-rebote: ya registró hace < 3 min. Informar sin duplicar.
-      const lastTime = new Date(passage.last.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
-      const lastLabel = passage.last.type === 'in' ? 'ENTRADA' : 'SALIDA';
-      setResult({ kind: 'dup', name: person.name, time, lastLabel, lastTime });
-      setUi('ok');
-      return;
-    }
-
-    setResult({
-      kind: passage.type, // 'in' | 'out'
-      name: person.name,
-      time,
-      distance,
-      flag: passage.flag, // 'late-entry' | null
-    });
+    // Identidad confirmada → el SERVIDOR decide ENTRADA o SALIDA y pone la
+    // hora. Mientras responde, la pantalla muestra "registrando…".
+    setResult({ kind: 'saving', name: person.name, time });
     setUi('ok');
+    st.until = performance.now() + RESULT_SHOW_MS * 4; // margen para la red
+
+    registrarPaso(person.id).then((paso) => {
+      const stNow = stateRef.current;
+      stNow.until = performance.now() + RESULT_SHOW_MS;
+
+      if (paso.errorConfig) {
+        setResult({ kind: 'no', name: person.name, time, reason: `Identidad verificada, pero la marcación NO quedó: ${paso.errorConfig}` });
+        setUi('no');
+        return;
+      }
+      if (paso.pendiente) {
+        // Sin red: quedó en la cola local y se sincroniza sola.
+        setPendientes(paso.enCola);
+        setResult({ kind: 'pending', name: person.name, time });
+        setUi('ok');
+        return;
+      }
+      if (paso.duplicado) {
+        const lastTime = new Date(paso.ultima.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+        const lastLabel = paso.ultima.tipo === 'entrada' ? 'ENTRADA' : 'SALIDA';
+        setResult({ kind: 'dup', name: person.name, time, lastLabel, lastTime });
+        setUi('ok');
+        return;
+      }
+      const tsOficial = new Date(paso.marcacion.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+      setResult({
+        kind: paso.tipo === 'entrada' ? 'in' : 'out',
+        name: person.name,
+        time: tsOficial, // la hora OFICIAL del servidor, no la del dispositivo
+        distance,
+        flag: null,
+      });
+      setUi('ok');
+    });
   }
 
   return (
@@ -344,12 +413,38 @@ export default function KioskMode() {
             <span className="ac-emoji ac-float" role="img" aria-label="esperando">⏳</span>
           </div>
           <div style={s.idleCta}>{running ? 'Acércate para marcar tu asistencia' : statusNote}</div>
-          {!running && (
+
+          {/* Configuración del dispositivo (una sola vez): elegir su sede */}
+          {!running && !configurado && (
+            <div style={s.cfgBox}>
+              <div style={s.cfgTitle}>¿En qué sede está este dispositivo?</div>
+              <select style={s.cfgInput} value={cfgSede} onChange={(e) => setCfgSede(e.target.value)}>
+                <option value="">— Elegir sede —</option>
+                {cfgSedes.map((x) => <option key={x.id} value={x.id}>{x.nombre}</option>)}
+              </select>
+              <input
+                style={s.cfgInput}
+                type="password"
+                placeholder="Clave del dispositivo (opcional)"
+                value={cfgClave}
+                onChange={(e) => setCfgClave(e.target.value)}
+              />
+              <button style={s.startBtn} onClick={guardarConfig} disabled={!cfgSede}>
+                Guardar
+              </button>
+              {cfgError && <div style={s.errNote}>{cfgError}</div>}
+            </div>
+          )}
+
+          {!running && configurado && (
             <button style={s.startBtn} onClick={handleStart} disabled={!ready}>
               {ready ? '▶️ Iniciar kiosco' : 'Cargando…'}
             </button>
           )}
           {running && <button style={s.stopBtn} onClick={stopAll}>⏹ Detener</button>}
+          {pendientes > 0 && (
+            <div style={s.pendNote}>⌛ {pendientes} marcación(es) sin conexión, pendientes de sincronizar</div>
+          )}
           <div style={s.privacy}>🔐 Tus fotos no se almacenan — solo un código matemático</div>
           {loadError && <div style={s.errNote}>{loadError}</div>}
           {running && <div style={s.count}>Personas registradas: {peopleCount}</div>}
@@ -388,6 +483,29 @@ export default function KioskMode() {
           <div style={s.rName}>{result.name}</div>
           <div style={s.rSub}>Ya registraste tu {result.lastLabel} a las {result.lastTime}.</div>
           <div style={s.countdown}>Sin cambios · cerrando…</div>
+        </div>
+      )}
+
+      {/* Registrando en el servidor… (espera de red tras verificar identidad) */}
+      {ui === 'ok' && result && result.kind === 'saving' && (
+        <div style={{ ...s.resultScreen, ...s.dupBg }}>
+          <div style={{ ...s.badge, ...s.badgeDup }}>
+            <span className="ac-emoji ac-float" role="img" aria-label="registrando">⏳</span>
+          </div>
+          <div style={s.rName}>{result.name}</div>
+          <div style={s.rSub}>Registrando tu marcación…</div>
+        </div>
+      )}
+
+      {/* Sin conexión: la marcación quedó en la cola local y se sincroniza sola */}
+      {ui === 'ok' && result && result.kind === 'pending' && (
+        <div style={{ ...s.resultScreen, ...s.dupBg }}>
+          <div style={{ ...s.badge, ...s.badgeDup }}>
+            <span className="ac-emoji ac-float" role="img" aria-label="pendiente">📶</span>
+          </div>
+          <div style={s.rName}>{result.name}</div>
+          <div style={s.rSub}>Sin conexión: tu marcación quedó guardada y se sincronizará automáticamente.</div>
+          <div style={s.countdown}>{result.time} · guardada en el dispositivo</div>
         </div>
       )}
 
@@ -516,6 +634,11 @@ const s = {
   stopBtn: { marginTop: 24, background: 'transparent', color: 'var(--muted)', border: '1px solid var(--border)', fontSize: 14, fontFamily: 'inherit', padding: '10px 28px', borderRadius: 'var(--r-md)', cursor: 'pointer' },
   privacy: { marginTop: 'auto', paddingTop: 24, textAlign: 'center', fontSize: 11, color: 'var(--muted)' },
   errNote: { marginTop: 10, fontSize: 12, color: 'var(--k-no)', textAlign: 'center', fontFamily: 'var(--f-data)' },
+  // Configuración del dispositivo (clave + sede) y cola offline
+  cfgBox: { marginTop: 20, display: 'flex', flexDirection: 'column', gap: 10, width: '100%', maxWidth: 300 },
+  cfgTitle: { fontSize: 13, fontWeight: 700, textAlign: 'center', opacity: 0.85 },
+  cfgInput: { padding: '12px 14px', fontSize: 15, borderRadius: 10, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.08)', color: 'inherit', fontFamily: 'inherit' },
+  pendNote: { marginTop: 10, fontSize: 12, opacity: 0.8, textAlign: 'center' },
   count: { marginTop: 6, fontSize: 11, color: 'var(--muted)' },
   resultScreen: {
     position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
