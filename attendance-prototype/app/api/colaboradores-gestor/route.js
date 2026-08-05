@@ -29,7 +29,8 @@ export async function GET(req) {
   const { rows } = await pool.query(
     `select c.id, c.nombres, c.apellidos, c.numero_documento as cedula,
             s.nombre as sede_gestor,
-            (e.id is not null) as ya_registrado
+            (e.id is not null) as ya_registrado,
+            (c.foto_path is not null) as tiene_foto
        from public.colaborador c
        join public.sede s on s.id = c.sede_id
        left join asistencia.empleados e on e.colaborador_id = c.id

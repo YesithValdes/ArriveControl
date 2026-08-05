@@ -33,9 +33,15 @@ export async function GET(req) {
         )
       }
     }
+    // Sincronización viva con el gestor: un colaborador RETIRADO deja de
+    // aparecer en el roster del kiosco de inmediato (no puede marcar), sin
+    // procesos de sincronización — es un JOIN sobre la misma base.
     const { rows } = await pool.query(
-      `select id, nombre, sede_id, descriptor_facial
-         from asistencia.empleados where activo order by nombre`,
+      `select e.id, e.nombre, e.sede_id, e.descriptor_facial
+         from asistencia.empleados e
+         left join public.colaborador c on c.id = e.colaborador_id
+        where e.activo and (e.colaborador_id is null or c.estado = 'ACTIVO')
+        order by e.nombre`,
     )
     return NextResponse.json({ ok: true, empleados: rows })
   }
@@ -45,12 +51,16 @@ export async function GET(req) {
 
   const { searchParams } = new URL(req.url)
   const incluirInactivos = searchParams.get('inactivos') === '1'
+  // `retirado_gestor` avisa al panel que el colaborador ya no está activo en
+  // el gestor (retiro laboral): se muestra pero no puede marcar en el kiosco.
   const { rows } = await pool.query(
     `select e.id, e.nombre, e.cedula, e.sede_id, s.nombre as sede_nombre,
             e.entrada_esperada, e.salida_esperada, e.almuerzo_min, e.jornada_semanal, e.activo, e.creado_en,
-            (e.descriptor_facial is not null) as tiene_rostro
+            (e.descriptor_facial is not null) as tiene_rostro,
+            (e.colaborador_id is not null and coalesce(c.estado, 'RETIRADO') <> 'ACTIVO') as retirado_gestor
        from asistencia.empleados e
        left join asistencia.sedes s on s.id = e.sede_id
+       left join public.colaborador c on c.id = e.colaborador_id
       ${incluirInactivos ? '' : 'where e.activo'}
       order by e.nombre`,
   )

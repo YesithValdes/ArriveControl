@@ -48,7 +48,8 @@ export default function EmployeeRegister() {
   const [breakMinutes, setBreakMinutes] = useState('');
   const [sedes, setSedes] = useState([]);
   const [sede, setSede] = useState('');
-  const [photo, setPhoto] = useState(null);      // { previewUrl, descriptor } | null
+  const [photo, setPhoto] = useState(null);      // { previewUrl, descriptor, dataUrl } | null
+  const [subirFotoGestor, setSubirFotoGestor] = useState(false); // consentimiento explícito
   const [analyzing, setAnalyzing] = useState(false);
   const [people, setPeople] = useState([]);
   const [toast, setToast] = useState(null);
@@ -135,7 +136,22 @@ export default function EmployeeRegister() {
         setAnalyzing(false);
         return;
       }
-      setPhoto({ previewUrl: URL.createObjectURL(file), descriptor: Array.from(det.descriptor) });
+      // Miniatura para la foto de perfil del gestor (máx. 800 px, JPEG):
+      // reduce una foto de celular de varios MB a unas decenas de KB.
+      const dataUrl = await new Promise((resolve) => {
+        const imgEl = new Image();
+        imgEl.onload = () => {
+          const escala = Math.min(1, 800 / Math.max(imgEl.width, imgEl.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(imgEl.width * escala);
+          canvas.height = Math.round(imgEl.height * escala);
+          canvas.getContext('2d').drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        };
+        imgEl.onerror = () => resolve(null);
+        imgEl.src = URL.createObjectURL(file);
+      });
+      setPhoto({ previewUrl: URL.createObjectURL(file), descriptor: Array.from(det.descriptor), dataUrl });
       setStatus('✅ Rostro detectado. Verifica los datos y registra.');
     } catch (err) {
       setStatus(`❌ Error procesando la foto: ${err?.message || err}`);
@@ -157,9 +173,28 @@ export default function EmployeeRegister() {
       setStatus(`❌ ${result.error}`);
       return;
     }
-    showToast(`${result.name} registrado correctamente`);
+    // Foto de perfil para el gestor (opcional, con consentimiento): un extra
+    // que nunca bloquea el alta — si falla, solo se informa.
+    if (subirFotoGestor && !colaborador.tiene_foto && photo.dataUrl) {
+      try {
+        const r = await fetch('/api/foto-gestor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ colaborador_id: colaborador.id, imagen: photo.dataUrl }),
+        });
+        const d = await r.json();
+        showToast(d.ok
+          ? `${result.name} registrado; foto subida al gestor`
+          : `${result.name} registrado (foto no subida: ${d.error})`);
+      } catch {
+        showToast(`${result.name} registrado (la foto al gestor no se pudo subir)`);
+      }
+    } else {
+      showToast(`${result.name} registrado correctamente`);
+    }
     setColaborador(null);
     setBusqueda('');
+    setSubirFotoGestor(false);
     if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
     setPhoto(null);
     setStatus('Empleado registrado. Puedes agregar otro.');
@@ -284,6 +319,15 @@ export default function EmployeeRegister() {
               </div>
             </div>
           )}
+          {photo && colaborador && !colaborador.tiene_foto && (
+            <label className="consent">
+              <input type="checkbox" checked={subirFotoGestor} onChange={(e) => setSubirFotoGestor(e.target.checked)} />
+              <span>
+                Usar esta foto también como <b>foto de perfil en el gestor de empleados</b> (allá no tiene).
+                Marca solo si la persona dio su consentimiento para ese uso.
+              </span>
+            </label>
+          )}
         </div>
 
         <button className="btn primary big" disabled={!canRegister} onClick={handleRegister}>
@@ -358,6 +402,8 @@ const CSS = `
 .search-item:disabled { opacity: .5; cursor: not-allowed; }
 .search-item small { color: var(--muted); font-size: 12px; }
 .selected-colab { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--good-text); border-radius: 8px; background: var(--page); }
+.consent { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 12.5px; color: var(--ink-2); font-weight: 400; cursor: pointer; }
+.consent input { margin-top: 2px; }
 
 .photo-drop { font: inherit; width: 100%; padding: 22px 12px; border: 2px dashed var(--border); border-radius: 12px; background: var(--page); color: var(--ink-2); font-size: 22px; cursor: pointer; line-height: 1.5; }
 .photo-drop b { font-size: 15px; color: var(--ink); }

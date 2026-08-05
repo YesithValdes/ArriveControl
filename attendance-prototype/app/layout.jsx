@@ -16,12 +16,25 @@ const montserrat = Montserrat({
 
 export const metadata = {
   title: 'Control de Asistencia',
+  // PWA instalable: sin manifest con íconos 192/512, Chrome ofrece "agregar
+  // a inicio" pero RECHAZA la instalación real como app.
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: '/icon-192.png',
+    apple: '/icon-192.png', // iOS no lee el manifest: necesita su propio tag
+  },
+  appleWebApp: {
+    capable: true,
+    title: 'ArriveControl',
+    statusBarStyle: 'default',
+  },
 };
 
 export const viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
+  themeColor: '#16224e',
 };
 
 export default function RootLayout({ children }) {
