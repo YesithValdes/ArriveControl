@@ -433,7 +433,13 @@ export default function KioskMode() {
           la ventana; solo se muestra durante el reto. La cámara ya no ocupa
           toda la pantalla — atmósfera oscura + ventana con esquinas de
           encuadre + láser que barre + barra de progreso REAL. */}
-      <div style={{ ...s.camWrap, opacity: running && ui === 'challenge' ? 1 : 0 }}>
+      <div style={{
+        ...s.camWrap,
+        opacity: running && ui === 'challenge' ? 1 : 0,
+        // Invisible NO basta: un overlay con opacity 0 sigue capturando los
+        // toques y bloqueaba el botón "Iniciar kiosco" debajo.
+        pointerEvents: running && ui === 'challenge' ? 'auto' : 'none',
+      }}>
         <div style={s.hudRejilla} />
         <span style={s.hudMarca}>ARRIVE<span style={{ color: '#35E0FF' }}>CONTROL</span></span>
         <div style={s.hudVentana}>
