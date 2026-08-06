@@ -652,7 +652,7 @@ const s = {
   },
   // Padding con safe-area y alto flexible: clase .kiosk-idle (globals.css).
   idle: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' },
-  brand: { position: 'absolute', top: 18, left: 20, fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--muted)' },
+  brand: { position: 'absolute', top: 'calc(18px + env(safe-area-inset-top, 0px))', left: 20, fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--muted)' },
   // clamp: escala con el ancho del teléfono (hh:mm:ss no cabe fijo en 64px).
   clock: { fontSize: 'clamp(38px, 13vw, 64px)', fontWeight: 800, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', marginTop: 24, fontFamily: 'var(--f-data)' },
   date: { color: 'var(--muted)', fontSize: 15, textTransform: 'capitalize' },
