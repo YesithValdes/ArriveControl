@@ -60,6 +60,15 @@ export default function KioskMode() {
 
   // Estado visual (espejo de la máquina, para render): idle | challenge | ok | no
   const [ui, setUi] = useState('idle');
+  // Progreso REAL del escaneo (0–100) para la barra del modo HUD:
+  // 25 rostro detectado · 50 ojos abiertos · 75 parpadeo confirmado · 100 coincidencia.
+  const [scanProg, setScanProg] = useState(0);
+  const scanProgRef = useRef(0);
+  const ponerProgreso = (p) => {
+    if (scanProgRef.current === p) return; // evita re-render por cuadro
+    scanProgRef.current = p;
+    setScanProg(p);
+  };
   const [result, setResult] = useState(null); // { ok, name, time, distance, reason }
   const [peopleCount, setPeopleCount] = useState(0);
   const [pendientes, setPendientes] = useState(0); // cola offline sin sincronizar
@@ -290,6 +299,7 @@ export default function KioskMode() {
             st.sawOpen = false; st.sawClosed = false;
             st.descs = []; st.captures = 0; st.lastCapture = 0;
             setResult(null);
+            ponerProgreso(25); // fase 1: rostro detectado
             setUi('challenge');
           }
           break;
@@ -302,6 +312,8 @@ export default function KioskMode() {
           }
           if (bothOpen < 0.15) st.sawOpen = true;
           if (st.sawOpen && bothClosed > 0.55) st.sawClosed = true;
+          // Barra HUD atada a las fases reales del reto.
+          ponerProgreso(st.sawClosed ? 75 : st.sawOpen ? 50 : 25);
 
           const frontal = Math.abs(yaw) < 12;
           if (frontal && !faBusy && st.captures < FACE_CAPTURES && now - st.lastCapture >= CAPTURE_GAP_MS) {
@@ -337,6 +349,7 @@ export default function KioskMode() {
           if (now > st.until && !lm) {
             st.phase = 'idle';
             setResult(null);
+            ponerProgreso(0); // barra lista para el próximo escaneo
             setUi('idle');
           }
           break;
@@ -352,6 +365,7 @@ export default function KioskMode() {
   };
 
   function concludeResult(ok, person, distance, failReason) {
+    ponerProgreso(100); // fase final: coincidencia resuelta
     const st = stateRef.current;
     st.phase = 'result';
     st.autoDismiss = true; // todo resultado se cierra solo (kiosco sin botones)
@@ -415,14 +429,35 @@ export default function KioskMode() {
   return (
     <div className="kiosk-card" style={s.kiosk}>
       <EmojiKeyframes />
-      {/* Video siempre montado; visible solo durante el reto */}
+      {/* Modo HUD de escaneo (láser): el video vive SIEMPRE montado dentro de
+          la ventana; solo se muestra durante el reto. La cámara ya no ocupa
+          toda la pantalla — atmósfera oscura + ventana con esquinas de
+          encuadre + láser que barre + barra de progreso REAL. */}
       <div style={{ ...s.camWrap, opacity: running && ui === 'challenge' ? 1 : 0 }}>
-        <video ref={videoRef} playsInline muted autoPlay style={s.video} />
+        <div style={s.hudRejilla} />
+        <span style={s.hudMarca}>ARRIVE<span style={{ color: '#35E0FF' }}>CONTROL</span></span>
+        <div style={s.hudVentana}>
+          <video ref={videoRef} playsInline muted autoPlay style={s.video} />
+          {ui === 'challenge' && (
+            <>
+              <div className="ac-laser" style={s.laserGrupo}>
+                <div style={s.laserEstela} />
+                <div style={s.laserHaz} />
+              </div>
+              <div className="ac-esq" style={{ ...s.esquina, left: 8, top: 8, borderRight: 'none', borderBottom: 'none', borderRadius: '6px 0 0 0' }} />
+              <div className="ac-esq" style={{ ...s.esquina, right: 8, top: 8, borderLeft: 'none', borderBottom: 'none', borderRadius: '0 6px 0 0' }} />
+              <div className="ac-esq" style={{ ...s.esquina, left: 8, bottom: 8, borderRight: 'none', borderTop: 'none', borderRadius: '0 0 0 6px' }} />
+              <div className="ac-esq" style={{ ...s.esquina, right: 8, bottom: 8, borderLeft: 'none', borderTop: 'none', borderRadius: '0 0 6px 0' }} />
+            </>
+          )}
+        </div>
         {ui === 'challenge' && (
           <>
-            <ScanOval />
-            <div style={s.instruction}>Parpadea 👁</div>
-            <div style={s.scanStatus}>Buscando coincidencia…</div>
+            <div style={s.hudBarra}><div style={{ ...s.hudBarraRelleno, width: `${scanProg}%` }} /></div>
+            <div style={s.hudInstruccion}>Parpadea <span className="ac-ojo">👁</span></div>
+            <div style={s.hudEstado}>
+              {scanProg >= 75 ? 'Verificando identidad…' : scanProg >= 50 ? 'Parpadea para confirmar que eres tú' : 'Escaneo biométrico en curso'}
+            </div>
           </>
         )}
       </div>
@@ -593,27 +628,28 @@ function EmojiKeyframes() {
         80% { transform: translateX(4px) rotate(4deg); }
       }
       .ac-shake { animation: ac-shake .6s ease-in-out 2; }
+      /* ── Modo HUD (escáner láser F3) ── */
+      /* El haz recorre la ventana de arriba a abajo y vuelve, con estela */
+      @keyframes ac-laser-barrido {
+        from { top: 2%; }
+        to   { top: 99%; }
+      }
+      .ac-laser { animation: ac-laser-barrido 2.8s ease-in-out infinite alternate; }
+      /* Las esquinas de encuadre "respiran" en cian */
+      @keyframes ac-esq-pulso {
+        50% { border-color: #9BF0FF; filter: drop-shadow(0 0 6px #35E0FF); }
+      }
+      .ac-esq { animation: ac-esq-pulso 2s ease-in-out infinite; }
+      /* El ojo de la instrucción parpadea él mismo: modela el gesto pedido */
+      @keyframes ac-parpadeo {
+        0%, 86%, 100% { transform: scaleY(1); }
+        92%           { transform: scaleY(0.08); }
+      }
+      .ac-ojo { display: inline-block; animation: ac-parpadeo 2.6s ease-in-out infinite; }
       @media (prefers-reduced-motion: reduce) {
-        .ac-float, .ac-pop, .ac-wave, .ac-shake { animation: none; }
+        .ac-float, .ac-pop, .ac-wave, .ac-shake, .ac-laser, .ac-esq, .ac-ojo { animation: none; }
       }
     `}</style>
-  );
-}
-
-/** Óvalo de enfoque ámbar: estático, con pulso de brillo intermitente. */
-function ScanOval() {
-  return (
-    <>
-      <style>{`
-        @keyframes ac-pulse {
-          0%, 100% { opacity: 0.55; box-shadow: 0 0 0 2000px rgba(5,10,20,0.62), 0 0 12px rgba(245,158,11,0.25); }
-          50%      { opacity: 1;    box-shadow: 0 0 0 2000px rgba(5,10,20,0.62), 0 0 34px rgba(245,158,11,0.65); }
-        }
-        .ac-oval { animation: ac-pulse 1.6s ease-in-out infinite; }
-        @media (prefers-reduced-motion: reduce) { .ac-oval { animation: none; opacity: 1; } }
-      `}</style>
-      <div className="ac-oval" style={s.scanOval} />
-    </>
   );
 }
 
@@ -632,23 +668,46 @@ const s = {
     color: 'var(--ink)', fontFamily: 'var(--f-body)',
     border: '1px solid var(--border)', boxShadow: 'var(--elev-2)',
   },
-  camWrap: { position: 'absolute', inset: 0, transition: 'opacity .3s' },
-  video: { width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' },
-  scanOval: {
-    position: 'absolute', left: '50%', top: '42%', transform: 'translate(-50%,-50%)',
-    width: 190, height: 250, borderRadius: '50%',
-    // El velo sigue siendo oscuro: es sobre el VIDEO, no sobre la interfaz.
-    border: '3px dashed var(--k-scan)', boxShadow: '0 0 0 2000px rgba(16,24,40,0.55)',
+  // ── Modo HUD de escaneo (láser, F3) ─────────────────────────────────
+  camWrap: {
+    position: 'absolute', inset: 0, transition: 'opacity .3s',
+    background: '#061024', color: '#D7EDFF',
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    padding: 'calc(clamp(24px, 5dvh, 48px) + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px))',
+    zIndex: 2,
   },
-  instruction: {
-    position: 'absolute', left: 16, right: 16, top: 'calc(40px + env(safe-area-inset-top, 0px))', textAlign: 'center',
-    fontSize: 30, fontWeight: 800, letterSpacing: '-0.01em', color: '#ffffff',
-    textShadow: '0 2px 12px rgba(0,0,0,0.8)',
+  hudRejilla: {
+    position: 'absolute', inset: 0, opacity: 0.1, pointerEvents: 'none',
+    background: 'linear-gradient(rgba(53,224,255,0.13) 1px, transparent 1px), linear-gradient(90deg, rgba(53,224,255,0.13) 1px, transparent 1px)',
+    backgroundSize: '26px 26px',
   },
-  scanStatus: {
-    position: 'absolute', left: 0, right: 0, bottom: 'calc(40px + env(safe-area-inset-bottom, 0px))', textAlign: 'center',
-    color: '#ffffff', fontSize: 13, fontWeight: 700, letterSpacing: '0.08em',
-    textTransform: 'uppercase', textShadow: '0 1px 8px rgba(0,0,0,0.8)',
+  hudMarca: { alignSelf: 'flex-start', fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', color: '#4d6a94', position: 'relative' },
+  hudVentana: {
+    position: 'relative', width: 'min(64vw, 250px)', aspectRatio: '5 / 6',
+    marginTop: 'clamp(12px, 4dvh, 36px)', borderRadius: 16, overflow: 'hidden',
+    boxShadow: '0 0 0 1.5px #1e3a5c, 0 0 34px rgba(53,224,255,0.16)',
+  },
+  video: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' },
+  laserGrupo: { position: 'absolute', left: 0, right: 0, top: 0, pointerEvents: 'none' },
+  laserEstela: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 90, background: 'linear-gradient(180deg, transparent, rgba(53,224,255,0.19))' },
+  laserHaz: {
+    position: 'absolute', left: '-4%', right: '-4%', bottom: 0, height: 3,
+    background: 'linear-gradient(90deg, transparent, #67E8FF, #FFFFFF, #67E8FF, transparent)',
+    boxShadow: '0 0 18px 4px rgba(53,224,255,0.55)',
+  },
+  esquina: { position: 'absolute', width: 24, height: 24, border: '2.5px solid #35E0FF', pointerEvents: 'none' },
+  hudBarra: {
+    position: 'relative', width: 'min(64vw, 250px)', height: 5, borderRadius: 3,
+    background: '#14283f', marginTop: 16, overflow: 'hidden',
+  },
+  hudBarraRelleno: {
+    position: 'absolute', top: 0, bottom: 0, left: 0, borderRadius: 3,
+    background: 'linear-gradient(90deg, #2563EB, #35E0FF)', transition: 'width .45s ease',
+  },
+  hudInstruccion: { marginTop: 18, fontSize: 26, fontWeight: 800, letterSpacing: '-0.01em', color: '#EAF7FF', position: 'relative' },
+  hudEstado: {
+    marginTop: 6, fontSize: 11, fontWeight: 700, letterSpacing: '0.13em', textTransform: 'uppercase',
+    color: '#35E0FF', fontFamily: 'var(--f-data)', position: 'relative', textAlign: 'center',
   },
   // Padding con safe-area y alto flexible: clase .kiosk-idle (globals.css).
   idle: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' },
