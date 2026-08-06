@@ -682,7 +682,9 @@ const s = {
   camWrap: {
     position: 'absolute', inset: 0, transition: 'opacity .3s',
     background: '#061024', color: '#D7EDFF',
-    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    // justifyContent center: el bloque (ventana + barra + textos) queda
+    // centrado verticalmente en vez de pegado arriba.
+    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
     padding: 'calc(clamp(24px, 5dvh, 48px) + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px))',
     zIndex: 2,
   },
@@ -691,7 +693,11 @@ const s = {
     background: 'linear-gradient(rgba(53,224,255,0.13) 1px, transparent 1px), linear-gradient(90deg, rgba(53,224,255,0.13) 1px, transparent 1px)',
     backgroundSize: '26px 26px',
   },
-  hudMarca: { fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', color: '#4d6a94' },
+  // Marca anclada arriba: fuera del flujo, para no descentrar la ventana.
+  hudMarca: {
+    position: 'absolute', top: 'calc(18px + env(safe-area-inset-top, 0px))', left: 20,
+    fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', color: '#4d6a94',
+  },
   hudTop: { position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   hudStop: {
     background: 'transparent', border: '1px solid #1e3a5c', color: '#4d6a94',
@@ -722,8 +728,11 @@ const s = {
   },
   hudPrivacidad: { position: 'relative', marginTop: 'auto', paddingTop: 12, textAlign: 'center', fontSize: 10, color: '#4d6a94' },
   hudVentana: {
-    position: 'relative', width: 'min(64vw, 250px)', aspectRatio: '5 / 6',
-    marginTop: 'clamp(12px, 4dvh, 36px)', borderRadius: 16, overflow: 'hidden',
+    // Más grande que antes (era 64vw/250px): la cara se ve con claridad.
+    // El tope de 43dvh en el ANCHO limita la altura (ancho × 6/5 ≈ 52dvh) sin
+    // romper la proporción: en pantallas cortas encoge entera, no se deforma.
+    position: 'relative', width: 'min(80vw, 310px, 43dvh)', aspectRatio: '5 / 6',
+    borderRadius: 16, overflow: 'hidden',
     boxShadow: '0 0 0 1.5px #1e3a5c, 0 0 34px rgba(53,224,255,0.16)',
   },
   video: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' },
