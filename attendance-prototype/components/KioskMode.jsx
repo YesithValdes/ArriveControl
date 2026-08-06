@@ -413,7 +413,7 @@ export default function KioskMode() {
   }
 
   return (
-    <div style={s.kiosk}>
+    <div className="kiosk-card" style={s.kiosk}>
       <EmojiKeyframes />
       {/* Video siempre montado; visible solo durante el reto */}
       <div style={{ ...s.camWrap, opacity: running && ui === 'challenge' ? 1 : 0 }}>
@@ -429,7 +429,7 @@ export default function KioskMode() {
 
       {/* Estado 1 · Reposo */}
       {(ui === 'idle') && (
-        <div style={s.idle}>
+        <div className="kiosk-idle" style={s.idle}>
           <div style={s.brand}>ARRIVE<span style={{ color: 'var(--accent)' }}>CONTROL</span></div>
           <div style={s.clock}>{clock.time}</div>
           <div style={s.date}>{clock.date}</div>
@@ -625,8 +625,9 @@ function ScanOval() {
  * deben leerse de reojo; el resto de la UI vive en la familia azul.
  */
 const s = {
+  // Altura y pantalla-completa móvil: clase .kiosk-card (globals.css, 100dvh).
   kiosk: {
-    position: 'relative', maxWidth: 430, margin: '0 auto', minHeight: 640,
+    position: 'relative', maxWidth: 430, margin: '0 auto',
     background: 'var(--surface)', borderRadius: 24, overflow: 'hidden',
     color: 'var(--ink)', fontFamily: 'var(--f-body)',
     border: '1px solid var(--border)', boxShadow: 'var(--elev-2)',
@@ -640,18 +641,20 @@ const s = {
     border: '3px dashed var(--k-scan)', boxShadow: '0 0 0 2000px rgba(16,24,40,0.55)',
   },
   instruction: {
-    position: 'absolute', left: 16, right: 16, top: 40, textAlign: 'center',
+    position: 'absolute', left: 16, right: 16, top: 'calc(40px + env(safe-area-inset-top, 0px))', textAlign: 'center',
     fontSize: 30, fontWeight: 800, letterSpacing: '-0.01em', color: '#ffffff',
     textShadow: '0 2px 12px rgba(0,0,0,0.8)',
   },
   scanStatus: {
-    position: 'absolute', left: 0, right: 0, bottom: 40, textAlign: 'center',
+    position: 'absolute', left: 0, right: 0, bottom: 'calc(40px + env(safe-area-inset-bottom, 0px))', textAlign: 'center',
     color: '#ffffff', fontSize: 13, fontWeight: 700, letterSpacing: '0.08em',
     textTransform: 'uppercase', textShadow: '0 1px 8px rgba(0,0,0,0.8)',
   },
-  idle: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '56px 24px 24px', minHeight: 640 },
+  // Padding con safe-area y alto flexible: clase .kiosk-idle (globals.css).
+  idle: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' },
   brand: { position: 'absolute', top: 18, left: 20, fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--muted)' },
-  clock: { fontSize: 64, fontWeight: 800, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', marginTop: 24, fontFamily: 'var(--f-data)' },
+  // clamp: escala con el ancho del teléfono (hh:mm:ss no cabe fijo en 64px).
+  clock: { fontSize: 'clamp(38px, 13vw, 64px)', fontWeight: 800, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', marginTop: 24, fontFamily: 'var(--f-data)' },
   date: { color: 'var(--muted)', fontSize: 15, textTransform: 'capitalize' },
   idleOval: {
     width: 120, height: 156, border: '2px dashed var(--grid)', borderRadius: '50%',
@@ -671,7 +674,8 @@ const s = {
   count: { marginTop: 6, fontSize: 11, color: 'var(--muted)' },
   resultScreen: {
     position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-    alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 8, padding: 24,
+    alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 8,
+    padding: 'calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px))',
   },
   okBg: { background: 'var(--k-in-soft)' },
   outBg: { background: 'var(--k-out-soft)' },

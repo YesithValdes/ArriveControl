@@ -10,7 +10,7 @@ export const metadata = { title: 'Diagnóstico GPS' };
 
 export default function GpsPage() {
   return (
-    <main style={{ padding: '24px 12px', minHeight: '100vh' }}>
+    <main style={{ padding: '24px 12px', minHeight: '100dvh' }}>
       <NavBar current="/gps" />
       <GpsDebug />
     </main>

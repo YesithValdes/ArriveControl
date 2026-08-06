@@ -13,7 +13,7 @@ export const metadata = {
 
 export default function Page() {
   return (
-    <main style={{ padding: '24px 12px', minHeight: '100vh' }}>
+    <main className="kiosk-page">
       <KioskMode />
     </main>
   );

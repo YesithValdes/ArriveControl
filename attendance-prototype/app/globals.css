@@ -93,3 +93,40 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── Kiosco a pantalla completa en móvil (PWA instalada / Capacitor) ──
+   100dvh = alto DINÁMICO del viewport (sigue a la barra del navegador;
+   el viejo 100vh se queda corto o largo en móvil y produce scroll).
+   En pantallas de teléfono la tarjeta deja de ser "tarjeta": ocupa todo,
+   sin bordes ni esquinas, y respeta el notch/gestos con safe-area. */
+.kiosk-page {
+  min-height: 100dvh;
+  padding: 24px 12px;
+}
+.kiosk-card {
+  min-height: min(calc(100dvh - 48px), 720px);
+  display: flex;
+  flex-direction: column;
+}
+.kiosk-idle {
+  flex: 1;
+  padding: calc(clamp(24px, 5dvh, 56px) + env(safe-area-inset-top, 0px))
+           calc(20px + env(safe-area-inset-right, 0px))
+           calc(16px + env(safe-area-inset-bottom, 0px))
+           calc(20px + env(safe-area-inset-left, 0px));
+}
+@media (max-width: 480px) {
+  .kiosk-page { padding: 0; }
+  .kiosk-card {
+    max-width: none !important;
+    min-height: 100dvh !important;
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  /* El kiosco es una pantalla "de aparato": nada de scroll ni rebote. */
+  html:has(.kiosk-card), body:has(.kiosk-card) {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+}
