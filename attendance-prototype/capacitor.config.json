@@ -1,0 +1,12 @@
+{
+  "appId": "com.kupocell.arrivecontrol",
+  "appName": "ArriveControl",
+  "webDir": "cascaron-webview",
+  "server": {
+    "url": "https://arrivecontrol.vercel.app",
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
