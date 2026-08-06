@@ -346,7 +346,11 @@ export default function KioskMode() {
           break;
         }
         case 'cooldown': {
-          if (now > st.until && !lm) {
+          // Tras un REGISTRO exitoso sí se exige que la cara se retire (!lm):
+          // evita re-escanear a quien ya marcó y sigue frente al kiosco.
+          // Tras un RECHAZO no: la persona puede reintentar de una, sin tener
+          // que mirar para otro lado.
+          if (now > st.until && (!lm || st.lastOk === false)) {
             st.phase = 'idle';
             setResult(null);
             ponerProgreso(0); // barra lista para el próximo escaneo
@@ -367,6 +371,7 @@ export default function KioskMode() {
   function concludeResult(ok, person, distance, failReason) {
     ponerProgreso(100); // fase final: coincidencia resuelta
     const st = stateRef.current;
+    st.lastOk = ok; // el cooldown decide con esto si exige que la cara se retire
     st.phase = 'result';
     st.autoDismiss = true; // todo resultado se cierra solo (kiosco sin botones)
     st.until = performance.now() + RESULT_SHOW_MS;
