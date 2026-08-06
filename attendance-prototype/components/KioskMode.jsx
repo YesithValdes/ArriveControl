@@ -28,10 +28,16 @@ const WASM_PATH = '/wasm';
 const ACTIVE_INTERVAL_MS = 120;     // ~8 fps durante el reto
 const IDLE_INTERVAL_MS = 330;       // ~3 fps en reposo (solo vigila presencia)
 const CHALLENGE_TIMEOUT_MS = 12000; // tiempo máx. para el parpadeo
-const RESULT_SHOW_MS = 2200;        // cuánto se muestra el resultado de éxito
+const RESULT_SHOW_MS = 1500;        // cuánto se muestra el resultado de éxito
 const COOLDOWN_MS = 700;            // pausa tras cada validación
 const FACE_CAPTURES = 2;            // capturas face-api por validación
-const CAPTURE_GAP_MS = 900;
+// Separación entre las dos capturas: suficiente para que sean fotogramas
+// distintos (promediarlos baja el ruido) sin alargar la espera de la persona.
+const CAPTURE_GAP_MS = 450;
+// Cuánto puede quedarse la pantalla "Registrando…" esperando al servidor.
+// Fijo a propósito: no debe encogerse si se acorta la duración del resultado
+// (un arranque en frío de la función serverless puede tardar varios segundos).
+const ESPERA_RED_MS = 8800;
 
 function averageDescriptors(descs) {
   if (!descs || descs.length === 0) return null;
@@ -394,7 +400,7 @@ export default function KioskMode() {
     // hora. Mientras responde, la pantalla muestra "registrando…".
     setResult({ kind: 'saving', name: person.name, time });
     setUi('ok');
-    st.until = performance.now() + RESULT_SHOW_MS * 4; // margen para la red
+    st.until = performance.now() + ESPERA_RED_MS; // margen fijo para la red
 
     registrarPaso(person.id).then((paso) => {
       const stNow = stateRef.current;
