@@ -446,6 +446,8 @@ export default function KioskMode() {
           <video ref={videoRef} playsInline muted autoPlay style={s.video} />
           {ui === 'challenge' && (
             <>
+              {/* Óvalo guía: dónde cuadrar la cara dentro de la ventana */}
+              <div className="ac-guia" style={s.guiaOval} />
               <div className="ac-laser" style={s.laserGrupo}>
                 <div style={s.laserEstela} />
                 <div style={s.laserHaz} />
@@ -635,17 +637,23 @@ function EmojiKeyframes() {
       }
       .ac-shake { animation: ac-shake .6s ease-in-out 2; }
       /* ── Modo HUD (escáner láser F3) ── */
-      /* El haz recorre la ventana de arriba a abajo y vuelve, con estela */
+      /* El haz recorre la ventana con TRANSFORM (GPU): el carro mide 100% de
+         la ventana y su borde inferior (el láser) viaja del 4% al 100%. */
       @keyframes ac-laser-barrido {
-        from { top: 2%; }
-        to   { top: 99%; }
+        from { transform: translateY(-96%); }
+        to   { transform: translateY(0); }
       }
       .ac-laser { animation: ac-laser-barrido 2.8s ease-in-out infinite alternate; }
-      /* Las esquinas de encuadre "respiran" en cian */
+      /* Las esquinas de encuadre "respiran" en cian (solo color: barato) */
       @keyframes ac-esq-pulso {
-        50% { border-color: #9BF0FF; filter: drop-shadow(0 0 6px #35E0FF); }
+        50% { border-color: #9BF0FF; }
       }
       .ac-esq { animation: ac-esq-pulso 2s ease-in-out infinite; }
+      /* El óvalo guía late suave para invitar a centrar la cara */
+      @keyframes ac-guia-pulso {
+        50% { border-color: rgba(53,224,255,0.85); }
+      }
+      .ac-guia { animation: ac-guia-pulso 2.4s ease-in-out infinite; }
       /* El ojo de la instrucción parpadea él mismo: modela el gesto pedido */
       @keyframes ac-parpadeo {
         0%, 86%, 100% { transform: scaleY(1); }
@@ -653,7 +661,7 @@ function EmojiKeyframes() {
       }
       .ac-ojo { display: inline-block; animation: ac-parpadeo 2.6s ease-in-out infinite; }
       @media (prefers-reduced-motion: reduce) {
-        .ac-float, .ac-pop, .ac-wave, .ac-shake, .ac-laser, .ac-esq, .ac-ojo { animation: none; }
+        .ac-float, .ac-pop, .ac-wave, .ac-shake, .ac-laser, .ac-esq, .ac-ojo, .ac-guia { animation: none; }
       }
     `}</style>
   );
@@ -694,12 +702,20 @@ const s = {
     boxShadow: '0 0 0 1.5px #1e3a5c, 0 0 34px rgba(53,224,255,0.16)',
   },
   video: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' },
-  laserGrupo: { position: 'absolute', left: 0, right: 0, top: 0, pointerEvents: 'none' },
-  laserEstela: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 90, background: 'linear-gradient(180deg, transparent, rgba(53,224,255,0.19))' },
+  // El "carro" del láser ocupa TODA la ventana y se mueve con transform
+  // (composición en GPU): animar top/bottom producía lag en el celular
+  // porque compite por CPU con MediaPipe.
+  laserGrupo: { position: 'absolute', inset: 0, pointerEvents: 'none', willChange: 'transform' },
+  laserEstela: { position: 'absolute', left: 0, right: 0, bottom: 3, height: 90, background: 'linear-gradient(180deg, transparent, rgba(53,224,255,0.19))' },
   laserHaz: {
     position: 'absolute', left: '-4%', right: '-4%', bottom: 0, height: 3,
     background: 'linear-gradient(90deg, transparent, #67E8FF, #FFFFFF, #67E8FF, transparent)',
     boxShadow: '0 0 18px 4px rgba(53,224,255,0.55)',
+  },
+  guiaOval: {
+    position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
+    width: '64%', aspectRatio: '3 / 4', borderRadius: '50%',
+    border: '2px dashed rgba(255,255,255,0.65)', pointerEvents: 'none',
   },
   esquina: { position: 'absolute', width: 24, height: 24, border: '2.5px solid #35E0FF', pointerEvents: 'none' },
   hudBarra: {
