@@ -56,7 +56,7 @@ export default function KioskMode() {
   const [ready, setReady] = useState(false);
   const [running, setRunning] = useState(false);
   const [loadError, setLoadError] = useState(null);
-  const [statusNote, setStatusNote] = useState('Cargando modelos…');
+  const [statusNote, setStatusNote] = useState('Preparando la cámara…');
 
   // Estado visual (espejo de la máquina, para render): idle | challenge | ok | no
   const [ui, setUi] = useState('idle');
@@ -184,7 +184,7 @@ export default function KioskMode() {
         setReady(true);
         setStatusNote('Listo para iniciar.');
       } catch (err) {
-        if (!cancelled) { setLoadError(`${err?.name}: ${err?.message || err}`); setStatusNote('Error cargando modelos.'); }
+        if (!cancelled) { setLoadError(`${err?.name}: ${err?.message || err}`); setStatusNote('No se pudo preparar la cámara.'); }
       }
     })();
     return () => { cancelled = true; };
@@ -431,28 +431,42 @@ export default function KioskMode() {
     });
   }
 
+  /** Velo de color de la ventana según el resultado (escena única). */
+  const tinteResultado = (uiActual, kind) => {
+    if (uiActual === 'no') return 'rgba(239,68,68,0.42)';
+    if (kind === 'in') return 'rgba(34,197,94,0.42)';
+    if (kind === 'out') return 'rgba(245,158,11,0.42)';
+    return 'rgba(76,141,255,0.38)'; // dup / saving / pending
+  };
+
   return (
     <div className="kiosk-card" style={s.kiosk}>
       <EmojiKeyframes />
-      {/* Modo HUD de escaneo (láser): el video vive SIEMPRE montado dentro de
-          la ventana; solo se muestra durante el reto. La cámara ya no ocupa
-          toda la pantalla — atmósfera oscura + ventana con esquinas de
-          encuadre + láser que barre + barra de progreso REAL. */}
+      {/* ESCENA ÚNICA (en prueba): mientras el kiosco corre, todo pasa en el
+          mismo mundo oscuro del HUD — espera, escaneo y resultado — sin saltos
+          de pantalla completa ni cambios de tema. El video vive SIEMPRE
+          montado dentro de la ventana. */}
       <div style={{
         ...s.camWrap,
-        opacity: running && ui === 'challenge' ? 1 : 0,
+        opacity: running ? 1 : 0,
         // Invisible NO basta: un overlay con opacity 0 sigue capturando los
         // toques y bloqueaba el botón "Iniciar kiosco" debajo.
-        pointerEvents: running && ui === 'challenge' ? 'auto' : 'none',
+        pointerEvents: running ? 'auto' : 'none',
       }}>
         <div style={s.hudRejilla} />
-        <span style={s.hudMarca}>ARRIVE<span style={{ color: '#35E0FF' }}>CONTROL</span></span>
+        <div style={s.hudTop}>
+          <span style={s.hudMarca}>ARRIVE<span style={{ color: '#35E0FF' }}>CONTROL</span></span>
+          <button style={s.hudStop} onClick={stopAll} aria-label="Detener kiosco">⏹</button>
+        </div>
+        <div style={s.hudReloj}>{clock.time}</div>
+        <div style={s.hudFecha}>{clock.date}</div>
+
         <div style={s.hudVentana}>
           <video ref={videoRef} playsInline muted autoPlay style={s.video} />
+          {/* Óvalo guía visible en espera y escaneo: dónde cuadrar la cara */}
+          {(ui === 'idle' || ui === 'challenge') && <div className="ac-guia" style={s.guiaOval} />}
           {ui === 'challenge' && (
             <>
-              {/* Óvalo guía: dónde cuadrar la cara dentro de la ventana */}
-              <div className="ac-guia" style={s.guiaOval} />
               <div className="ac-laser" style={s.laserGrupo}>
                 <div style={s.laserEstela} />
                 <div style={s.laserHaz} />
@@ -463,20 +477,77 @@ export default function KioskMode() {
               <div className="ac-esq" style={{ ...s.esquina, right: 8, bottom: 8, borderLeft: 'none', borderTop: 'none', borderRadius: '0 0 6px 0' }} />
             </>
           )}
+          {/* Resultado: la ventana se tiñe del color del estado, sin saltar de pantalla */}
+          {(ui === 'ok' || ui === 'no') && result && (
+            <div style={{ ...s.ventanaTinte, background: tinteResultado(ui, result.kind) }}>
+              <span className={`ac-emoji ${ui === 'no' ? 'ac-shake' : result.kind === 'out' ? 'ac-wave' : result.kind === 'in' ? 'ac-pop' : 'ac-float'}`} style={s.tinteEmoji} role="img" aria-label="resultado">
+                {ui === 'no' ? '🤔' : result.kind === 'in' ? '👍' : result.kind === 'out' ? '👋' : result.kind === 'pending' ? '📶' : result.kind === 'dup' ? 'ℹ️' : '⏳'}
+              </span>
+            </div>
+          )}
         </div>
+
+        {/* Zona baja: instrucción (espera/escaneo) o tarjeta de resultado */}
+        {ui === 'idle' && (
+          <div style={s.hudInstruccion}>Acércate para marcar tu asistencia</div>
+        )}
         {ui === 'challenge' && (
           <>
             <div style={s.hudBarra}><div style={{ ...s.hudBarraRelleno, width: `${scanProg}%` }} /></div>
             <div style={s.hudInstruccion}>Parpadea <span className="ac-ojo">👁</span></div>
             <div style={s.hudEstado}>
-              {scanProg >= 75 ? 'Verificando identidad…' : scanProg >= 50 ? 'Parpadea para confirmar que eres tú' : 'Escaneo biométrico en curso'}
+              {scanProg >= 75 ? 'Verificando identidad…' : scanProg >= 50 ? 'Parpadea para confirmar que eres tú' : 'Mira de frente'}
             </div>
           </>
         )}
+        {ui === 'ok' && result && result.kind === 'in' && (
+          <div style={s.tarjeta}>
+            <div style={{ ...s.tarjTipo, color: '#4ADE80' }}>ENTRADA</div>
+            <div style={s.tarjNombre}>¡Bienvenido/a, {result.name}!</div>
+            <div style={{ ...s.tarjHora, color: '#4ADE80' }}>{result.time}</div>
+            {result.flag === 'late-entry' && (
+              <div style={s.tarjAviso}>⚠️ Entrada registrada en la tarde. Si olvidaste marcar en la mañana, avisa a RRHH.</div>
+            )}
+          </div>
+        )}
+        {ui === 'ok' && result && result.kind === 'out' && (
+          <div style={s.tarjeta}>
+            <div style={{ ...s.tarjTipo, color: '#FBBF24' }}>SALIDA</div>
+            <div style={s.tarjNombre}>¡Hasta pronto, {result.name}!</div>
+            <div style={{ ...s.tarjHora, color: '#FBBF24' }}>{result.time}</div>
+          </div>
+        )}
+        {ui === 'ok' && result && result.kind === 'dup' && (
+          <div style={s.tarjeta}>
+            <div style={s.tarjNombre}>{result.name}</div>
+            <div style={s.tarjSub}>Ya registraste tu {result.lastLabel} a las {result.lastTime}.</div>
+          </div>
+        )}
+        {ui === 'ok' && result && result.kind === 'saving' && (
+          <div style={s.tarjeta}>
+            <div style={s.tarjNombre}>{result.name}</div>
+            <div style={s.tarjSub}>Registrando tu marcación…</div>
+          </div>
+        )}
+        {ui === 'ok' && result && result.kind === 'pending' && (
+          <div style={s.tarjeta}>
+            <div style={s.tarjNombre}>{result.name}</div>
+            <div style={s.tarjSub}>Sin conexión: tu marcación quedó guardada y se sincronizará automáticamente.</div>
+            <div style={{ ...s.tarjHora, color: '#7FB2FF' }}>{result.time}</div>
+          </div>
+        )}
+        {ui === 'no' && result && (
+          <div style={s.tarjeta}>
+            <div style={{ ...s.tarjTipo, color: '#F87171' }}>NO RECONOCIDO</div>
+            <div style={s.tarjSub}>{result.reason}</div>
+          </div>
+        )}
+        <div style={s.hudPrivacidad}>🔐 Tus fotos no se almacenan — solo un código matemático</div>
       </div>
 
-      {/* Estado 1 · Reposo */}
-      {(ui === 'idle') && (
+      {/* Pantalla de arranque (solo cuando el kiosco NO corre: es del admin).
+          Con la escena única, mientras corre todo vive en el HUD oscuro. */}
+      {!running && (
         <div className="kiosk-idle" style={s.idle}>
           <div style={s.brand}>ARRIVE<span style={{ color: 'var(--accent)' }}>CONTROL</span></div>
           <div style={s.clock}>{clock.time}</div>
@@ -484,7 +555,7 @@ export default function KioskMode() {
           <div style={s.idleOval}>
             <span className="ac-emoji ac-float" role="img" aria-label="esperando">⏳</span>
           </div>
-          <div style={s.idleCta}>{running ? 'Acércate para marcar tu asistencia' : statusNote}</div>
+          <div style={s.idleCta}>{statusNote}</div>
 
           {/* Activación del dispositivo (una sola vez, con sesión de admin) */}
           {!running && !configurado && (
@@ -513,90 +584,16 @@ export default function KioskMode() {
             </div>
           )}
 
-          {!running && configurado && (
+          {configurado && (
             <button style={s.startBtn} onClick={handleStart} disabled={!ready}>
               {ready ? '▶️ Iniciar kiosco' : 'Cargando…'}
             </button>
           )}
-          {running && <button style={s.stopBtn} onClick={stopAll}>⏹ Detener</button>}
-          {pendientes > 0 && (
-            <div style={s.pendNote}>⌛ {pendientes} marcación(es) sin conexión, pendientes de sincronizar</div>
-          )}
           <div style={s.privacy}>🔐 Tus fotos no se almacenan — solo un código matemático</div>
           {loadError && <div style={s.errNote}>{loadError}</div>}
-          {running && <div style={s.count}>Personas registradas: {peopleCount}</div>}
         </div>
       )}
 
-      {/* Estado 3 · Éxito — ENTRADA (verde) / SALIDA (ámbar) / duplicado (azul) */}
-      {ui === 'ok' && result && result.kind === 'in' && (
-        <div style={{ ...s.resultScreen, ...s.okBg }}>
-          <div style={{ ...s.badge, ...s.badgeOk }}>
-            <span className="ac-emoji ac-pop" role="img" aria-label="registrado">👍</span>
-          </div>
-          <div style={s.typeTag}>🟢 ENTRADA</div>
-          <div style={s.rName}>¡Bienvenido/a,<br />{result.name}!</div>
-          <div style={{ ...s.rTime, color: 'var(--k-in)' }}>{result.time}</div>
-          {result.flag === 'late-entry' && (
-            <div style={s.warnNote}>⚠️ Entrada registrada en la tarde. Si olvidaste marcar en la mañana, avisa a RRHH.</div>
-          )}
-          <div style={s.countdown}>dist {result.distance} · cerrando…</div>
-        </div>
-      )}
-      {ui === 'ok' && result && result.kind === 'out' && (
-        <div style={{ ...s.resultScreen, ...s.outBg }}>
-          <div style={{ ...s.badge, ...s.badgeOut }}>
-            <span className="ac-emoji ac-wave" role="img" aria-label="hasta pronto">👋</span>
-          </div>
-          <div style={{ ...s.typeTag, color: 'var(--k-out)' }}>🟠 SALIDA</div>
-          <div style={s.rName}>¡Hasta pronto,<br />{result.name}!</div>
-          <div style={{ ...s.rTime, color: 'var(--k-out)' }}>{result.time}</div>
-          <div style={s.countdown}>dist {result.distance} · cerrando…</div>
-        </div>
-      )}
-      {ui === 'ok' && result && result.kind === 'dup' && (
-        <div style={{ ...s.resultScreen, ...s.dupBg }}>
-          <div style={{ ...s.badge, ...s.badgeDup }}>ℹ</div>
-          <div style={s.rName}>{result.name}</div>
-          <div style={s.rSub}>Ya registraste tu {result.lastLabel} a las {result.lastTime}.</div>
-          <div style={s.countdown}>Sin cambios · cerrando…</div>
-        </div>
-      )}
-
-      {/* Registrando en el servidor… (espera de red tras verificar identidad) */}
-      {ui === 'ok' && result && result.kind === 'saving' && (
-        <div style={{ ...s.resultScreen, ...s.dupBg }}>
-          <div style={{ ...s.badge, ...s.badgeDup }}>
-            <span className="ac-emoji ac-float" role="img" aria-label="registrando">⏳</span>
-          </div>
-          <div style={s.rName}>{result.name}</div>
-          <div style={s.rSub}>Registrando tu marcación…</div>
-        </div>
-      )}
-
-      {/* Sin conexión: la marcación quedó en la cola local y se sincroniza sola */}
-      {ui === 'ok' && result && result.kind === 'pending' && (
-        <div style={{ ...s.resultScreen, ...s.dupBg }}>
-          <div style={{ ...s.badge, ...s.badgeDup }}>
-            <span className="ac-emoji ac-float" role="img" aria-label="pendiente">📶</span>
-          </div>
-          <div style={s.rName}>{result.name}</div>
-          <div style={s.rSub}>Sin conexión: tu marcación quedó guardada y se sincronizará automáticamente.</div>
-          <div style={s.countdown}>{result.time} · guardada en el dispositivo</div>
-        </div>
-      )}
-
-      {/* Estado 4 · Rechazo (se autodescarta; la persona solo vuelve a intentar) */}
-      {ui === 'no' && result && (
-        <div style={{ ...s.resultScreen, ...s.noBg }}>
-          <div style={{ ...s.badge, ...s.badgeNo }}>
-            <span className="ac-emoji ac-shake" role="img" aria-label="no reconocido">🤔</span>
-          </div>
-          <div style={s.rName}>No reconocido</div>
-          <div style={s.rSub}>{result.reason}</div>
-          {result.distance != null && <div style={s.countdown}>distancia {result.distance} · umbral {MATCH_THRESHOLD}</div>}
-        </div>
-      )}
     </div>
   );
 }
@@ -700,7 +697,36 @@ const s = {
     background: 'linear-gradient(rgba(53,224,255,0.13) 1px, transparent 1px), linear-gradient(90deg, rgba(53,224,255,0.13) 1px, transparent 1px)',
     backgroundSize: '26px 26px',
   },
-  hudMarca: { alignSelf: 'flex-start', fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', color: '#4d6a94', position: 'relative' },
+  hudMarca: { fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', color: '#4d6a94' },
+  hudTop: { position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  hudStop: {
+    background: 'transparent', border: '1px solid #1e3a5c', color: '#4d6a94',
+    borderRadius: 8, fontSize: 13, padding: '4px 10px', cursor: 'pointer',
+  },
+  hudReloj: {
+    position: 'relative', fontSize: 'clamp(28px, 9vw, 40px)', fontWeight: 800,
+    letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums',
+    fontFamily: 'var(--f-data)', marginTop: 'clamp(4px, 1.5dvh, 14px)',
+  },
+  hudFecha: { position: 'relative', fontSize: 12, color: '#7f93b6', textTransform: 'capitalize' },
+  ventanaTinte: {
+    position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+    justifyContent: 'center', transition: 'background .3s',
+  },
+  tinteEmoji: { fontSize: 64 },
+  tarjeta: {
+    position: 'relative', marginTop: 14, textAlign: 'center', display: 'flex',
+    flexDirection: 'column', alignItems: 'center', gap: 4, maxWidth: 300,
+  },
+  tarjTipo: { fontSize: 12, fontWeight: 800, letterSpacing: '0.16em' },
+  tarjNombre: { fontSize: 22, fontWeight: 800, letterSpacing: '-0.01em', color: '#EAF7FF', textWrap: 'balance', lineHeight: 1.2 },
+  tarjHora: { fontSize: 18, fontWeight: 700, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--f-data)' },
+  tarjSub: { fontSize: 13, color: '#8fa5c8', lineHeight: 1.45 },
+  tarjAviso: {
+    marginTop: 6, fontSize: 12, color: '#FBBF24', border: '1px solid rgba(245,158,11,0.4)',
+    background: 'rgba(245,158,11,0.12)', borderRadius: 10, padding: '7px 11px', lineHeight: 1.4,
+  },
+  hudPrivacidad: { position: 'relative', marginTop: 'auto', paddingTop: 12, textAlign: 'center', fontSize: 10, color: '#4d6a94' },
   hudVentana: {
     position: 'relative', width: 'min(64vw, 250px)', aspectRatio: '5 / 6',
     marginTop: 'clamp(12px, 4dvh, 36px)', borderRadius: 16, overflow: 'hidden',
