@@ -12,6 +12,7 @@ import { pool } from '../../../lib/db.js'
 import { estadoAcceso } from '../../../lib/sesion'
 import { dispositivoDeLaPeticion } from '../../../lib/dispositivos.js'
 import { modoConectado } from '../../../lib/configLaboral.js'
+import { colaboradorPorId, estadosDeColaboradores } from '../../../lib/gestor.js'
 
 export const runtime = 'nodejs'
 
@@ -34,22 +35,26 @@ export async function GET(req) {
         )
       }
     }
-    // En modo CONECTADO se cruza con el gestor: un colaborador RETIRADO deja
-    // de aparecer en el roster del kiosco de inmediato (no puede marcar).
-    // En modo AUTÓNOMO no hay gestor que consultar: manda `activo`.
     const { rows } = await pool.query(
-      modoConectado()
-        ? `select e.id, e.nombre, e.sede_id, e.descriptor_facial
-             from asistencia.empleados e
-             left join public.colaborador c on c.id = e.colaborador_id
-            where e.activo and (e.colaborador_id is null or c.estado = 'ACTIVO')
-            order by e.nombre`
-        : `select e.id, e.nombre, e.sede_id, e.descriptor_facial
-             from asistencia.empleados e
-            where e.activo
-            order by e.nombre`,
+      `select e.id, e.nombre, e.cedula, e.sede_id, e.descriptor_facial
+         from asistencia.empleados e
+        where e.activo
+        order by e.nombre`,
     )
-    return NextResponse.json({ ok: true, empleados: rows })
+
+    // En modo CONECTADO se le pregunta al gestor por HTTP quién sigue activo:
+    // un colaborador RETIRADO no debe poder marcar. Si el gestor no responde
+    // se deja pasar a todos — preferimos que el kiosco siga funcionando a que
+    // la gente no pueda registrar su entrada por una caída de la nómina.
+    const estados = await estadosDeColaboradores(rows.map((e) => e.cedula).filter(Boolean))
+    const empleados = estados
+      ? rows.filter((e) => !e.cedula || estados.get(e.cedula) !== false)
+      : rows
+
+    return NextResponse.json({
+      ok: true,
+      empleados: empleados.map(({ cedula, ...e }) => e), // la cédula no baja al kiosco
+    })
   }
 
   const { estado } = await estadoAcceso('ver')
@@ -60,26 +65,24 @@ export async function GET(req) {
   // `retirado_gestor` avisa al panel que el colaborador ya no está activo en
   // el gestor (retiro laboral): se muestra pero no puede marcar en el kiosco.
   // Sin gestor esa columna no aplica y sale siempre en falso.
-  const campos = `e.id, e.nombre, e.cedula, e.sede_id, s.nombre as sede_nombre,
-            e.entrada_esperada, e.salida_esperada, e.almuerzo_min, e.jornada_semanal, e.activo, e.creado_en,
-            (e.descriptor_facial is not null) as tiene_rostro`
-  const filtro = incluirInactivos ? '' : 'where e.activo'
   const { rows } = await pool.query(
-    modoConectado()
-      ? `select ${campos},
-                (e.colaborador_id is not null and coalesce(c.estado, 'RETIRADO') <> 'ACTIVO') as retirado_gestor
-           from asistencia.empleados e
-           left join asistencia.sedes s on s.id = e.sede_id
-           left join public.colaborador c on c.id = e.colaborador_id
-          ${filtro}
-          order by e.nombre`
-      : `select ${campos}, false as retirado_gestor
-           from asistencia.empleados e
-           left join asistencia.sedes s on s.id = e.sede_id
-          ${filtro}
-          order by e.nombre`,
+    `select e.id, e.nombre, e.cedula, e.colaborador_id, e.sede_id, s.nombre as sede_nombre,
+            e.entrada_esperada, e.salida_esperada, e.almuerzo_min, e.jornada_semanal, e.activo, e.creado_en,
+            (e.descriptor_facial is not null) as tiene_rostro
+       from asistencia.empleados e
+       left join asistencia.sedes s on s.id = e.sede_id
+      ${incluirInactivos ? '' : 'where e.activo'}
+      order by e.nombre`,
   )
-  return NextResponse.json({ ok: true, empleados: rows })
+
+  // `retirado_gestor` avisa al panel que la persona ya no está activa en la
+  // nómina: se muestra pero no puede marcar. Sin gestor, siempre falso.
+  const estados = await estadosDeColaboradores(rows.map((e) => e.cedula).filter(Boolean))
+  const empleados = rows.map((e) => ({
+    ...e,
+    retirado_gestor: Boolean(e.colaborador_id) && estados?.get(e.cedula) === false,
+  }))
+  return NextResponse.json({ ok: true, empleados })
 }
 
 export async function POST(req) {
@@ -107,19 +110,23 @@ export async function POST(req) {
         { status: 400 },
       )
     }
-    const { rows: colabRows } = await pool.query(
-      `select id, nombres || ' ' || apellidos as nombre, numero_documento as cedula
-         from public.colaborador where id = $1::uuid and estado = 'ACTIVO'`,
-      [colaboradorId],
-    ).catch(() => ({ rows: [] }))
-    if (colabRows.length === 0) {
+    let colab
+    try {
+      colab = await colaboradorPorId(colaboradorId)
+    } catch (e) {
       return NextResponse.json(
-        { ok: false, error: 'Ese colaborador no existe o no está activo en el gestor de empleados.' },
+        { ok: false, error: `No se pudo consultar el gestor de nómina: ${e.message}` },
+        { status: 502 },
+      )
+    }
+    if (!colab) {
+      return NextResponse.json(
+        { ok: false, error: 'Ese colaborador no existe o no está activo en el gestor de nómina.' },
         { status: 404 },
       )
     }
-    nombre = colabRows[0].nombre
-    cedula = colabRows[0].cedula
+    nombre = `${colab.nombres} ${colab.apellidos}`
+    cedula = colab.cedula
   } else {
     nombre = String(c?.nombre ?? '').trim()
     cedula = String(c?.cedula ?? '').replace(/\D/g, '')

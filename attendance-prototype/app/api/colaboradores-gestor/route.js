@@ -1,18 +1,17 @@
 /**
  * app/api/colaboradores-gestor/route.js
- * GET ?buscar=texto — busca colaboradores ACTIVOS del gestor de empleados
- * (public.colaborador, misma base) para el registro de empleados de asistencia.
+ * GET ?buscar=texto — busca colaboradores ACTIVOS en el gestor de nómina para
+ * registrarlos en asistencia.
  *
- * El gestor es la UNICA fuente de identidad: aqui no se digitan nombres ni
- * cedulas, se ELIGEN. Se exponen solo los campos minimos para identificar a
- * la persona (nada de salud, salario ni datos sensibles), y se marca si ya
- * esta registrada en asistencia para no ofrecerla dos veces.
- *
- * Requiere sesion con permiso CREAR sobre `asistencia` (el mismo del alta).
+ * En MODO CONECTADO se pide por HTTP al gestor (ya no se lee su base: son dos
+ * sistemas separados). En MODO AUTÓNOMO no aplica: los empleados se registran
+ * aquí con nombre y cédula, así que devuelve una lista vacía.
  */
 import { NextResponse } from 'next/server'
 import { pool } from '../../../lib/db.js'
 import { estadoAcceso } from '../../../lib/sesion'
+import { buscarColaboradores } from '../../../lib/gestor.js'
+import { modoConectado } from '../../../lib/configLaboral.js'
 
 export const runtime = 'nodejs'
 
@@ -21,25 +20,38 @@ export async function GET(req) {
   if (estado !== 'OK') {
     return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
   }
+  if (!modoConectado()) {
+    return NextResponse.json({ ok: true, colaboradores: [], modo: 'autonomo' })
+  }
 
-  const buscar = (new URL(req.url).searchParams.get('buscar') ?? '').trim().toLowerCase()
+  const buscar = (new URL(req.url).searchParams.get('buscar') ?? '').trim()
   if (buscar.length < 2) return NextResponse.json({ ok: true, colaboradores: [] })
 
-  // busqueda_normalizada ya viene sin tildes y en minusculas desde el gestor.
-  const { rows } = await pool.query(
-    `select c.id, c.nombres, c.apellidos, c.numero_documento as cedula,
-            s.nombre as sede_gestor,
-            (e.id is not null) as ya_registrado,
-            (c.foto_path is not null) as tiene_foto
-       from public.colaborador c
-       join public.sede s on s.id = c.sede_id
-       left join asistencia.empleados e on e.colaborador_id = c.id
-      where c.estado = 'ACTIVO'
-        and (c.busqueda_normalizada like '%' || $1 || '%'
-             or c.numero_documento like $1 || '%')
-      order by c.apellidos, c.nombres
-      limit 15`,
-    [buscar],
-  )
-  return NextResponse.json({ ok: true, colaboradores: rows })
+  let colaboradores
+  try {
+    colaboradores = await buscarColaboradores(buscar)
+  } catch (e) {
+    return NextResponse.json(
+      { ok: false, error: `No se pudo consultar el gestor de nómina: ${e.message}` },
+      { status: 502 },
+    )
+  }
+
+  // Cuáles de esos ya están registrados aquí, para no ofrecerlos dos veces.
+  // Se resuelve con datos PROPIOS, sin cruzar a la base del gestor.
+  const ids = colaboradores.map((c) => c.id)
+  const yaRegistrados = new Set()
+  if (ids.length > 0) {
+    const { rows } = await pool.query(
+      `select colaborador_id::text as id from asistencia.empleados
+        where colaborador_id = any($1::uuid[])`,
+      [ids],
+    )
+    for (const r of rows) yaRegistrados.add(r.id)
+  }
+
+  return NextResponse.json({
+    ok: true,
+    colaboradores: colaboradores.map((c) => ({ ...c, ya_registrado: yaRegistrados.has(c.id) })),
+  })
 }
