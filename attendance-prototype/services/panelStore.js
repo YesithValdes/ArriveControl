@@ -75,7 +75,10 @@ export async function syncPanel() {
     weeklyHours: cfg.config.horas_semana ?? 42,
     graceMinutes: cfg.config.gracia_min,
     holidays: (cfg.config.festivos ?? []).map((f) => String(f).slice(0, 10)),
-    // Jornada y festivos son de SOLO LECTURA: la fuente única es el gestor RH.
+    // En modo conectado la jornada y los festivos son de SOLO LECTURA (manda
+    // el gestor); en modo autónomo se editan aquí mismo.
+    modo: cfg.modo ?? 'conectado',
+    soloLectura: cfg.solo_lectura ?? ['horas_semana', 'festivos'],
     gestorUrl: cfg.gestor_url ?? null,
     gestorError: cfg.gestor_error ?? null,
   };
@@ -292,8 +295,14 @@ export function getLaborConfig() {
  */
 export function saveLaborConfig(partial) {
   store.cfg = { ...store.cfg, ...partial };
-  if (!('graceMinutes' in partial)) return store.cfg;
-  api('/api/config', { method: 'PATCH', body: JSON.stringify({ gracia_min: partial.graceMinutes }) })
+  const body = {};
+  if ('graceMinutes' in partial) body.gracia_min = partial.graceMinutes;
+  // Jornada y festivos solo viajan si esta instalación los administra.
+  const editable = (campo) => !(store.cfg.soloLectura ?? []).includes(campo);
+  if ('weeklyHours' in partial && editable('horas_semana')) body.horas_semana = partial.weeklyHours;
+  if ('holidays' in partial && editable('festivos')) body.festivos = partial.holidays;
+  if (Object.keys(body).length === 0) return store.cfg;
+  api('/api/config', { method: 'PATCH', body: JSON.stringify(body) })
     .catch((e) => console.error('No se pudo guardar la configuración:', e.message));
   return store.cfg;
 }

@@ -16,7 +16,7 @@
  *  - Nocturno: se envían solo códigos diurnos; quien liquida parte el tramo
  *    en su hora de corte nocturno (su parámetro, no el nuestro).
  */
-import { horasDiaEn } from './configLaboral.js'
+import { horasDiaEn } from './jornada.js'
 
 const round1 = (n) => Math.round(n * 10) / 10
 

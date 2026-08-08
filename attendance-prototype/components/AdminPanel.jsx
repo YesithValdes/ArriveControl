@@ -168,6 +168,9 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
   const [newSede, setNewSede] = useState({ name: '', lat: '', lon: '', radius: '50' });
   const [editSede, setEditSede] = useState(null); // { original, name, lat, lon, radius }
   const [newSedeOpen, setNewSedeOpen] = useState(false); // drawer de "Nueva sede"
+  const [newHoliday, setNewHoliday] = useState('');
+  /** ¿Esta instalación administra ese campo, o lo manda el gestor de nómina? */
+  const cfgEditable = (campo) => !(cfg.soloLectura ?? ['horas_semana', 'festivos']).includes(campo);
 
   // Usuarios de ArriveControl (solo visible para el rol `dueno`).
   const [usuarios, setUsuarios] = useState([]);
@@ -1182,12 +1185,25 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
             <div className="scrollable">
               <div className="cfg-group">
                 <div className="cfg-row">
-                  <label>
+                  <label htmlFor="cfg-week">
                     Jornada legal semanal
-                    <small>La define el gestor RH según la ley vigente (Ley 2101). Aquí solo se consulta.</small>
+                    <small>
+                      {cfgEditable('horas_semana')
+                        ? 'Colombia: 42 h (Ley 2101 de 2021). Lo que pase de esto en el día cuenta como hora extra.'
+                        : 'La define el gestor de nómina según la ley vigente (Ley 2101). Aquí solo se consulta.'}
+                    </small>
                   </label>
                   <div className="cfg-input">
-                    <b>{cfg.weeklyHours ?? '—'}</b> h
+                    {cfgEditable('horas_semana') ? (
+                      <>
+                        <input
+                          id="cfg-week" type="number" min="1" max="84" value={cfg.weeklyHours ?? 42}
+                          onChange={(e) => { const v = Number(e.target.value); if (v > 0) updateCfg({ weeklyHours: v }); }}
+                        /> h
+                      </>
+                    ) : (
+                      <><b>{cfg.weeklyHours ?? '—'}</b> h</>
+                    )}
                   </div>
                 </div>
                 <div className="cfg-row">
@@ -1207,21 +1223,45 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
               <div className="cfg-group">
                 <h3>Días festivos y dominicales</h3>
                 <p className="cfg-note">
-                  Calendario oficial de festivos de Colombia, tomado del gestor RH (fuente única).
-                  {cfg.gestorUrl && (
+                  {cfgEditable('festivos') ? (
+                    <>Los festivos oficiales de Colombia (Ley 51 de 1983, con traslado al lunes) se
+                    calculan solos. Aquí solo agregas los <b>decretados aparte</b> o los días que tu
+                    empresa trate como festivos.</>
+                  ) : (
                     <>
-                      {' '}Para agregar o quitar un festivo decretado,{' '}
-                      <a href={cfg.gestorUrl} target="_blank" rel="noreferrer">edítalo en el gestor ↗</a>.
+                      Calendario oficial tomado del gestor de nómina (fuente única).
+                      {cfg.gestorUrl && (
+                        <>
+                          {' '}Para agregar o quitar un festivo decretado,{' '}
+                          <a href={cfg.gestorUrl} target="_blank" rel="noreferrer">edítalo en el gestor ↗</a>.
+                        </>
+                      )}
                     </>
                   )}
                 </p>
                 {cfg.gestorError && (
                   <p className="cfg-note">⚠ No se pudo consultar el gestor: {cfg.gestorError}</p>
                 )}
+                {cfgEditable('festivos') && (
+                  <div className="holiday-add">
+                    <input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} aria-label="Nuevo festivo" />
+                    <button
+                      className="btn primary"
+                      disabled={!newHoliday || (cfg.holidays ?? []).includes(newHoliday)}
+                      onClick={() => { updateCfg({ holidays: [...(cfg.holidays ?? []), newHoliday].sort() }); setNewHoliday(''); }}
+                    >
+                      ＋ Agregar
+                    </button>
+                  </div>
+                )}
                 <div className="holiday-list">
                   {(cfg.holidays ?? []).map((d) => (
                     <span className="holiday-chip" key={d}>
                       {new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: '2-digit' })}
+                      {cfgEditable('festivos') && (
+                        <button aria-label={`Quitar festivo ${d}`}
+                          onClick={() => updateCfg({ holidays: (cfg.holidays ?? []).filter((x) => x !== d) })}>✕</button>
+                      )}
                     </span>
                   ))}
                 </div>
