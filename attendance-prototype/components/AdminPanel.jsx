@@ -198,8 +198,6 @@ export default function AdminPanel() {
   const [empSearch, setEmpSearch] = useState(''); // búsqueda de la tabla Empleados
 
   // Envío de horas con recargo a la plataforma de nómina (RH).
-  const [enviandoRH, setEnviandoRH] = useState(false);
-  const [envioRH, setEnvioRH] = useState(null); // última respuesta del gestor
 
   // Drawer de detalle: línea de tiempo de marcaciones de una persona en un día.
   const [drawer, setDrawer] = useState(null); // { personId, personName, desde, hasta }
@@ -408,33 +406,9 @@ export default function AdminPanel() {
     showToast('Reporte CSV descargado');
   };
 
-  // Envía a la plataforma de nómina las horas con recargo del rango del reporte.
-  // El lote se reconstruye en el servidor desde las marcaciones actuales, así que
-  // reenviar tras editar o eliminar marcaciones deja la nómina al día (el gestor
-  // reemplaza tramos solapados y reliquida los periodos afectados).
-  const enviarANomina = async () => {
-    setEnviandoRH(true);
-    setEnvioRH(null);
-    try {
-      const res = await fetch('/api/enviar-horas', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ desde: repFrom, hasta: repTo }),
-      });
-      const datos = await res.json();
-      if (!res.ok || datos.ok === false) {
-        showToast(datos.error || 'El gestor rechazó el lote.');
-        setEnvioRH(datos);
-        return;
-      }
-      setEnvioRH(datos);
-      showToast(datos.vacio ? 'No hay horas con recargo en este rango.' : 'Horas enviadas a nómina.');
-    } catch (e) {
-      showToast(`No se pudo enviar: ${e.message}`);
-    } finally {
-      setEnviandoRH(false);
-    }
-  };
+  // Ya no se "envían" horas a nómina: quien liquida las pide cuando las
+  // necesita (GET /api/horas). Así una corrección se refleja sola, sin
+  // reenviar ni dejar copias desactualizadas.
 
   // Cerrar sesión: la misma sesión del gestor de empleados.
   const cerrarSesion = async () => {
@@ -910,22 +884,7 @@ export default function AdminPanel() {
               <label>Desde <input type="date" value={repFrom} max={repTo} onChange={(e) => setRepFrom(e.target.value)} /></label>
               <label>Hasta <input type="date" value={repTo} min={repFrom} max={todayKey()} onChange={(e) => setRepTo(e.target.value)} /></label>
               <button className="btn primary" onClick={exportCSV} disabled={report.length === 0}>Exportar CSV</button>
-              <button className="btn primary" onClick={enviarANomina} disabled={enviandoRH}>
-                {enviandoRH ? 'Enviando…' : 'Enviar a nómina'}
-              </button>
             </div>
-            {envioRH && !envioRH.vacio && (
-              <p className="hint">
-                {envioRH.ok === false
-                  ? `Error: ${envioRH.error || 'el gestor rechazó el lote.'}`
-                  : <>
-                      Nómina: {envioRH.aplicados ?? 0} aplicadas, {envioRH.reemplazados ?? 0} reemplazadas,
-                      {' '}{envioRH.duplicados ?? 0} duplicadas, {(envioRH.rechazados || []).length} rechazadas.
-                      {(envioRH.periodosRecalculando || []).length > 0 && ` Reliquidando: ${envioRH.periodosRecalculando.join(', ')}.`}
-                      {(envioRH.periodosSinRecalcular || []).length > 0 && ` Pendientes: ${envioRH.periodosSinRecalcular.join(', ')}.`}
-                    </>}
-              </p>
-            )}
             <div className="scrollable">
               {report.length === 0 && <p className="empty">Sin marcaciones en este período{sedeFilter !== 'all' ? ` para ${sedeFilter}` : ''}.</p>}
               {report.length > 0 && (

@@ -6,10 +6,9 @@
  * Ambos dejan su fila de auditoría en `correcciones` con el antes/después,
  * en la misma transacción que el cambio.
  */
-import { NextResponse, after } from 'next/server'
+import { NextResponse } from 'next/server'
 import { pool } from '../../../../lib/db.js'
 import { estadoAcceso } from '../../../../lib/sesion'
-import { sincronizar, fechasAfectadas } from '../../../../lib/sincronizarNomina.js'
 
 export const runtime = 'nodejs'
 
@@ -53,9 +52,8 @@ export async function PATCH(req, { params }) {
        motivo.trim()],
     )
     await client.query('commit')
-    // Se sincronizan el día viejo Y el nuevo (la corrección pudo mover la
-    // marcación de fecha): el viejo para retirar el tramo, el nuevo para crearlo.
-    after(() => sincronizar([...fechasAfectadas(prev.ts), ...fechasAfectadas(upd.rows[0].ts)]))
+    // No se notifica a nadie: la nómina lee las marcaciones al liquidar, así
+    // que una corrección queda reflejada sola en el siguiente cálculo.
     return NextResponse.json({ ok: true, marcacion: upd.rows[0] })
   } catch (e) {
     await client.query('rollback')
@@ -90,7 +88,6 @@ export async function DELETE(req, { params }) {
       [id, usuario.id, usuario.email, JSON.stringify(antes.rows[0]), motivo.trim()],
     )
     await client.query('commit')
-    after(() => sincronizar(fechasAfectadas(antes.rows[0].ts)))
     return NextResponse.json({ ok: true })
   } catch (e) {
     await client.query('rollback')

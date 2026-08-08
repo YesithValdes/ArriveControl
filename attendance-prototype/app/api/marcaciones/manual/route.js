@@ -4,10 +4,9 @@
  * campo…). Exige motivo y deja la fila de auditoría en `correcciones`.
  * Marcación y auditoría van en la MISMA transacción: nunca un cambio sin rastro.
  */
-import { NextResponse, after } from 'next/server'
+import { NextResponse } from 'next/server'
 import { pool } from '../../../../lib/db.js'
 import { estadoAcceso } from '../../../../lib/sesion'
-import { sincronizar, fechasAfectadas } from '../../../../lib/sincronizarNomina.js'
 
 export const runtime = 'nodejs'
 
@@ -39,7 +38,6 @@ export async function POST(req) {
       [ins.rows[0].id, usuario.id, usuario.email, JSON.stringify({ tipo, ts }), motivo.trim()],
     )
     await client.query('commit')
-    after(() => sincronizar(fechasAfectadas(ins.rows[0].ts)))
     return NextResponse.json({ ok: true, marcacion: ins.rows[0] })
   } catch (e) {
     await client.query('rollback')

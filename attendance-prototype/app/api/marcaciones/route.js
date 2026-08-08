@@ -8,11 +8,10 @@
  * GET  — el PANEL lista marcaciones por rango/empleado. Requiere sesión del
  *        gestor con permiso VER sobre `asistencia`.
  */
-import { NextResponse, after } from 'next/server'
+import { NextResponse } from 'next/server'
 import { registrarPaso, listarMarcaciones } from '../../../lib/marcaciones'
 import { estadoAcceso } from '../../../lib/sesion'
 import { dispositivoDeLaPeticion } from '../../../lib/dispositivos.js'
-import { sincronizar, fechasAfectadas } from '../../../lib/sincronizarNomina.js'
 
 export const runtime = 'nodejs'
 
@@ -58,9 +57,6 @@ export async function POST(req) {
   const r = await registrarPaso({ empleadoId, sedeId, tsDispositivo: tsDispositivo ?? null, diferido: !!diferido })
   if (r.error) return NextResponse.json({ ok: false, error: r.error }, { status: 404 })
   if (r.duplicado) return NextResponse.json({ ok: true, duplicado: true, ultima: r.ultima })
-  // Nómina al día: una salida cierra un par entrada→salida y puede generar
-  // (o corregir) horas extra. Corre tras responder; no bloquea al kiosco.
-  after(() => sincronizar(fechasAfectadas(r.marcacion.ts)))
   return NextResponse.json({ ok: true, tipo: r.tipo, marcacion: r.marcacion })
 }
 

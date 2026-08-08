@@ -158,19 +158,6 @@ export async function construirLote(rango = null) {
   return { registros, porEmpleado }
 }
 
-/** Registra en la bitácora qué se envió y qué respondió el gestor. */
-export async function registrarEnvio(registros, respuestaGestor, enviadoPor) {
-  const rechazadas = new Map((respuestaGestor.rechazados ?? []).map((r) => [r.referenciaExterna, r]))
-  for (const r of registros) {
-    const rechazo = rechazadas.get(r.referenciaExterna)
-    const { _empleadoId, _semana, ...payload } = r
-    await pool.query(
-      `insert into asistencia.envios_rh (referencia_externa, empleado_id, semana, payload, estado, motivo_rechazo, enviado_por)
-       values ($1,$2,$3,$4,$5,$6,$7)
-       on conflict (referencia_externa) do update
-         set estado = $5, motivo_rechazo = $6, enviado_por = $7, ts = now()`,
-      [r.referenciaExterna, _empleadoId, _semana, JSON.stringify(payload),
-       rechazo ? 'rechazado' : 'aplicado', rechazo?.motivo ?? null, enviadoPor],
-    )
-  }
-}
+// La bitácora `envios_rh` y su función `registrarEnvio` se eliminaron junto
+// con el empuje a nómina: ya no se "envía" nada, se calcula bajo demanda.
+// La tabla queda en la base con su historial, sin escrituras nuevas.
