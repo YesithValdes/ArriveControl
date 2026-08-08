@@ -171,4 +171,106 @@ await test('CON horario configurado, la entrada tardía sí se marca', () => {
   assert.equal(r.flag, 'late-entry');
 });
 
+// ── Cálculo de horas con recargo ────────────────────────────────────────
+// Es la ÚNICA implementación de esta regla en todo el producto (la nómina la
+// consume por API), así que un error aquí llega directo al pago.
+console.log('\n💵 Cálculo de horas con recargo');
+const { calcularRegistros } = await import('../lib/calculoHoras.js');
+
+// Vigencias de jornada como las publica el gestor: 7 h/día desde jul-2026.
+const VIGENCIAS = [
+  { desde: '2026-07-15', horasSemana: 42, horasDia: 7 },
+  { desde: '1950-01-01', horasSemana: 48, horasDia: 8 },
+];
+const SIN_FESTIVOS = new Set();
+
+/** Una marcación como la devuelve SQL (hora Bogotá + epoch absoluto). */
+const marca = (tipo, fecha, hora, dow, diasExtra = 0) => {
+  const [h, mi] = hora.split(':').map(Number);
+  return {
+    tipo, fecha, dow,
+    minutos: h * 60 + mi,
+    epoch: Date.parse(`${fecha}T00:00:00Z`) / 1000 + diasExtra * 86400 + h * 3600 + mi * 60,
+  };
+};
+const unEmpleado = (marcas, jornadaSemanal = null) =>
+  new Map([['E1', { cedula: '111', nombre: 'Ana', sede: 'Sede', jornadaSemanal, marcas }]]);
+
+await test('día normal: lo que pasa de la jornada es extra, al final del día', () => {
+  // Lunes 08:00–18:00 = 10 h; jornada 7 h → 3 h extra (15:00 a 18:00).
+  const regs = calcularRegistros(
+    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '18:00', 1)]),
+    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
+  );
+  assert.equal(regs.length, 1);
+  assert.equal(regs[0].tipoHora, 'HED');
+  assert.equal(regs[0].horas, 3);
+  assert.equal(regs[0].horaInicio, '15:00');
+  assert.equal(regs[0].horaFin, '18:00');
+});
+
+await test('jornada por debajo del límite no genera extra', () => {
+  const regs = calcularRegistros(
+    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '15:00', 1)]),
+    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
+  );
+  assert.equal(regs.length, 0);
+});
+
+await test('turno que CRUZA MEDIANOCHE no produce horas negativas', () => {
+  // Lunes 16:00 → martes 02:00 = 10 h; 3 h extra deben quedar 23:00–02:00.
+  // Antes de la corrección esto daba "-1:00" (bug de medianoche).
+  const regs = calcularRegistros(
+    unEmpleado([marca('entrada', '2026-08-03', '16:00', 1), marca('salida', '2026-08-04', '02:00', 2, 0)]),
+    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
+  );
+  assert.equal(regs.length, 1);
+  assert.equal(regs[0].horas, 3);
+  assert.equal(regs[0].horaInicio, '23:00', 'el inicio debe ser una hora válida, no negativa');
+  assert.equal(regs[0].horaFin, '02:00');
+  assert.match(regs[0].horaInicio, /^\d{2}:\d{2}$/);
+});
+
+await test('domingo: todo lo trabajado es extra dominical (HEDD)', () => {
+  const regs = calcularRegistros(
+    unEmpleado([marca('entrada', '2026-08-02', '08:00', 0), marca('salida', '2026-08-02', '12:00', 0)]),
+    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
+  );
+  assert.equal(regs.length, 1);
+  assert.equal(regs[0].tipoHora, 'HEDD');
+  assert.equal(regs[0].horas, 4);
+});
+
+await test('festivo entre semana se trata como dominical', () => {
+  const regs = calcularRegistros(
+    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '12:00', 1)]),
+    { festivos: new Set(['2026-08-03']), vigencias: VIGENCIAS },
+  );
+  assert.equal(regs.length, 1);
+  assert.equal(regs[0].tipoHora, 'HEDD');
+});
+
+await test('jornada especial: la extra empieza donde termina lo pactado', () => {
+  // Martes con 7,5 h pactadas; trabaja 8 h → 0,5 h extra (no 1 h).
+  const regs = calcularRegistros(
+    unEmpleado(
+      [marca('entrada', '2026-08-04', '08:00', 2), marca('salida', '2026-08-04', '16:00', 2)],
+      [7.5, 7.5, 7.5, 7.5, 7.5, 4.5],
+    ),
+    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
+  );
+  assert.equal(regs.length, 1);
+  assert.equal(regs[0].horas, 0.5);
+  assert.equal(regs[0].horaInicio, '15:30');
+});
+
+await test('la referencia externa es estable y única por tramo', () => {
+  const hacer = () => calcularRegistros(
+    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '18:00', 1)]),
+    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
+  )[0].referenciaExterna;
+  assert.equal(hacer(), hacer(), 'el mismo tramo debe dar SIEMPRE la misma referencia');
+  assert.equal(hacer(), 'arrive-111-20260803-1500-1800-HED');
+});
+
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);
