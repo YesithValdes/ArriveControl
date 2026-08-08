@@ -42,6 +42,7 @@ function Icon({ name, size = 17 }) {
     database: <><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></>,
     trash: <><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></>,
     download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></>,
+    users: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>,
     chevronLeft: <polyline points="15 18 9 12 15 6" />,
     chevronRight: <polyline points="9 18 15 12 9 6" />,
   };
@@ -132,7 +133,7 @@ function pairedHours(events, nowMs) {
 // esta lista para que un valor inventado no deje el panel en blanco.
 const TABS_VALIDAS = ['dashboard', 'anomalias', 'equipo', 'empleados', 'reportes', 'historial', 'ajustes'];
 
-export default function AdminPanel() {
+export default function AdminPanel({ sesion = null, permisos = {} }) {
   // Permite enlazar desde fuera a una pestaña concreta —p. ej. el gestor de
   // nómina apunta a /admin?tab=equipo para abrir la tabla de asistencia.
   const searchParams = useSearchParams();
@@ -167,6 +168,43 @@ export default function AdminPanel() {
   const [newSede, setNewSede] = useState({ name: '', lat: '', lon: '', radius: '50' });
   const [editSede, setEditSede] = useState(null); // { original, name, lat, lon, radius }
   const [newSedeOpen, setNewSedeOpen] = useState(false); // drawer de "Nueva sede"
+
+  // Usuarios de ArriveControl (solo visible para el rol `dueno`).
+  const [usuarios, setUsuarios] = useState([]);
+  const [rolesDisponibles, setRolesDisponibles] = useState([]);
+  const [usrError, setUsrError] = useState(null);
+  const [nuevoUsr, setNuevoUsr] = useState(null); // { nombre, email, password, rol, sede_id }
+  const cargarUsuarios = () => {
+    fetch('/api/usuarios')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) { setUsuarios(d.usuarios); setRolesDisponibles(d.roles); setUsrError(null); }
+        else setUsrError(d.error);
+      })
+      .catch((e) => setUsrError(e.message));
+  };
+  const crearUsuario = async () => {
+    const r = await fetch('/api/usuarios', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nuevoUsr),
+    });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
+    showToast(`${nuevoUsr.nombre} agregado`);
+    setNuevoUsr(null);
+    cargarUsuarios();
+  };
+  const actualizarUsuario = async (u, cambios) => {
+    const r = await fetch(`/api/usuarios/${u.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rol: u.rol, activo: u.activo, sede_id: u.sedeId, ...cambios }),
+    });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
+    cargarUsuarios();
+  };
 
   // Dispositivos del kiosco activados (para listar y revocar).
   const [dispositivos, setDispositivos] = useState([]);
@@ -961,6 +999,12 @@ export default function AdminPanel() {
                 <span className="icon"><Icon name="monitor" size={19} /></span>
                 <span><b>Dispositivos del kiosco</b><br /><small>Tablets/celulares activados para marcar — revocar el acceso de un aparato perdido.</small></span>
               </button>
+              {permisos.usuarios && (
+                <button className="tool" onClick={() => { setTab('cfg-usuarios'); cargarUsuarios(); }}>
+                  <span className="icon"><Icon name="users" size={19} /></span>
+                  <span><b>Usuarios y roles</b><br /><small>Quién entra al panel y qué puede hacer: dueño, supervisor de sede o consulta.</small></span>
+                </button>
+              )}
               <Link className="tool" href="/">
                 <span className="icon"><Icon name="monitor" size={19} /></span>
                 <span><b>Ir al kiosco</b><br /><small>Pantalla de marcación facial (1:N).</small></span>
@@ -969,6 +1013,121 @@ export default function AdminPanel() {
                 <span className="icon"><Icon name="pin" size={19} /></span>
                 <span><b>Diagnóstico GPS</b><br /><small>Precisión y distancia a cada sede desde este dispositivo.</small></span>
               </Link>
+            </div>
+          </section>
+        )}
+
+        {/* ── Sub-pantalla: Usuarios y roles ── */}
+        {tab === 'cfg-usuarios' && (
+          <section className="card grow">
+            <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
+            <h2>Usuarios y roles <span className="muted-count">{usuarios.length}</span></h2>
+            <p className="hint">
+              Quién puede entrar al panel y qué puede hacer. Los empleados que marcan en el kiosco
+              no necesitan usuario: se identifican con su rostro.
+            </p>
+
+            <div className="cfg-group">
+              {rolesDisponibles.map((r) => (
+                <p key={r.clave} className="cfg-note" style={{ margin: '2px 0' }}>
+                  <b>{r.etiqueta}:</b> {r.descripcion}
+                </p>
+              ))}
+            </div>
+
+            {usrError && <p className="empty">⚠ {usrError}</p>}
+            <div className="att-controls">
+              {!nuevoUsr && (
+                <button className="btn primary" onClick={() => setNuevoUsr({ nombre: '', email: '', password: '', rol: 'consulta', sede_id: '' })}>
+                  Nuevo usuario
+                </button>
+              )}
+            </div>
+
+            {nuevoUsr && (
+              <div className="ev-form">
+                <h4>Nuevo usuario</h4>
+                <div className="ev-form-row">
+                  <label>Nombre
+                    <input type="text" value={nuevoUsr.nombre} onChange={(e) => setNuevoUsr({ ...nuevoUsr, nombre: e.target.value })} />
+                  </label>
+                  <label>Correo
+                    <input type="email" value={nuevoUsr.email} onChange={(e) => setNuevoUsr({ ...nuevoUsr, email: e.target.value })} />
+                  </label>
+                </div>
+                <div className="ev-form-row">
+                  <label>Contraseña inicial
+                    <input type="text" value={nuevoUsr.password} placeholder="mínimo 8 caracteres"
+                      onChange={(e) => setNuevoUsr({ ...nuevoUsr, password: e.target.value })} />
+                  </label>
+                  <label>Rol
+                    <select value={nuevoUsr.rol} onChange={(e) => setNuevoUsr({ ...nuevoUsr, rol: e.target.value })}>
+                      {rolesDisponibles.map((r) => <option key={r.clave} value={r.clave}>{r.etiqueta}</option>)}
+                    </select>
+                  </label>
+                  {nuevoUsr.rol === 'supervisor' && (
+                    <label>Sede
+                      <select value={nuevoUsr.sede_id} onChange={(e) => setNuevoUsr({ ...nuevoUsr, sede_id: e.target.value })}>
+                        <option value="">— Elegir —</option>
+                        {sedes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </label>
+                  )}
+                </div>
+                <small className="hint">La contraseña se la entregas tú; el usuario puede cambiarla después.</small>
+                <div className="dialog-actions">
+                  <button className="btn" onClick={() => setNuevoUsr(null)}>Cancelar</button>
+                  <button className="btn primary"
+                    disabled={!nuevoUsr.nombre.trim() || !nuevoUsr.email.trim() || nuevoUsr.password.length < 8}
+                    onClick={crearUsuario}>Crear</button>
+                </div>
+              </div>
+            )}
+
+            <div className="scrollable">
+              {usuarios.length === 0 && !usrError && <p className="empty">Aún no hay usuarios.</p>}
+              {usuarios.length > 0 && (
+                <div className="att-tablewrap">
+                  <table className="att-table">
+                    <thead>
+                      <tr><th>Usuario</th><th>Rol</th><th>Sede</th><th>Estado</th><th>Último acceso</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {usuarios.map((u) => (
+                        <tr key={u.id}>
+                          <td className="att-name">
+                            {u.nombre}
+                            <br /><small style={{ color: 'var(--muted)' }}>{u.email}{u.email === sesion?.email ? ' · tú' : ''}</small>
+                          </td>
+                          <td>
+                            <select value={u.rol} onChange={(e) => actualizarUsuario(u, { rol: e.target.value })}>
+                              {rolesDisponibles.map((r) => <option key={r.clave} value={r.clave}>{r.etiqueta}</option>)}
+                            </select>
+                          </td>
+                          <td>
+                            {u.rol === 'supervisor' ? (
+                              <select value={u.sedeId ?? ''} onChange={(e) => actualizarUsuario(u, { sede_id: e.target.value })}>
+                                <option value="">— Elegir —</option>
+                                {sedes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                              </select>
+                            ) : 'Todas'}
+                          </td>
+                          <td>{u.activo ? '🟢 activo' : '⛔ inactivo'}</td>
+                          <td>{u.ultimoAcceso ? fmtTs(u.ultimoAcceso) : 'nunca'}</td>
+                          <td>
+                            {u.email !== sesion?.email && (
+                              <button className={`btn small${u.activo ? ' danger-btn' : ''}`}
+                                onClick={() => actualizarUsuario(u, { activo: !u.activo })}>
+                                {u.activo ? 'Desactivar' : 'Activar'}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </section>
         )}

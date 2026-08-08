@@ -17,7 +17,7 @@ import { estadoAcceso } from '../../../lib/sesion'
 export const runtime = 'nodejs'
 
 export async function GET(req) {
-  const { estado } = await estadoAcceso('CREAR')
+  const { estado } = await estadoAcceso('empleados')
   if (estado !== 'OK') {
     return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
   }

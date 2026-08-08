@@ -10,7 +10,7 @@ import { estadoAcceso } from '../../../../lib/sesion'
 export const runtime = 'nodejs'
 
 export async function DELETE(req, { params }) {
-  const { estado } = await estadoAcceso('ELIMINAR')
+  const { estado } = await estadoAcceso('config')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
   const { id } = await params
   const ok = await revocarDispositivo(id)

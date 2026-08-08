@@ -25,7 +25,7 @@ export async function GET(req) {
     const conClaveEnv = !!claveEnv && claveEnviada === claveEnv
     const dispositivo = claveEnviada && !conClaveEnv ? await dispositivoDeLaPeticion(req) : null
     if (!conClaveEnv && !dispositivo && (process.env.NODE_ENV === 'production' || claveEnv)) {
-      const { estado } = await estadoAcceso('VER')
+      const { estado } = await estadoAcceso('ver')
       if (estado !== 'OK') {
         return NextResponse.json(
           { ok: false, error: 'DISPOSITIVO_NO_ACTIVADO', detalle: 'Solo un dispositivo activado puede descargar el roster facial.' },
@@ -46,7 +46,7 @@ export async function GET(req) {
     return NextResponse.json({ ok: true, empleados: rows })
   }
 
-  const { estado } = await estadoAcceso('VER')
+  const { estado } = await estadoAcceso('ver')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { searchParams } = new URL(req.url)
@@ -68,7 +68,7 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
-  const { estado } = await estadoAcceso('CREAR')
+  const { estado } = await estadoAcceso('empleados')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso para registrar empleados.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   let c

@@ -9,7 +9,7 @@ import { estadoAcceso } from '../../../lib/sesion'
 export const runtime = 'nodejs'
 
 export async function GET() {
-  const { estado } = await estadoAcceso('VER')
+  const { estado } = await estadoAcceso('ver')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { rows } = await pool.query(

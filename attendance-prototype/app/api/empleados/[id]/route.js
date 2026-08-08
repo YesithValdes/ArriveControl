@@ -27,7 +27,7 @@ const jornadaValida = (v) =>
   v === null || (Array.isArray(v) && v.length === 6 && v.every((h) => typeof h === 'number' && h >= 0 && h <= 12))
 
 export async function PATCH(req, { params }) {
-  const { estado } = await estadoAcceso('EDITAR')
+  const { estado } = await estadoAcceso('empleados')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params
@@ -66,7 +66,7 @@ export async function PATCH(req, { params }) {
 }
 
 export async function DELETE(req, { params }) {
-  const { estado } = await estadoAcceso('ELIMINAR')
+  const { estado } = await estadoAcceso('empleados')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params

@@ -16,7 +16,7 @@ export const runtime = 'nodejs'
 const urlPublicaGestor = () => process.env.GESTOR_PUBLIC_URL || process.env.GESTOR_URL || 'http://localhost:3000'
 
 export async function GET() {
-  const { estado } = await estadoAcceso('VER')
+  const { estado } = await estadoAcceso('ver')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { rows } = await pool.query(`select gracia_min from asistencia.config_laboral where id`)
@@ -49,7 +49,7 @@ export async function GET() {
 }
 
 export async function PATCH(req) {
-  const { estado } = await estadoAcceso('EDITAR')
+  const { estado } = await estadoAcceso('config')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   let c

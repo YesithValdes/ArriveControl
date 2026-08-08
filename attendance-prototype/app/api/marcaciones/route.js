@@ -31,7 +31,7 @@ export async function POST(req) {
   const conClaveEnv = !!claveEnv && claveEnviada === claveEnv
   const dispositivo = claveEnviada && !conClaveEnv ? await dispositivoDeLaPeticion(req) : null
   if (!conClaveEnv && !dispositivo && (process.env.NODE_ENV === 'production' || claveEnv)) {
-    const { estado } = await estadoAcceso('VER')
+    const { estado } = await estadoAcceso('ver')
     if (estado !== 'OK') {
       return NextResponse.json(
         { ok: false, error: 'DISPOSITIVO_NO_ACTIVADO', detalle: 'Este dispositivo no está activado. Actívalo desde la pantalla del kiosco con una sesión de administrador.' },
@@ -61,7 +61,7 @@ export async function POST(req) {
 }
 
 export async function GET(req) {
-  const { estado } = await estadoAcceso('VER')
+  const { estado } = await estadoAcceso('ver')
   if (estado !== 'OK') {
     return NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
   }

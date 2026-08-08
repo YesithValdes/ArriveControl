@@ -34,7 +34,7 @@ export async function GET(req) {
     if (enviada) {
       return NextResponse.json({ ok: false, error: 'Clave de API inválida.' }, { status: 401 })
     }
-    const { estado } = await estadoAcceso('VER')
+    const { estado } = await estadoAcceso('ver')
     if (estado !== 'OK') {
       return NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
     }
