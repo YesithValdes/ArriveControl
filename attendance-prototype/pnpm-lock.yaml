@@ -26,6 +26,9 @@ importers:
       better-auth:
         specifier: ^1.6.17
         version: 1.6.25(next@15.5.22(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      colombian-holidays:
+        specifier: ^5.0.11
+        version: 5.0.11
       next:
         specifier: ^15.3.0
         version: 15.5.22(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -543,6 +546,9 @@ packages:
   client-only@0.0.1:
     resolution: {integrity: sha512-IV3Ou0jSMzZrd3pZ48nLkT9DA7Ag1pnPzaiQhpW7c3RbcqqzvzzVu+L8gfqMp/8IM2MQtSiqaCxrrcfu8I8rMA==}
 
+  colombian-holidays@5.0.11:
+    resolution: {integrity: sha512-U1RVKay4zAh5Jb9BImwlIoPEWoN1rEz5hAlzjvp3BW33LxXCqmWqbQZD1WGXXo3ZnFFD7hI/4IZ/ZIz9KbhLvA==}
+
   color-convert@2.0.1:
     resolution: {integrity: sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ==}
     engines: {node: '>=7.0.0'}
@@ -708,6 +714,9 @@ packages:
 
   package-json-from-dist@1.0.1:
     resolution: {integrity: sha512-UEZIS3/by4OC8vL3P2dTXRETpebLI2NiI5vIrjaD/5UtrkFX/tNbwjTSRAGC/+7CAo2pIcBaRgWmcBBHcsaCIw==}
+
+  pascua@3.0.8:
+    resolution: {integrity: sha512-tQirte1SxdxvrtO62T8WoSlpCSGnWCncUj0TU38ZxDxA1wQGANT5GXEWrE9oG2JfUuTbMJOTAyD9Lx8zj2+InA==}
 
   path-key@3.1.1:
     resolution: {integrity: sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==}
@@ -1357,6 +1366,10 @@ snapshots:
 
   client-only@0.0.1: {}
 
+  colombian-holidays@5.0.11:
+    dependencies:
+      pascua: 3.0.8
+
   color-convert@2.0.1:
     dependencies:
       color-name: 1.1.4
@@ -1507,6 +1520,8 @@ snapshots:
       is-wsl: 2.2.0
 
   package-json-from-dist@1.0.1: {}
+
+  pascua@3.0.8: {}
 
   path-key@3.1.1: {}
 
