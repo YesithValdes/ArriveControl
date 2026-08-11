@@ -36,20 +36,20 @@ export default function EmployeeRegister() {
 
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState('Cargando el modelo facial…');
-  // Identidad: se ELIGE desde el gestor de empleados (fuente única), no se digita.
-  const [busqueda, setBusqueda] = useState('');
-  const [resultados, setResultados] = useState([]);
-  const [buscando, setBuscando] = useState(false);
-  const [colaborador, setColaborador] = useState(null); // { id, nombres, apellidos, cedula, sede_gestor }
+  // Identidad: se digita aquí. ArriveControl es un producto independiente y
+  // esta es su fuente de verdad sobre quién trabaja en la empresa.
+  const [nombre, setNombre] = useState('');
+  const [cedula, setCedula] = useState('');
   // Horario OPCIONAL: vacío por defecto. Sin él, el sistema igual registra
   // por alternancia (entrada→salida) y calcula las horas reales.
   const [expectedEntry, setExpectedEntry] = useState('');
   const [expectedExit, setExpectedExit] = useState('');
   const [breakMinutes, setBreakMinutes] = useState('');
+  // Opcional a propósito: dar de alta a alguien no debe exigir saber su sueldo.
+  const [salarioMensual, setSalarioMensual] = useState('');
   const [sedes, setSedes] = useState([]);
   const [sede, setSede] = useState('');
   const [photo, setPhoto] = useState(null);      // { previewUrl, descriptor, dataUrl } | null
-  const [subirFotoGestor, setSubirFotoGestor] = useState(false); // consentimiento explícito
   const [analyzing, setAnalyzing] = useState(false);
   const [people, setPeople] = useState([]);
   const [toast, setToast] = useState(null);
@@ -84,7 +84,7 @@ export default function EmployeeRegister() {
         if (cancelled) return;
         faceapiRef.current = faceapi;
         setReady(true);
-        setStatus('Completa los datos y sube la foto del empleado.');
+        setStatus('Completa los datos y sube la foto.');
       } catch (err) {
         setStatus(`No se pudo cargar el modelo: ${err?.message || err}`);
       }
@@ -93,26 +93,6 @@ export default function EmployeeRegister() {
   }, []);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2800); };
-
-  // Búsqueda en el gestor con debounce corto: escribir 2+ letras consulta.
-  useEffect(() => {
-    if (colaborador) return; // ya eligió: no buscar más
-    const q = busqueda.trim();
-    if (q.length < 2) { setResultados([]); return; }
-    const id = setTimeout(async () => {
-      setBuscando(true);
-      try {
-        const r = await fetch(`/api/colaboradores-gestor?buscar=${encodeURIComponent(q)}`);
-        const d = await r.json();
-        setResultados(d.ok ? d.colaboradores : []);
-      } catch {
-        setResultados([]);
-      } finally {
-        setBuscando(false);
-      }
-    }, 300);
-    return () => clearTimeout(id);
-  }, [busqueda, colaborador]);
 
   // Analiza la foto apenas se selecciona: detecta el rostro y extrae el vector.
   const handlePhoto = async (e) => {
@@ -132,27 +112,15 @@ export default function EmployeeRegister() {
         .withFaceDescriptor();
 
       if (!det) {
-        setStatus('❌ No se detectó un rostro claro. Usa una foto frontal, con buena luz y sin accesorios que tapen la cara.');
+        setStatus('❌ Sin rostro claro. Usa una foto frontal y con buena luz.');
         setAnalyzing(false);
         return;
       }
-      // Miniatura para la foto de perfil del gestor (máx. 800 px, JPEG):
-      // reduce una foto de celular de varios MB a unas decenas de KB.
-      const dataUrl = await new Promise((resolve) => {
-        const imgEl = new Image();
-        imgEl.onload = () => {
-          const escala = Math.min(1, 800 / Math.max(imgEl.width, imgEl.height));
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.round(imgEl.width * escala);
-          canvas.height = Math.round(imgEl.height * escala);
-          canvas.getContext('2d').drawImage(imgEl, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.85));
-        };
-        imgEl.onerror = () => resolve(null);
-        imgEl.src = URL.createObjectURL(file);
-      });
-      setPhoto({ previewUrl: URL.createObjectURL(file), descriptor: Array.from(det.descriptor), dataUrl });
-      setStatus('✅ Rostro detectado. Verifica los datos y registra.');
+      // La foto NO se guarda en ninguna parte: de ella solo sale el vector de
+      // 128 floats. La previsualización vive en memoria del navegador y se
+      // libera al terminar.
+      setPhoto({ previewUrl: URL.createObjectURL(file), descriptor: Array.from(det.descriptor) });
+      setStatus('✅ Rostro detectado.');
     } catch (err) {
       setStatus(`❌ Error procesando la foto: ${err?.message || err}`);
     } finally {
@@ -160,49 +128,35 @@ export default function EmployeeRegister() {
     }
   };
 
-  const canRegister = ready && !analyzing && colaborador && photo;
+  // La cédula se guarda solo con dígitos: es la que cruza con los reportes de
+  // horas, y «1.085.312» y «1085312» tienen que ser la misma persona.
+  const cedulaLimpia = cedula.replace(/\D/g, '');
+  const canRegister = ready && !analyzing && nombre.trim() && cedulaLimpia.length >= 5 && photo;
 
   const handleRegister = async () => {
-    const result = await addPerson(`${colaborador.nombres} ${colaborador.apellidos}`, photo.descriptor, {
-      colaboradorId: colaborador.id,
-      cedula: colaborador.cedula,
+    const result = await addPerson(nombre.trim(), photo.descriptor, {
+      cedula: cedulaLimpia,
       sede, expectedEntry, expectedExit,
       breakMinutes: breakMinutes === '' ? null : Number(breakMinutes),
+      // Vacío o 0 = sin salario registrado, no un sueldo de cero.
+      salarioMensual: Number(salarioMensual) > 0 ? Number(salarioMensual) : null,
     });
     if (result.error) {
       setStatus(`❌ ${result.error}`);
       return;
     }
-    // Foto de perfil para el gestor (opcional, con consentimiento): un extra
-    // que nunca bloquea el alta — si falla, solo se informa.
-    if (subirFotoGestor && !colaborador.tiene_foto && photo.dataUrl) {
-      try {
-        const r = await fetch('/api/foto-gestor', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ colaborador_id: colaborador.id, imagen: photo.dataUrl }),
-        });
-        const d = await r.json();
-        showToast(d.ok
-          ? `${result.name} registrado; foto subida al gestor`
-          : `${result.name} registrado (foto no subida: ${d.error})`);
-      } catch {
-        showToast(`${result.name} registrado (la foto al gestor no se pudo subir)`);
-      }
-    } else {
-      showToast(`${result.name} registrado correctamente`);
-    }
-    setColaborador(null);
-    setBusqueda('');
-    setSubirFotoGestor(false);
+    showToast(`${result.name} registrado correctamente`);
+    setNombre('');
+    setCedula('');
+    setSalarioMensual('');
     if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
     setPhoto(null);
-    setStatus('Empleado registrado. Puedes agregar otro.');
+    setStatus('Registrado. Puedes agregar otro.');
     refresh();
   };
 
   const handleDelete = async (p) => {
-    if (!confirm(`¿Eliminar a ${p.name}? Ya no podrá marcar asistencia en el kiosco.`)) return;
+    if (!confirm(`¿Eliminar a ${p.name}? Dejará de poder marcar.`)) return;
     try {
       await removePerson(p.id);
       refresh();
@@ -228,39 +182,24 @@ export default function EmployeeRegister() {
 
       <section className="card">
         <div className="field">
-          <label htmlFor="r-buscar">Colaborador (desde el gestor de empleados)</label>
-          {!colaborador ? (
-            <>
-              <input id="r-buscar" type="text" placeholder="Busca por nombre o cédula…" value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)} autoComplete="off" />
-              {buscando && <small className="field-hint">Buscando…</small>}
-              {!buscando && busqueda.trim().length >= 2 && resultados.length === 0 && (
-                <small className="field-hint">
-                  Sin resultados. La persona debe existir como colaborador ACTIVO en el gestor de empleados;
-                  créala allá primero (con su cédula correcta) y vuelve aquí.
-                </small>
-              )}
-              {resultados.length > 0 && (
-                <div className="search-results">
-                  {resultados.map((r) => (
-                    <button key={r.id} type="button" className="search-item" disabled={r.ya_registrado}
-                      onClick={() => { setColaborador(r); setResultados([]); }}>
-                      <b>{r.nombres} {r.apellidos}</b>
-                      <small>C.C. {r.cedula} · {r.sede_gestor}{r.ya_registrado ? ' · ya registrado en asistencia' : ''}</small>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="selected-colab">
-              <span className="pinfo">
-                <b>{colaborador.nombres} {colaborador.apellidos}</b>
-                <small>C.C. {colaborador.cedula} · {colaborador.sede_gestor} · datos del gestor (solo lectura)</small>
-              </span>
-              <button className="btn" type="button" onClick={() => { setColaborador(null); setBusqueda(''); }}>Cambiar</button>
-            </div>
-          )}
+          <label htmlFor="r-nombre">Nombre completo</label>
+          <input
+            id="r-nombre" type="text" placeholder="Ana María Gómez" value={nombre}
+            onChange={(e) => setNombre(e.target.value)} autoComplete="off"
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="r-cedula">Cédula</label>
+          <input
+            id="r-cedula" type="text" inputMode="numeric" placeholder="1085312" value={cedula}
+            onChange={(e) => setCedula(e.target.value)} autoComplete="off"
+          />
+          <small className="field-hint">
+            {cedulaLimpia.length > 0 && cedulaLimpia.length < 5
+              ? 'Muy corta: deben ser al menos 5 dígitos.'
+              : 'Es la que identifica a la persona en los reportes de horas. Los puntos se ignoran.'}
+          </small>
         </div>
 
         <div className="field">
@@ -270,7 +209,7 @@ export default function EmployeeRegister() {
               <option key={o.name} value={o.name}>{o.name}</option>
             ))}
           </select>
-          <small className="field-hint">El empleado solo podrá fichar por GPS dentro del radio de SU sede.</small>
+          <small className="field-hint">Solo podrá fichar dentro del radio de su sede.</small>
         </div>
 
         <div className="field">
@@ -289,13 +228,22 @@ export default function EmployeeRegister() {
           </div>
           <small className="field-hint">
             {expectedEntry && expectedExit ? (
-              <>Jornada esperada: <strong>{fmtExpected(expectedEntry, expectedExit, breakMinutes)}</strong> al día.
-              Se avisará si llega muy tarde o sale mucho antes; alargarse no genera alerta (cuenta como horas extra).</>
+              <><strong>{fmtExpected(expectedEntry, expectedExit, breakMinutes)}</strong> al día.</>
             ) : (
-              <>Déjalo vacío si su horario varía. Las horas se calculan igual sumando cada entrada y salida
-              marcada — si marca su almuerzo, ese tiempo queda descontado solo.</>
+              <>Déjalo vacío si su horario varía.</>
             )}
           </small>
+        </div>
+
+        <div className="field">
+          <label htmlFor="reg-salario">Salario mensual <span className="opcional">opcional</span></label>
+          <input
+            id="reg-salario" type="number" min="0" step="1000" inputMode="numeric"
+            placeholder="Sin registrar"
+            value={salarioMensual}
+            onChange={(e) => setSalarioMensual(e.target.value)}
+          />
+          <small className="field-hint">Sirve para valorizar sus horas extra en pesos.</small>
         </div>
 
         <div className="field">
@@ -304,29 +252,20 @@ export default function EmployeeRegister() {
           <input ref={fileRef} type="file" accept="image/*" hidden onChange={handlePhoto} />
           {!photo ? (
             <button className="photo-drop" onClick={() => fileRef.current?.click()} disabled={!ready || analyzing}>
-              {analyzing ? '⏳ Analizando…' : <>📷<br /><b>Tomar o subir foto</b><br /><small>Frontal, buena luz, rostro despejado (tipo carnet)</small></>}
+              {analyzing ? '⏳ Analizando…' : <>📷<br /><b>Tomar o subir foto</b><br /><small>Frontal, tipo carnet</small></>}
             </button>
           ) : (
             <div className="preview">
               {/* Vista previa local; la imagen NO se guarda en el sistema */}
-              <img src={photo.previewUrl} alt={`Foto de ${colaborador ? `${colaborador.nombres} ${colaborador.apellidos}` : 'empleado'}`} />
+              <img src={photo.previewUrl} alt={`Foto de ${nombre.trim() || 'empleado'}`} />
               <div className="preview-info">
                 <span className="okmark">✅ Rostro detectado</span>
-                <small>Solo se guardará el código facial, no la imagen.</small>
+                <small>Se guarda el código facial, no la imagen.</small>
                 <button className="btn" onClick={() => { URL.revokeObjectURL(photo.previewUrl); setPhoto(null); fileRef.current?.click(); }}>
                   Cambiar foto
                 </button>
               </div>
             </div>
-          )}
-          {photo && colaborador && !colaborador.tiene_foto && (
-            <label className="consent">
-              <input type="checkbox" checked={subirFotoGestor} onChange={(e) => setSubirFotoGestor(e.target.checked)} />
-              <span>
-                Usar esta foto también como <b>foto de perfil en el gestor de empleados</b> (allá no tiene).
-                Marca solo si la persona dio su consentimiento para ese uso.
-              </span>
-            </label>
           )}
         </div>
 
@@ -338,7 +277,7 @@ export default function EmployeeRegister() {
       <section className="card grow">
         <h2>Empleados registrados <span className="count">{people.length}</span></h2>
         <div className="scrollable">
-          {people.length === 0 && <p className="empty">Aún no hay empleados. El primero que registres podrá marcar en el kiosco de inmediato.</p>}
+          {people.length === 0 && <p className="empty">Aún no hay empleados.</p>}
           {people.map((p) => (
             <div className="prow" key={p.id}>
               <span className="avatar">{p.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>

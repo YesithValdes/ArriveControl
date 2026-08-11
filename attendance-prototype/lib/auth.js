@@ -1,22 +1,28 @@
 /**
- * lib/auth.js — Better Auth con las tablas PROPIAS de ArriveControl.
+ * lib/auth.js — Better Auth contra el esquema COMPARTIDO `control`.
  *
- * Antes esta app validaba contra los usuarios del gestor de empleados. Ya no:
- * tiene sus propios usuarios, sesiones y roles en el esquema `asistencia`, y
- * por eso puede venderse y desplegarse sin el gestor.
+ * La identidad es global, no de una empresa. Tiene que serlo: para saber a qué
+ * empresa pertenece alguien hay que leer su usuario, y para leer su usuario
+ * habría que saber ya en qué esquema buscar. El huevo y la gallina.
  *
- * Cómo encuentra sus tablas: Better Auth usa nombres sin esquema (user,
- * session, account, verification). El pool fija `search_path=asistencia,public`,
- * así que resuelven primero en `asistencia`. Las consultas que necesitan otro
- * esquema lo escriben explícito (public.colaborador).
+ * Cómo encuentra sus tablas: Better Auth las nombra sin esquema (user, session,
+ * account, verification) y este pool fija `search_path=control,public`. Ese
+ * valor se define AL CREAR EL POOL, no por petición — otra razón por la que la
+ * identidad no puede vivir en el esquema de cada empresa.
  *
- * Los usuarios se crean desde Ajustes → Usuarios (no hay registro abierto).
+ * Es un pool aparte del de datos (lib/db.js) a propósito, y las dos
+ * responsabilidades quedan limpias:
+ *   · este pool  → `control`, fijo, nunca cambia
+ *   · lib/db.js  → el esquema de la empresa, distinto en cada petición
  */
 import { betterAuth } from 'better-auth'
 import { admin } from 'better-auth/plugins'
 import { nextCookies } from 'better-auth/next-js'
 import { Pool } from 'pg'
-import { uuidv7 } from './uuidv7'
+// Con extensión: Next resuelve sin ella, pero los scripts de db/ corren en
+// node "pelado" (ESM) y ahí la extensión es obligatoria.
+import { uuidv7 } from './uuidv7.js'
+import { asignarEmpresa } from './registro.js'
 
 if (!process.env.DATABASE_URL) {
   throw new Error('Falta DATABASE_URL.')
@@ -32,7 +38,7 @@ export const pool =
   globalParaPg.__arriveControlAuthPool ??
   new Pool({
     connectionString: process.env.DATABASE_URL,
-    options: '-c search_path=asistencia,public',
+    options: '-c search_path=control,public',
   })
 if (process.env.NODE_ENV !== 'production') globalParaPg.__arriveControlAuthPool = pool
 
@@ -41,9 +47,45 @@ export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
   trustedOrigins: process.env.BETTER_AUTH_TRUSTED_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean),
   database: pool,
+  // ── Cómo se entra ────────────────────────────────────────────────────
+  //
+  // Google es el único método en producción. No es solo comodidad: con una
+  // cuenta por persona, cada corrección de asistencia queda firmada por quien
+  // la hizo, y sacar a alguien de la empresa es desactivar SU usuario y no
+  // rotar una contraseña que todos conocían.
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID ?? '',
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+    },
+  },
+  // Correo y contraseña solo en DESARROLLO: sin esto haría falta conexión a
+  // Google (y credenciales de OAuth) para poder abrir el panel en local.
   emailAndPassword: {
-    enabled: true,
-    disableSignUp: true, // el alta la hace un dueño desde Ajustes → Usuarios
+    enabled: process.env.NODE_ENV !== 'production',
+    disableSignUp: true, // ni siquiera en local se crean cuentas por aquí
+  },
+
+  // El registro es SELF-SERVICE: quien entra por primera vez sale con empresa.
+  // Se hace en este hook y no en la pantalla de login porque es el único punto
+  // por el que pasan todos los caminos de alta (Google hoy, otro proveedor
+  // mañana), y porque debe ocurrir en el servidor: la empresa y su esquema no
+  // pueden depender de que el navegador complete una segunda petición.
+  databaseHooks: {
+    user: {
+      create: {
+        after: async (user) => {
+          try {
+            await asignarEmpresa(user)
+          } catch (e) {
+            // Un fallo aquí deja al usuario SIN empresa, no a medias: el panel
+            // lo recibe con SIN_EMPRESA y puede reintentar. Peor sería tumbar
+            // el inicio de sesión y dejarlo sin poder entrar nunca.
+            console.error('Registro: no se pudo asignar empresa:', e.message)
+          }
+        },
+      },
+    },
   },
   // El esquema usa snake_case; Better Auth asume camelCase.
   user: {
@@ -55,9 +97,17 @@ export const auth = betterAuth({
       banExpires: 'ban_expires',
     },
     additionalFields: {
-      rol: { type: 'string', required: false, input: true },
-      sedeId: { type: 'string', required: false, input: true, fieldName: 'sede_id' },
+      // `input: false` en rol: es el servidor quien lo decide (registro.js o el
+      // script del superadmin). Si fuera de entrada, el propio formulario de
+      // registro podría pedir rol='superadmin' y concedérselo.
+      rol: { type: 'string', required: false, input: false },
       activo: { type: 'boolean', required: false, input: true },
+      // A qué empresa pertenece. NULL mientras no tenga ninguna: con ese valor
+      // no autoriza nada, y es lo que hace seguro el registro abierto.
+      // También `input: false`, y por el mismo motivo: si el cliente pudiera
+      // enviarlo, cualquiera se registraría diciendo pertenecer a la empresa
+      // de otro. Lo asigna registro.js, en el servidor.
+      empresaId: { type: 'string', required: false, input: false, fieldName: 'empresa_id' },
     },
   },
   session: {

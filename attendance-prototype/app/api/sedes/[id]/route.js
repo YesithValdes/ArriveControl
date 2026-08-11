@@ -6,13 +6,13 @@
  *          (FK on delete set null).
  */
 import { NextResponse } from 'next/server'
-import { pool } from '../../../../lib/db.js'
+import { conEmpresa } from '../../../../lib/db.js'
 import { estadoAcceso } from '../../../../lib/sesion'
 
 export const runtime = 'nodejs'
 
 export async function PATCH(req, { params }) {
-  const { estado } = await estadoAcceso('config')
+  const { estado, esquema } = await estadoAcceso('config')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params
@@ -37,11 +37,11 @@ export async function PATCH(req, { params }) {
 
   args.push(id)
   try {
-    const { rows } = await pool.query(
-      `update asistencia.sedes set ${sets.join(', ')} where id = $${args.length}
+    const { rows } = await conEmpresa(esquema, (db) => db.query(
+      `update sedes set ${sets.join(', ')} where id = $${args.length}
        returning id, nombre, lat, lon, radio_m`,
       args,
-    )
+    ))
     if (rows.length === 0) return NextResponse.json({ ok: false, error: 'Sede no encontrada.' }, { status: 404 })
     return NextResponse.json({ ok: true, sede: rows[0] })
   } catch (e) {
@@ -51,14 +51,14 @@ export async function PATCH(req, { params }) {
 }
 
 export async function DELETE(req, { params }) {
-  const { estado } = await estadoAcceso('config')
+  const { estado, esquema } = await estadoAcceso('config')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params
-  const total = (await pool.query(`select count(*)::int as n from asistencia.sedes`)).rows[0].n
+  const total = (await conEmpresa(esquema, (db) => db.query(`select count(*)::int as n from sedes`))).rows[0].n
   if (total <= 1) return NextResponse.json({ ok: false, error: 'Debe existir al menos una sede.' }, { status: 400 })
 
-  const { rows } = await pool.query(`delete from asistencia.sedes where id = $1 returning id`, [id])
+  const { rows } = await conEmpresa(esquema, (db) => db.query(`delete from sedes where id = $1 returning id`, [id]))
   if (rows.length === 0) return NextResponse.json({ ok: false, error: 'Sede no encontrada.' }, { status: 404 })
   return NextResponse.json({ ok: true })
 }

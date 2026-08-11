@@ -6,12 +6,12 @@
  */
 import { NextResponse } from 'next/server'
 import { activarDispositivo, listarDispositivos } from '../../../lib/dispositivos.js'
-import { estadoAcceso } from '../../../lib/sesion'
+import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../lib/sesion'
 
 export const runtime = 'nodejs'
 
 export async function POST(req) {
-  const { estado, usuario } = await estadoAcceso('config')
+  const { estado, usuario, empresa } = await estadoAcceso('config')
   if (estado !== 'OK') {
     return NextResponse.json(
       { ok: false, error: estado === 'SIN_SESION' ? 'Inicia sesión como administrador para activar este dispositivo.' : 'No tienes permiso para activar dispositivos.' },
@@ -24,12 +24,15 @@ export async function POST(req) {
   const nombre = String(c?.nombre ?? '').trim()
   if (!nombre) return NextResponse.json({ ok: false, error: 'Ponle un nombre al dispositivo (p. ej. "Tablet recepción").' }, { status: 400 })
 
-  const d = await activarDispositivo({ nombre, sedeId: c?.sede_id ?? null, activadoPor: usuario.email })
+  const d = await activarDispositivo({ empresa, nombre, sedeId: c?.sede_id ?? null, activadoPor: usuario.email })
+  if (d.error === 'SEDE_NO_ENCONTRADA') {
+    return NextResponse.json({ ok: false, error: 'Esa sede no existe en tu empresa.' }, { status: 400 })
+  }
   return NextResponse.json({ ok: true, dispositivo: d })
 }
 
 export async function GET() {
-  const { estado } = await estadoAcceso('ver')
-  if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
-  return NextResponse.json({ ok: true, dispositivos: await listarDispositivos() })
+  const { estado, empresa } = await estadoAcceso('ver')
+  if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
+  return NextResponse.json({ ok: true, dispositivos: await listarDispositivos(empresa) })
 }

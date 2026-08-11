@@ -4,23 +4,28 @@
  * POST — crea una sede (sesión + CREAR).
  */
 import { NextResponse } from 'next/server'
-import { pool } from '../../../lib/db.js'
-import { estadoAcceso } from '../../../lib/sesion'
+import { conEmpresa } from '../../../lib/db.js'
+import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
 
 export const runtime = 'nodejs'
 
-export async function GET() {
-  // Lectura abierta: el kiosco la necesita sin sesión (ver /api/marcaciones)
-  // y son solo nombres y coordenadas de las sedes.
-  const { rows } = await pool.query(
-    `select id, nombre, lat, lon, radio_m from asistencia.sedes order by nombre`,
-  )
+export async function GET(req) {
+  // El kiosco la consulta SIN sesión, con su clave de dispositivo: de ahí sale
+  // a qué empresa pertenece. Antes bastaba con no pedir nada, porque solo
+  // había una empresa; ahora hay que saber de quién son estas sedes.
+  const ctx = await empresaDeLaPeticion(req)
+  if (!ctx) {
+    return NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: 401 })
+  }
+  const { rows } = await conEmpresa(ctx.esquema, (db) => db.query(
+    `select id, nombre, lat, lon, radio_m from sedes order by nombre`,
+  ))
   return NextResponse.json({ ok: true, sedes: rows })
 }
 
 export async function POST(req) {
-  const { estado } = await estadoAcceso('config')
-  if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
+  const { estado, esquema } = await estadoAcceso('config')
+  if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   let c
   try { c = await req.json() } catch { return NextResponse.json({ ok: false, error: 'JSON inválido.' }, { status: 400 }) }
@@ -32,11 +37,11 @@ export async function POST(req) {
   }
 
   try {
-    const { rows } = await pool.query(
-      `insert into asistencia.sedes (nombre, lat, lon, radio_m) values ($1,$2,$3,$4)
+    const { rows } = await conEmpresa(esquema, (db) => db.query(
+      `insert into sedes (nombre, lat, lon, radio_m) values ($1,$2,$3,$4)
        returning id, nombre, lat, lon, radio_m`,
       [nombre, lat, lon, Number(c?.radio_m) > 0 ? Number(c.radio_m) : 50],
-    )
+    ))
     return NextResponse.json({ ok: true, sede: rows[0] })
   } catch (e) {
     if (e.code === '23505') return NextResponse.json({ ok: false, error: `Ya existe una sede llamada "${nombre}".` }, { status: 409 })

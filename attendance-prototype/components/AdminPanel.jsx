@@ -21,9 +21,18 @@ import {
   deleteEvent,
   NIGHT_WINDOW_MS,
   listPeople, removePerson, updatePerson, expectedDailyHours, jornadaDelDia,
-  getLaborConfig, saveLaborConfig,
+  getLaborConfig, saveLaborConfig, getHorasValorizadas, getEventosRango, marcarHorasPagadas,
   getSedes, addSede, updateSede, removeSede,
 } from '../services/panelStore.js';
+// valorizarRegistro es LA MISMA función que usa el servidor para poner el
+// valor en pesos (lib/nomina.js). El simulador de Ajustes la llama directo:
+// si probara con una fórmula escrita aparte, no estaría probando nada.
+import { TIPOS_HORA, CODIGOS_HORA, valorizarRegistro } from '../lib/tiposHora.js';
+// calcularRegistros es el motor de CLASIFICACIÓN (marcaciones → qué horas son
+// extra y de qué código). El simulador lo llama tal cual, sin base de datos:
+// entra una lista de marcas, sale la lista de tramos.
+import { calcularRegistros } from '../lib/calculoHoras.js';
+import { vigenciasDeHorasSemana } from '../lib/jornada.js';
 import { signOut } from '../lib/auth-client';
 
 /** Iconos de línea (estilo Lucide, inline SVG): heredan el color del texto. */
@@ -111,6 +120,19 @@ const fmtH = (n) => {
 const fmtTs = (iso) =>
   new Date(iso).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) + ', ' + fmt12(iso);
 
+/** Estado de pago de una fila, en palabras. */
+const ETIQUETA_PAGO = { pagado: 'Pagado', parcial: 'Parcial', pendiente: 'Pendiente', na: '—' };
+
+// Pesos colombianos, sin centavos: el peso no los usa y en un reporte de
+// nómina los decimales solo restan confianza.
+const fmtCOP = (n) =>
+  n == null ? '—' : n.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
+
+// Horas con un decimal y coma (7.5 → "7,5 h"). En la valorización se prefiere
+// esto al hh:mm:ss del resto del panel: al lado de un valor en pesos, lo que
+// se quiere leer es "3,5 h × factor", no un cronómetro.
+const fmtHoras = (n) => `${(Math.round(n * 10) / 10).toLocaleString('es-CO')} h`;
+
 /** Suma horas de pares entrada→salida; una entrada abierta cuenta hasta ahora (máx. 12 h). */
 function pairedHours(events, nowMs) {
   let total = 0;
@@ -129,22 +151,29 @@ function pairedHours(events, nowMs) {
   return total;
 }
 
+/** Iniciales para el avatar de la sesión: "Ana María Ruiz" → "AR". */
+const iniciales = (texto) =>
+  texto.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+
+const ROL_ETIQUETA = { empresa: 'Empresa', superadmin: 'Superadministrador' };
+
 // Pestañas que se pueden abrir directamente por URL (?tab=…). Se valida contra
 // esta lista para que un valor inventado no deje el panel en blanco.
-const TABS_VALIDAS = ['dashboard', 'anomalias', 'equipo', 'empleados', 'reportes', 'historial', 'ajustes'];
+const TABS_VALIDAS = ['dashboard', 'anomalias', 'equipo', 'empleados', 'reportes', 'historial', 'ajustes', 'cfg-simulador', 'cfg-empresa'];
 
 export default function AdminPanel({ sesion = null, permisos = {} }) {
-  // Permite enlazar desde fuera a una pestaña concreta —p. ej. el gestor de
+  // Permite enlazar desde fuera a una pestaña concreta —p. ej. un correo que
   // nómina apunta a /admin?tab=equipo para abrir la tabla de asistencia.
   const searchParams = useSearchParams();
   const tabPedida = searchParams.get('tab');
   const [tab, setTab] = useState(TABS_VALIDAS.includes(tabPedida) ? tabPedida : 'dashboard');
   const [collapsed, setCollapsed] = useState(false); // menú lateral escondido (solo PC)
   const [navOpen, setNavOpen] = useState(false); // menú off-canvas abierto (solo móvil)
+  const [sesionAbierta, setSesionAbierta] = useState(false); // detalle de quién entró
   const [sedeFilter, setSedeFilter] = useState('all'); // 'all' | nombre de sede
   const [tick, setTick] = useState(0); // fuerza relectura de localStorage
 
-  // El acceso lo protege la SESIÓN del gestor (app/admin/page.jsx redirige a
+  // El acceso lo protege la SESIÓN (app/admin/page.jsx redirige a
   // /login si no la hay). Aquí ya no existe el PIN de prototipo.
   useEffect(() => {
     setCfg(getLaborConfig()); // hidratar config
@@ -154,12 +183,20 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
   const monthStart = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; };
   const [repFrom, setRepFrom] = useState(monthStart());
   const [repTo, setRepTo] = useState(todayKey());
+  // Columnas de asistencia (sede, días, horas, tardías): apagadas por defecto.
+  // La tabla es sobre horas extra y dinero; lo demás solo se muestra a quien
+  // lo pida, y en el CSV va siempre.
+  const [repColsAsistencia, setRepColsAsistencia] = useState(false);
 
   // Reglamento laboral (jornada legal semanal + gracia de puntualidad).
   const [cfg, setCfg] = useState(getLaborConfig);
+  // Claves que pertenecen a la pantalla de valorización, para que el aviso
+  // diga lo que la persona acaba de tocar y no siempre "Reglamento".
+  const CLAVES_VALORIZACION = ['factores', 'divisorHorasMes', 'nocturnoInicio', 'nocturnoFin'];
   const updateCfg = (partial) => {
     setCfg(saveLaborConfig(partial));
-    showToast('Reglamento actualizado');
+    const esValorizacion = Object.keys(partial).some((k) => CLAVES_VALORIZACION.includes(k));
+    showToast(esValorizacion ? 'Valorización actualizada' : 'Reglamento actualizado');
   };
 
   // Sedes editables (fuente: sedesService; se relee con cada refresh).
@@ -169,32 +206,57 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
   const [editSede, setEditSede] = useState(null); // { original, name, lat, lon, radius }
   const [newSedeOpen, setNewSedeOpen] = useState(false); // drawer de "Nueva sede"
   const [newHoliday, setNewHoliday] = useState('');
-  /** ¿Esta instalación administra ese campo, o lo manda el gestor de nómina? */
-  const cfgEditable = (campo) => !(cfg.soloLectura ?? ['horas_semana', 'festivos']).includes(campo);
+  // Borradores de la pantalla de valorización: lo tecleado se guarda al salir
+  // del campo, no en cada pulsación (escribir "215" pasa por "2" y "21").
+  const [pctDraft, setPctDraft] = useState(null); // { HED: '125', … }
+  // Divisor del valor hora: jornada semanal × 5, derivado — ya no se edita.
+  const DIVISOR_210 = (cfg.weeklyHours ?? 42) * 5;
 
-  // Usuarios de ArriveControl (solo visible para el rol `dueno`).
+  // Simulador de horas extra (Ajustes): salario de prueba + horas por código.
+  const [simSalario, setSimSalario] = useState('1500000');
+  const [simHoras, setSimHoras] = useState(() => Object.fromEntries(CODIGOS_HORA.map((c) => [c, ''])));
+  // Simulador de turno: fecha + entrada + salida → códigos que emite el motor.
+  const [simTurno, setSimTurno] = useState({ fecha: todayKey(), entrada: '08:00', salida: '20:00', jornada: '' });
+
+  // Quién tiene acceso a esta empresa. Con Google no se crean cuentas: se
+  // invita un correo, y la cuenta nace cuando esa persona entra.
   const [usuarios, setUsuarios] = useState([]);
-  const [rolesDisponibles, setRolesDisponibles] = useState([]);
+  const [invitaciones, setInvitaciones] = useState([]);
   const [usrError, setUsrError] = useState(null);
-  const [nuevoUsr, setNuevoUsr] = useState(null); // { nombre, email, password, rol, sede_id }
+  const [nuevoUsr, setNuevoUsr] = useState(null); // { email }
   const cargarUsuarios = () => {
     fetch('/api/usuarios')
       .then((r) => r.json())
       .then((d) => {
-        if (d.ok) { setUsuarios(d.usuarios); setRolesDisponibles(d.roles); setUsrError(null); }
+        if (d.ok) { setUsuarios(d.usuarios); setInvitaciones(d.invitaciones ?? []); setUsrError(null); }
         else setUsrError(d.error);
       })
       .catch((e) => setUsrError(e.message));
   };
-  const crearUsuario = async () => {
+  // El sistema NO manda correos (todavía): la invitación autoriza el ingreso,
+  // y el aviso lo lleva el dueño por el canal que use con esa persona. Por eso
+  // tras invitar se ofrece el mensaje listo para copiar y pegar.
+  const [invitacionCreada, setInvitacionCreada] = useState(null); // { email }
+  const textoInvitacion = (email) =>
+    `Te invitaron al panel de asistencia de ${sesion?.empresa ?? 'la empresa'}. ` +
+    `Entra con tu cuenta de Google (${email}) aquí: ${window.location.origin}/login`;
+  const copiarInvitacion = async (email) => {
+    try {
+      await navigator.clipboard.writeText(textoInvitacion(email));
+      showToast('Invitación copiada — pégala en WhatsApp o correo');
+    } catch {
+      showToast('No se pudo copiar. Copia el enlace a mano.');
+    }
+  };
+  const invitar = async () => {
     const r = await fetch('/api/usuarios', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(nuevoUsr),
+      body: JSON.stringify({ email: nuevoUsr.email }),
     });
     const d = await r.json().catch(() => null);
     if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
-    showToast(`${nuevoUsr.nombre} agregado`);
+    setInvitacionCreada({ email: d.invitacion.email });
     setNuevoUsr(null);
     cargarUsuarios();
   };
@@ -202,11 +264,55 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
     const r = await fetch(`/api/usuarios/${u.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rol: u.rol, activo: u.activo, sede_id: u.sedeId, ...cambios }),
+      body: JSON.stringify({ activo: u.activo, ...cambios }),
     });
     const d = await r.json().catch(() => null);
     if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
     cargarUsuarios();
+  };
+  const revocarInvitacion = async (inv) => {
+    if (!confirm(`¿Revocar la invitación de ${inv.email}?`)) return;
+    const r = await fetch(`/api/usuarios/${inv.id}`, { method: 'DELETE' });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
+    showToast('Invitación revocada');
+    cargarUsuarios();
+  };
+
+  // Mi empresa: nombre, NIT, clave de API y uso del plan.
+  const [miEmpresa, setMiEmpresa] = useState(null);
+  const [empDraft, setEmpDraft] = useState(null); // { nombre, nit } en edición
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
+  const cargarMiEmpresa = () => {
+    fetch('/api/empresa')
+      .then((r) => r.json())
+      .then((d) => { if (d.ok) setMiEmpresa(d.empresa); else showToast(d.error); })
+      .catch((e) => showToast(e.message));
+  };
+  const guardarMiEmpresa = async () => {
+    const r = await fetch('/api/empresa', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre: empDraft.nombre, nit: empDraft.nit }),
+    });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
+    setEmpDraft(null);
+    showToast('Empresa actualizada');
+    cargarMiEmpresa();
+  };
+  const regenerarApiKey = async () => {
+    if (!confirm('¿Regenerar la clave? La integración de nómina que use la actual dejará de funcionar hasta poner la nueva.')) return;
+    const r = await fetch('/api/empresa', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regenerarApiKey: true }),
+    });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
+    setApiKeyVisible(true);
+    showToast('Clave regenerada');
+    cargarMiEmpresa();
   };
 
   // Dispositivos del kiosco activados (para listar y revocar).
@@ -219,7 +325,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
       .catch((e) => setDispError(e.message));
   };
   const revocarDispositivo = async (d) => {
-    if (!confirm(`¿Revocar "${d.nombre}"? Ese aparato no podrá marcar más hasta activarse de nuevo.`)) return;
+    if (!confirm(`¿Revocar "${d.nombre}"? Dejará de marcar.`)) return;
     const r = await fetch(`/api/dispositivos/${d.id}`, { method: 'DELETE' });
     const j = await r.json().catch(() => null);
     if (!r.ok || !j?.ok) { showToast(`No se pudo revocar: ${j?.error ?? r.status}`); return; }
@@ -229,6 +335,33 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
 
   // Edición de empleado (CRUD): diálogo con datos no biométricos.
   const [editEmp, setEditEmp] = useState(null); // { id, name, cedula, sede, expectedEntry }
+
+  /**
+   * Abre la ficha de un empleado. Vive a nivel de componente (y no dentro de
+   * la pestaña Empleados, como antes) porque desde Reportes se hace clic en
+   * el nombre para llegar a los datos de esa persona.
+   */
+  const openEdit = (p) => setEditEmp({
+    id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '',
+    expectedEntry: p.expectedEntry || '',
+    expectedExit: p.expectedExit || '',
+    breakMinutes: p.breakMinutes == null ? '' : String(p.breakMinutes),
+    jornadaSemanal: p.jornadaSemanal ? [...p.jornadaSemanal] : null,
+    // '' = sin salario registrado, que es un estado válido.
+    salarioMensual: p.salarioMensual == null ? '' : String(p.salarioMensual),
+  });
+
+  /**
+   * Desde Reportes: lleva a la ficha de la persona de esa fila.
+   * Un empleado dado de baja ya no está en el roster; en ese caso se avisa en
+   * vez de abrir un cajón vacío que no guardaría nada.
+   */
+  const irAFichaEmpleado = (cedula) => {
+    const persona = listPeople().find((p) => p.cedula === cedula);
+    if (!persona) { showToast('Ese empleado ya no está activo.'); return; }
+    setTab('empleados');
+    openEdit(persona);
+  };
   const [toast, setToast] = useState(null);
 
   // Tabla de asistencia: búsqueda + filtro por estado + paginación.
@@ -366,82 +499,181 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [tick, sedeFilter]);
 
-  // Reporte por rango de fechas: días trabajados y horas por empleado.
+  // ── Reporte por período: UNA sola tabla ─────────────────────────────
+  //
+  // Antes había dos, y se contradecían: una calculaba las horas extra en el
+  // navegador contra el tope SEMANAL, la otra las pedía al servidor, que las
+  // calcula contra la jornada de CADA DÍA. Para el mismo empleado daban
+  // números distintos en la misma pantalla.
+  //
+  // Ahora cada columna tiene un solo dueño:
+  //   · Asistencia (días, horas, tardías) → las marcaciones del rango.
+  //   · Extras y valor                    → el motor del servidor, y nada más.
+  // El cálculo semanal de extras y la columna Dom/Fest se eliminaron: eran
+  // una segunda opinión, peor informada, sobre lo que el motor ya responde.
+  const [repDatos, setRepDatos] = useState({ estado: 'inicial', eventos: [], tramos: [], error: null });
+  useEffect(() => {
+    if (tab !== 'reportes' || !repFrom || !repTo) return;
+    let vigente = true;
+    setRepDatos((d) => ({ ...d, estado: 'cargando', error: null }));
+    // Las marcaciones se piden por el RANGO ELEGIDO, no se filtran de la copia
+    // en memoria: esa solo tiene 60 días y un reporte de un mes viejo salía
+    // con cero días trabajados al lado de horas extra reales.
+    Promise.all([getEventosRango(repFrom, repTo), getHorasValorizadas(repFrom, repTo)])
+      .then(([eventos, tramos]) => { if (vigente) setRepDatos({ estado: 'listo', eventos, tramos, error: null }); })
+      .catch((e) => { if (vigente) setRepDatos({ estado: 'error', eventos: [], tramos: [], error: e.message }); });
+    // Si el rango cambia antes de que llegue la respuesta, la vieja se ignora:
+    // sin esto una consulta lenta puede pisar el resultado de la nueva.
+    return () => { vigente = false; };
+  }, [tab, repFrom, repTo, tick]);
+
   const report = useMemo(() => {
-    if (!repFrom || !repTo) return [];
-    const events = listJourneyEvents()
-      .filter((e) => { const d = dayKey(e.ts); return d >= repFrom && d <= repTo; })
-      .sort((a, b) => a.ts.localeCompare(b.ts));
     const nowMs = Date.now();
-    const byPerson = new Map();
-    for (const e of events) {
-      if (!byPerson.has(e.personId)) byPerson.set(e.personId, { name: e.personName, sede: e.sede || '', events: [] });
-      byPerson.get(e.personId).events.push(e);
-    }
     const rosterById = new Map(listPeople().map((p) => [p.id, p]));
+    const porCedula = new Map(listPeople().map((p) => [p.cedula, p]));
 
-    // Semana calendario (lunes) de un evento — para liquidar extras por semana.
-    const weekOf = (iso) => {
-      const d = new Date(iso);
-      d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-      return dayKey(d.toISOString());
-    };
+    // 1) Asistencia: quién vino, cuánto estuvo y cuántas veces llegó tarde.
+    const filas = new Map(); // clave: cédula (es la que cruza con el motor)
+    const porPersona = new Map();
+    for (const e of [...repDatos.eventos].sort((a, b) => a.ts.localeCompare(b.ts))) {
+      if (!porPersona.has(e.personId)) porPersona.set(e.personId, { name: e.personName, sede: e.sede || '', events: [] });
+      porPersona.get(e.personId).events.push(e);
+    }
+    for (const [id, r] of porPersona) {
+      const persona = rosterById.get(id);
+      const cedula = persona?.cedula || `id:${id}`;
+      filas.set(cedula, {
+        id, cedula,
+        name: r.name,
+        sede: r.sede || persona?.sede || '',
+        days: new Set(r.events.filter((e) => e.type === 'in').map((e) => dayKey(e.ts))).size,
+        hours: pairedHours(r.events, nowMs),
+        lateCount: r.events.filter((e) => e.flag === 'late-entry').length,
+        horasPorTipo: Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0])),
+        extras: 0,
+        valor: 0,
+        sinSalario: false,
+        conExtras: false,
+        referencias: [],       // tramos de esta fila, para marcarlos pagados
+        refsSinPagar: [],
+      });
+    }
 
-    // ¿La jornada empezó en domingo o festivo? (recargo dominical/festivo)
-    const holidaySet = new Set(cfg.holidays);
-    const isDomFest = (iso) => new Date(iso).getDay() === 0 || holidaySet.has(dayKey(iso));
+    // 2) Extras del motor, encima. Quien tenga extras pero ya no esté en el
+    //    roster (baja con historial) igual aparece: la plata no se oculta.
+    for (const t of repDatos.tramos) {
+      if (!filas.has(t.documento)) {
+        const persona = porCedula.get(t.documento);
+        filas.set(t.documento, {
+          id: persona?.id ?? t.documento,
+          cedula: t.documento,
+          name: persona?.name ?? `C.C. ${t.documento}`,
+          sede: persona?.sede ?? '',
+          days: 0, hours: 0, lateCount: 0,
+          horasPorTipo: Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0])),
+          extras: 0, valor: 0, sinSalario: false, conExtras: false,
+          referencias: [], refsSinPagar: [],
+        });
+      }
+      const f = filas.get(t.documento);
+      f.horasPorTipo[t.tipoHora] = (f.horasPorTipo[t.tipoHora] ?? 0) + t.horas;
+      f.extras += t.horas;
+      f.conExtras = true;
+      f.referencias.push(t.referenciaExterna);
+      if (!t.pagado) f.refsSinPagar.push(t.referenciaExterna);
+      // `valor: null` = el servidor no pudo valorizar porque falta el salario.
+      // Se marca la fila en vez de sumar cero, que se leería como "no generó".
+      if (t.valor == null) f.sinSalario = true;
+      else f.valor += t.valor;
+    }
 
-    return [...byPerson.entries()]
-      .map(([id, r]) => {
-        // Horas extra: por cada semana del rango, lo que exceda la jornada legal.
-        const byWeek = new Map();
-        for (const e of r.events) {
-          const w = weekOf(e.ts);
-          if (!byWeek.has(w)) byWeek.set(w, []);
-          byWeek.get(w).push(e);
-        }
-        let extras = 0;
-        for (const evts of byWeek.values()) {
-          extras += Math.max(0, pairedHours(evts, nowMs) - cfg.weeklyHours);
-        }
+    // Estado de pago de la FILA, a partir de sus tramos. `parcial` aparece
+    // cuando se pagó una parte, o cuando se corrigió una marcación después de
+    // pagar: ese tramo se recalcula con otra referencia y vuelve a estar
+    // pendiente. Es el aviso de que algo cambió después de liquidar.
+    for (const f of filas.values()) {
+      f.pago = !f.conExtras ? 'na'
+        : f.refsSinPagar.length === 0 ? 'pagado'
+          : f.refsSinPagar.length === f.referencias.length ? 'pendiente' : 'parcial';
+    }
 
-        // Horas trabajadas en domingo/festivo (el par se atribuye al día de la entrada).
-        let domFest = 0;
-        let openIn = null;
-        for (const e of r.events) {
-          if (e.type === 'in') openIn = e;
-          else if (e.type === 'out' && openIn) {
-            if (isDomFest(openIn.ts)) domFest += (new Date(e.ts) - new Date(openIn.ts)) / 3600000;
-            openIn = null;
-          }
-        }
-        return {
-          id,
-          name: r.name,
-          cedula: rosterById.get(id)?.cedula || '',
-          sede: r.sede || rosterById.get(id)?.sede || '',
-          days: new Set(r.events.filter((e) => e.type === 'in').map((e) => dayKey(e.ts))).size,
-          hours: pairedHours(r.events, nowMs),
-          extras,
-          domFest,
-          lateCount: r.events.filter((e) => e.flag === 'late-entry').length,
-        };
-      })
+    return [...filas.values()]
       .filter((r) => sedeFilter === 'all' || r.sede === sedeFilter)
-      .sort((a, b) => b.hours - a.hours);
-  }, [tick, repFrom, repTo, sedeFilter, cfg]);
+      .sort((a, b) => b.valor - a.valor || b.extras - a.extras || b.hours - a.hours);
+  }, [repDatos, sedeFilter, tick]);
 
-  // Exporta el reporte visible a CSV (separador ; — Excel en español).
+  /**
+   * Marca o desmarca los tramos de una fila. Se actualiza el estado local al
+   * volver, sin re-pedir todo el período: el cálculo del servidor no cambió,
+   * solo la anotación de pago.
+   */
+  const alternarPago = async (fila) => {
+    const pagar = fila.pago !== 'pagado'; // 'parcial' completa lo que falte
+    const refs = pagar ? fila.refsSinPagar : fila.referencias;
+    if (refs.length === 0) return;
+    try {
+      await marcarHorasPagadas(refs, pagar);
+      const afectadas = new Set(refs);
+      setRepDatos((d) => ({
+        ...d,
+        tramos: d.tramos.map((t) => (afectadas.has(t.referenciaExterna) ? { ...t, pagado: pagar } : t)),
+      }));
+      showToast(pagar ? `${fila.name}: ${refs.length} tramo(s) marcados como pagados` : `${fila.name}: marca de pago retirada`);
+    } catch (e) {
+      showToast(`No se pudo guardar: ${e.message}`);
+    }
+  };
+
+  const totalValorizado = useMemo(() => report.reduce((s, r) => s + r.valor, 0), [report]);
+
+  /** Estado de pago explicado, para el tooltip y el acordeón. */
+  const etiquetaPago = (r) => {
+    if (r.pago === 'pagado') return `Pagado · ${r.referencias.length} tramo(s)`;
+    if (r.pago === 'parcial') {
+      return `Parcial · ${r.referencias.length - r.refsSinPagar.length} de ${r.referencias.length} tramos pagados. `
+        + 'Un tramo puede volver a pendiente si se corrigió su marcación después de pagar.';
+    }
+    return `Pendiente · ${r.referencias.length} tramo(s) sin marcar`;
+  };
+
+  /**
+   * Valor generado por tipo de hora, para el CSV. La tabla solo muestra el
+   * total; aquí se reparte con el mismo factor que usó el servidor, para que
+   * las columnas por código sumen exactamente el total.
+   */
+  const valorPorTipo = (r, codigo) => {
+    if (r.sinSalario || !r.horasPorTipo[codigo]) return 0;
+    const tramos = repDatos.tramos.filter((t) => t.documento === r.cedula && t.tipoHora === codigo);
+    return tramos.reduce((s, t) => s + (t.valor ?? 0), 0);
+  };
+
+  // Exporta TODO a CSV (separador ; — Excel en español): las cuatro categorías
+  // con horas y valor, más la asistencia completa, esté o no visible en la
+  // tabla. La tabla es para leer de un vistazo; el CSV es para trabajar.
   const exportCSV = () => {
-    const head = ['Empleado', 'Cédula', 'Sede', 'Días trabajados', 'Horas totales', `Horas extra (>${cfg.weeklyHours}h/sem)`, 'Horas dominicales/festivas', 'Entradas tardías'];
-    const lines = report.map((r) => [r.name, r.cedula, r.sede, r.days, r.hours.toFixed(2).replace('.', ','), r.extras.toFixed(2).replace('.', ','), r.domFest.toFixed(2).replace('.', ','), r.lateCount]);
+    const head = [
+      'Empleado', 'Cédula', 'Sede',
+      ...TIPOS_HORA.flatMap((t) => [`${t.codigo} (h)`, `${t.codigo} (COP)`]),
+      'Total horas extra', 'Valor total (COP)', 'Estado de pago',
+      'Días trabajados', 'Horas trabajadas', 'Entradas tardías',
+    ];
+    const num = (n) => (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
+    const ESTADO = { pagado: 'Pagado', parcial: 'Parcial', pendiente: 'Pendiente', na: '' };
+    const lines = report.map((r) => [
+      r.name, r.cedula, r.sede,
+      ...TIPOS_HORA.flatMap((t) => [num(r.horasPorTipo[t.codigo] ?? 0), valorPorTipo(r, t.codigo)]),
+      num(r.extras),
+      r.sinSalario ? 'sin salario' : r.valor,
+      ESTADO[r.pago],
+      r.days, num(r.hours), r.lateCount,
+    ]);
     const csv = [head, ...lines]
       .map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';'))
       .join('\r\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }); // BOM para tildes en Excel
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `asistencia_${repFrom}_a_${repTo}.csv`;
+    a.download = `reporte_${repFrom}_a_${repTo}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
     showToast('Reporte CSV descargado');
@@ -451,7 +683,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
   // necesita (GET /api/horas). Así una corrección se refleja sola, sin
   // reenviar ni dejar copias desactualizadas.
 
-  // Cerrar sesión: la misma sesión del gestor de empleados.
+  // Cerrar sesión.
   const cerrarSesion = async () => {
     try { await signOut(); } catch { /* la redirección igual lleva al login */ }
     window.location.href = '/login';
@@ -529,7 +761,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
   };
 
   const removeEv = async (e) => {
-    if (confirm(`¿Eliminar la marcación de ${e.type === 'in' ? 'entrada' : 'salida'} de las ${fmt12(e.ts)}? Úsalo solo para marcaciones erróneas.`)) {
+    if (confirm(`¿Eliminar la ${e.type === 'in' ? 'entrada' : 'salida'} de las ${fmt12(e.ts)}?`)) {
       try {
         await deleteEvent(e.id);
         refresh();
@@ -624,6 +856,14 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
     <div className={`admin-root${collapsed ? ' nav-collapsed' : ''}${navOpen ? ' nav-open' : ''}`}>
       <style>{CSS}</style>
 
+      {/* Suscripción vencida: el backend ya bloquea las escrituras (402); esto
+          explica POR QUÉ, antes de que la persona choque con el error. */}
+      {sesion?.plan === 'pago' && sesion?.estadoSuscripcion !== 'activa' && (
+        <div className="banner-vencida" role="alert">
+          Suscripción {sesion.estadoSuscripcion}: puedes consultar y exportar, pero no modificar.
+        </div>
+      )}
+
       <header className="app-header">
         <button className="menu-btn" onClick={() => setNavOpen(true)} aria-label="Abrir menú">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -647,6 +887,42 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
       <div className="screen">
         {tab === 'dashboard' && (
           <>
+            {/* Empresa recién nacida: en vez de un tablero en ceros, los tres
+                pasos que la dejan funcionando, en orden y con su enlace. */}
+            {allPeople.length === 0 && (
+              <section className="card onboarding">
+                <h2>Para empezar</h2>
+                <ol className="pasos">
+                  <li className={sedes.length > 0 ? 'hecho' : ''}>
+                    <span className="paso-num">{sedes.length > 0 ? '✓' : '1'}</span>
+                    <span className="paso-txt">
+                      <b>Crea tu primera sede</b>
+                      <small>Dónde queda y su radio GPS.</small>
+                    </span>
+                    {sedes.length === 0 && (
+                      <button className="btn primary" onClick={() => setTab('cfg-sedes')}>Crear sede</button>
+                    )}
+                  </li>
+                  <li className={sedes.length === 0 ? 'bloqueado' : ''}>
+                    <span className="paso-num">2</span>
+                    <span className="paso-txt">
+                      <b>Registra a tu gente</b>
+                      <small>Con una foto por persona.</small>
+                    </span>
+                    {sedes.length > 0 && (
+                      <Link className="btn primary" href="/admin/registro">Registrar</Link>
+                    )}
+                  </li>
+                  <li className="bloqueado">
+                    <span className="paso-num">3</span>
+                    <span className="paso-txt">
+                      <b>Activa el kiosco</b>
+                      <small>Abre esta página en la tablet donde van a marcar.</small>
+                    </span>
+                  </li>
+                </ol>
+              </section>
+            )}
             <div className="tiles">
               <div className="tile">
                 <div className="label">Presentes ahora</div>
@@ -661,7 +937,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
               <div className="tile">
                 <div className="label">Puntualidad</div>
                 <div className="value">{view.punctuality == null ? '—' : `${view.punctuality}%`}</div>
-                <div className="sub">a tiempo (+15 min de gracia)</div>
+                <div className="sub">+{cfg.graceMinutes} min de gracia</div>
               </div>
               <div className="tile alerta">
                 <div className="label">Anomalías</div>
@@ -688,7 +964,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                   ))}
                 </div>
                 {data.sinSede > 0 && (
-                  <p className="axis-note">{data.sinSede} empleado(s) sin sede asignada — re-regístralos o asígnales sede al migrar a base de datos.</p>
+                  <p className="axis-note">{data.sinSede} sin sede asignada.</p>
                 )}
               </section>
             )}
@@ -717,7 +993,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                   })}
                 </div>
               </div>
-              <p className="axis-note">Jornada legal: {cfg.weeklyHours} h semanales — la línea marca el límite; lo que exceda son horas extra</p>
+              <p className="axis-note">La línea marca las {cfg.weeklyHours} h legales; lo que exceda es extra.</p>
             </section>
           </>
         )}
@@ -725,7 +1001,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
         {tab === 'anomalias' && (
           <section className="card grow">
             <h2>Anomalías por resolver <span className="muted-count">{view.anomalies.length}</span></h2>
-            <p className="hint">Marcaciones que no cierran una jornada normal. Clic en una fila para corregirla; cada corrección queda en el historial.</p>
+            <p className="hint">Toca una fila para corregirla.</p>
             <div className="scrollable">
               {view.anomalies.length === 0 && <p className="empty">Sin anomalías pendientes.</p>}
               {view.anomalies.length > 0 && (() => {
@@ -735,10 +1011,10 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                       : chip('warn', 'Entrada tardía');
                 const aDesc = (a) =>
                   a.kind === 'missing-exit'
-                    ? `Entrada de las ${fmt12(a.event.ts)} sin salida registrada (más de 12 h abierta).`
+                    ? `Entró ${fmt12(a.event.ts)}, sin salida.`
                     : a.kind === 'early-exit'
-                      ? `Salió a las ${fmt12(a.event.ts)}, bastante antes de su hora esperada (${a.person.expectedExit || '—'}).`
-                      : `Primera entrada del día a las ${fmt12(a.event.ts)} — posible olvido en la mañana.`;
+                      ? `Salió ${fmt12(a.event.ts)}, esperada ${a.person.expectedExit || '—'}.`
+                      : `Entró ${fmt12(a.event.ts)}.`;
                 const aDay = (a) => new Date(a.event.ts).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
                 return (
                   <>
@@ -779,7 +1055,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
         {tab === 'equipo' && (
           <section className="card grow">
             <h2>Asistencia de hoy <span className="muted-count">{attRows.length}</span></h2>
-            <p className="hint">Primera entrada, última salida y horas del día. Clic en una fila para ver y corregir sus marcaciones.</p>
+            <p className="hint">Toca una fila para ver sus marcaciones.</p>
             <div className="att-controls">
               <input
                 className="att-search" type="search" placeholder="Buscar por nombre o código…"
@@ -853,8 +1129,19 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
 
         {tab === 'empleados' && (
           <section className="card grow">
-            <h2>Empleados registrados <span className="muted-count">{empRows.length}</span></h2>
-            <p className="hint">Personas que pueden marcar en el kiosco. El registro es por foto, con cédula, sede y horario.</p>
+            <h2>
+              Empleados registrados{' '}
+              <span className="muted-count">
+                {/* Con tope, el uso del plan se ve ANTES de chocar con él. */}
+                {sesion?.limiteEmpleados != null ? `${allPeople.length} de ${sesion.limiteEmpleados}` : empRows.length}
+              </span>
+            </h2>
+            {sesion?.limiteEmpleados != null && allPeople.length >= sesion.limiteEmpleados && (
+              <p className="hint" style={{ color: 'var(--crit-text)' }}>
+                Llegaste al tope del plan gratuito. Para registrar más, pasa al plan de pago.
+              </p>
+            )}
+            <p className="hint">Quiénes pueden marcar en el kiosco.</p>
             <div className="att-controls">
               <input
                 className="att-search" type="search" placeholder="Buscar por nombre o cédula…"
@@ -865,13 +1152,6 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
             <div className="scrollable">
               {empRows.length === 0 && <p className="empty">Sin resultados{empSearch ? ` para «${empSearch}»` : ''}.</p>}
               {empRows.length > 0 && (() => {
-                const openEdit = (p) => setEditEmp({
-                  id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '',
-                  expectedEntry: p.expectedEntry || '',
-                  expectedExit: p.expectedExit || '',
-                  breakMinutes: p.breakMinutes == null ? '' : String(p.breakMinutes),
-                  jornadaSemanal: p.jornadaSemanal ? [...p.jornadaSemanal] : null,
-                });
                 const horario = (p) => (p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : 'horario libre');
                 const jornada = (p) => {
                   const exp = expectedDailyHours(p);
@@ -919,48 +1199,157 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
 
         {tab === 'reportes' && (
           <section className="card grow">
-            <h2>Reporte por período</h2>
-            <p className="hint">Días trabajados y horas por empleado en el rango elegido. Exporta a CSV para nómina.</p>
+            <h2>Horas extra por período</h2>
+            <p className="hint">
+              Lo calcula el servidor con las mismas reglas que consume nómina. Clic en un nombre
+              para abrir su ficha; el CSV incluye la asistencia completa y el valor por categoría.
+            </p>
             <div className="rep-controls">
               <label>Desde <input type="date" value={repFrom} max={repTo} onChange={(e) => setRepFrom(e.target.value)} /></label>
               <label>Hasta <input type="date" value={repTo} min={repFrom} max={todayKey()} onChange={(e) => setRepTo(e.target.value)} /></label>
+              <button
+                className="btn solo-pc"
+                onClick={() => setRepColsAsistencia(!repColsAsistencia)}
+                aria-pressed={repColsAsistencia}
+              >
+                {repColsAsistencia ? '− Columnas de asistencia' : '＋ Columnas de asistencia'}
+              </button>
               <button className="btn primary" onClick={exportCSV} disabled={report.length === 0}>Exportar CSV</button>
             </div>
             <div className="scrollable">
-              {report.length === 0 && <p className="empty">Sin marcaciones en este período{sedeFilter !== 'all' ? ` para ${sedeFilter}` : ''}.</p>}
+              {repDatos.estado === 'cargando' && <p className="empty">Calculando el período…</p>}
+              {repDatos.estado === 'error' && (
+                <p className="empty">⚠ No se pudo cargar el reporte: {repDatos.error}</p>
+              )}
+              {repDatos.estado === 'listo' && report.length === 0 && (
+                <p className="empty">Sin marcaciones en este período{sedeFilter !== 'all' ? ` para ${sedeFilter}` : ''}.</p>
+              )}
+
               {report.length > 0 && (
                 <>
-                  <div className="rep-table" role="table">
+                  {totalValorizado > 0 && (
+                    <div className="val-total">
+                      <span className="label">Horas extra del período</span>
+                      <span className="value">{fmtCOP(totalValorizado)}</span>
+                    </div>
+                  )}
+
+                  <div
+                    className={`rep-table${repColsAsistencia ? ' con-asistencia' : ''}${permisos.liquidar ? ' con-pago' : ''}`}
+                    role="table"
+                  >
                     <div className="rep-row head" role="row">
-                      <span>Empleado</span><span>Sede</span><span>Días</span><span>Horas</span><span>Extras</span><span>Dom/Fest</span><span>Tardías</span>
+                      <span>Empleado</span>
+                      {TIPOS_HORA.map((t) => <span key={t.codigo} title={t.nombre}>{t.codigo}</span>)}
+                      <span>Total</span>
+                      <span className="val-money">Valor</span>
+                      {repColsAsistencia && (
+                        <>
+                          <span>Sede</span><span>Días</span><span>Horas</span><span>Tardías</span>
+                        </>
+                      )}
+                      {permisos.liquidar && <span className="col-pago">Pagado</span>}
                     </div>
                     {report.map((r) => (
-                      <div className="rep-row" role="row" key={r.id}>
-                        <span className="rep-name">{r.name}</span>
-                        <span>{r.sede || '—'}</span>
-                        <span>{r.days}</span>
-                        <span>{fmtH(r.hours)}</span>
-                        <span className={r.extras > 0 ? 'warn-num' : ''}>{r.extras > 0 ? fmtH(r.extras) : '—'}</span>
-                        <span className={r.domFest > 0 ? 'warn-num' : ''}>{r.domFest > 0 ? fmtH(r.domFest) : '—'}</span>
-                        <span className={r.lateCount > 0 ? 'warn-num' : ''}>{r.lateCount}</span>
+                      <div className="rep-row" role="row" key={r.cedula}>
+                        <button
+                          className="rep-name rep-link"
+                          onClick={() => irAFichaEmpleado(r.cedula)}
+                          title={`Abrir la ficha de ${r.name}`}
+                        >
+                          {r.name}
+                        </button>
+                        {TIPOS_HORA.map((t) => (
+                          <span key={t.codigo} className={r.horasPorTipo[t.codigo] > 0 ? 'warn-num' : 'muted-cell'}>
+                            {r.horasPorTipo[t.codigo] > 0 ? fmtHoras(r.horasPorTipo[t.codigo]) : '—'}
+                          </span>
+                        ))}
+                        <span>{r.extras > 0 ? fmtHoras(r.extras) : '—'}</span>
+                        <span className="val-money">
+                          {!r.conExtras
+                            ? <span className="muted-cell">—</span>
+                            : r.sinSalario
+                              ? <span className="sin-salario" title="Registra el salario del empleado para ver su valor">sin salario</span>
+                              : fmtCOP(r.valor)}
+                        </span>
+                        {repColsAsistencia && (
+                          <>
+                            <span>{r.sede || '—'}</span>
+                            <span>{r.days}</span>
+                            <span>{fmtHoras(r.hours)}</span>
+                            <span className={r.lateCount > 0 ? 'warn-num' : ''}>{r.lateCount}</span>
+                          </>
+                        )}
+                        {permisos.liquidar && (
+                          <span className="col-pago">
+                            {r.conExtras ? (
+                              <label className={`pago-check est-${r.pago}`} title={etiquetaPago(r)}>
+                                <input
+                                  type="checkbox"
+                                  checked={r.pago === 'pagado'}
+                                  // 'parcial' se pinta indeterminado: ni pagado
+                                  // ni pendiente, y al hacer clic completa lo
+                                  // que falte en vez de desmarcar lo ya pagado.
+                                  ref={(el) => { if (el) el.indeterminate = r.pago === 'parcial'; }}
+                                  onChange={() => alternarPago(r)}
+                                />
+                                <span className="pago-txt">{ETIQUETA_PAGO[r.pago]}</span>
+                              </label>
+                            ) : <span className="muted-cell">—</span>}
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>
+
                   <AccList
                     items={report.map((r) => ({
-                      id: r.id,
+                      id: r.cedula,
                       title: r.name,
-                      right: <span className="acc-note">{fmtH(r.hours)}</span>,
+                      right: (
+                        <span className="acc-note">
+                          {!r.conExtras ? '—' : r.sinSalario ? 'sin salario' : fmtCOP(r.valor)}
+                        </span>
+                      ),
                       fields: [
+                        ...TIPOS_HORA.map((t) => [
+                          `${t.codigo} — ${t.nombre}`,
+                          r.horasPorTipo[t.codigo] > 0 ? fmtHoras(r.horasPorTipo[t.codigo]) : '—',
+                        ]),
+                        ['Total horas extra', r.extras > 0 ? fmtHoras(r.extras) : '—'],
+                        ['Valor generado', !r.conExtras ? '—' : r.sinSalario ? 'sin salario registrado' : fmtCOP(r.valor)],
+                        ...(r.conExtras ? [['Estado de pago', etiquetaPago(r)]] : []),
                         ['Sede', r.sede || '—'],
                         ['Días trabajados', r.days],
-                        ['Horas', fmtH(r.hours)],
-                        ['Horas extra', r.extras > 0 ? fmtH(r.extras) : '—'],
-                        ['Dom/Festivos', r.domFest > 0 ? fmtH(r.domFest) : '—'],
+                        ['Horas trabajadas', fmtHoras(r.hours)],
                         ['Entradas tardías', r.lateCount],
                       ],
+                      actions: (
+                        <>
+                          {permisos.liquidar && r.conExtras && (
+                            <button className="btn block" onClick={() => alternarPago(r)}>
+                              {r.pago === 'pagado' ? 'Quitar marca de pagado' : 'Marcar como pagadas'}
+                            </button>
+                          )}
+                          <button className="btn primary block" onClick={() => irAFichaEmpleado(r.cedula)}>
+                            Abrir ficha del empleado
+                          </button>
+                        </>
+                      ),
                     }))}
                   />
+
+                  <p className="cfg-note">
+                    {TIPOS_HORA.map((t) => `${t.codigo} = ${t.nombre.toLowerCase()}`).join(' · ')}.
+                    Los porcentajes se ajustan en <b>Ajustes → Valorización de horas extra</b>.
+                  </p>
+                  {permisos.liquidar && (
+                    <p className="cfg-note">
+                      «Pagado» es una anotación de que esas horas ya se liquidaron en nómina —
+                      ArriveControl no paga. Si después se corrige una marcación ya pagada, ese
+                      tramo vuelve a quedar pendiente y la fila se muestra como parcial.
+                    </p>
+                  )}
                 </>
               )}
             </div>
@@ -970,9 +1359,9 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
         {tab === 'historial' && (
           <section className="card grow">
             <h2>Historial de ajustes</h2>
-            <p className="hint">Registro de auditoría: quién cambió qué y cuándo.</p>
+            <p className="hint">Quién cambió qué y cuándo.</p>
             <div className="scrollable">
-              {data.audit.length === 0 && <p className="empty">Aún no hay correcciones registradas.</p>}
+              {data.audit.length === 0 && <p className="empty">Sin correcciones.</p>}
               {data.audit.map((e) => (
                 <div className="log-item" key={e.id}>
                   <time>{fmtTs(e.ts)}</time>
@@ -988,33 +1377,46 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
         {tab === 'ajustes' && (
           <section className="card grow">
             <h2>Ajustes</h2>
-            <p className="hint">Configuración del sistema. Cada opción se edita en su propia pantalla.</p>
             <div className="scrollable">
               <button className="tool" onClick={() => setTab('cfg-reglamento')}>
                 <span className="icon"><Icon name="file" size={19} /></span>
-                <span><b>Reglamento laboral</b><br /><small>Jornada legal ({cfg.weeklyHours ?? '—'} h/sem), gracia de puntualidad y festivos ({(cfg.holidays ?? []).length}) — jornada y festivos vienen del gestor RH.</small></span>
+                <span><b>Reglamento laboral</b><br /><small>{cfg.weeklyHours ?? '—'} h/sem · {(cfg.holidays ?? []).length} festivos</small></span>
+              </button>
+              <button className="tool" onClick={() => setTab('cfg-nomina')}>
+                <span className="icon"><Icon name="clock" size={19} /></span>
+                <span><b>Valorización</b><br /><small>Cuánto vale cada hora extra</small></span>
+              </button>
+              <button className="tool" onClick={() => setTab('cfg-simulador')}>
+                <span className="icon"><Icon name="file" size={19} /></span>
+                <span><b>Simulador</b><br /><small>Probar el cálculo de horas extra</small></span>
               </button>
               <button className="tool" onClick={() => setTab('cfg-sedes')}>
                 <span className="icon"><Icon name="pin" size={19} /></span>
-                <span><b>Sedes</b><br /><small>{sedes.length} sede(s) registradas — agregar, mover o cambiar el radio GPS.</small></span>
+                <span><b>Sedes</b><br /><small>{sedes.length} registradas</small></span>
               </button>
               <button className="tool" onClick={() => { setTab('cfg-dispositivos'); cargarDispositivos(); }}>
                 <span className="icon"><Icon name="monitor" size={19} /></span>
-                <span><b>Dispositivos del kiosco</b><br /><small>Tablets/celulares activados para marcar — revocar el acceso de un aparato perdido.</small></span>
+                <span><b>Dispositivos</b><br /><small>Tablets del kiosco</small></span>
               </button>
               {permisos.usuarios && (
                 <button className="tool" onClick={() => { setTab('cfg-usuarios'); cargarUsuarios(); }}>
                   <span className="icon"><Icon name="users" size={19} /></span>
-                  <span><b>Usuarios y roles</b><br /><small>Quién entra al panel y qué puede hacer: dueño, supervisor de sede o consulta.</small></span>
+                  <span><b>Acceso al panel</b><br /><small>Quién puede entrar</small></span>
+                </button>
+              )}
+              {permisos.config && (
+                <button className="tool" onClick={() => { setTab('cfg-empresa'); cargarMiEmpresa(); }}>
+                  <span className="icon"><Icon name="database" size={19} /></span>
+                  <span><b>Mi empresa</b><br /><small>Nombre, clave de API y plan</small></span>
                 </button>
               )}
               <Link className="tool" href="/">
                 <span className="icon"><Icon name="monitor" size={19} /></span>
-                <span><b>Ir al kiosco</b><br /><small>Pantalla de marcación facial (1:N).</small></span>
+                <span><b>Ir al kiosco</b><br /><small>Pantalla de marcación</small></span>
               </Link>
               <Link className="tool" href="/gps">
                 <span className="icon"><Icon name="pin" size={19} /></span>
-                <span><b>Diagnóstico GPS</b><br /><small>Precisión y distancia a cada sede desde este dispositivo.</small></span>
+                <span><b>Diagnóstico GPS</b><br /><small>Precisión y distancia a cada sede</small></span>
               </Link>
             </div>
           </section>
@@ -1024,76 +1426,61 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
         {tab === 'cfg-usuarios' && (
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
-            <h2>Usuarios y roles <span className="muted-count">{usuarios.length}</span></h2>
-            <p className="hint">
-              Quién puede entrar al panel y qué puede hacer. Los empleados que marcan en el kiosco
-              no necesitan usuario: se identifican con su rostro.
-            </p>
-
-            <div className="cfg-group">
-              {rolesDisponibles.map((r) => (
-                <p key={r.clave} className="cfg-note" style={{ margin: '2px 0' }}>
-                  <b>{r.etiqueta}:</b> {r.descripcion}
-                </p>
-              ))}
-            </div>
+            <h2>Acceso al panel <span className="muted-count">{usuarios.length}</span></h2>
+            <p className="hint">Todos entran con Google y pueden lo mismo.</p>
 
             {usrError && <p className="empty">⚠ {usrError}</p>}
             <div className="att-controls">
               {!nuevoUsr && (
-                <button className="btn primary" onClick={() => setNuevoUsr({ nombre: '', email: '', password: '', rol: 'consulta', sede_id: '' })}>
-                  Nuevo usuario
+                <button className="btn primary" onClick={() => setNuevoUsr({ email: '' })}>
+                  Invitar
                 </button>
               )}
             </div>
 
             {nuevoUsr && (
               <div className="ev-form">
-                <h4>Nuevo usuario</h4>
-                <div className="ev-form-row">
-                  <label>Nombre
-                    <input type="text" value={nuevoUsr.nombre} onChange={(e) => setNuevoUsr({ ...nuevoUsr, nombre: e.target.value })} />
-                  </label>
-                  <label>Correo
-                    <input type="email" value={nuevoUsr.email} onChange={(e) => setNuevoUsr({ ...nuevoUsr, email: e.target.value })} />
-                  </label>
-                </div>
-                <div className="ev-form-row">
-                  <label>Contraseña inicial
-                    <input type="text" value={nuevoUsr.password} placeholder="mínimo 8 caracteres"
-                      onChange={(e) => setNuevoUsr({ ...nuevoUsr, password: e.target.value })} />
-                  </label>
-                  <label>Rol
-                    <select value={nuevoUsr.rol} onChange={(e) => setNuevoUsr({ ...nuevoUsr, rol: e.target.value })}>
-                      {rolesDisponibles.map((r) => <option key={r.clave} value={r.clave}>{r.etiqueta}</option>)}
-                    </select>
-                  </label>
-                  {nuevoUsr.rol === 'supervisor' && (
-                    <label>Sede
-                      <select value={nuevoUsr.sede_id} onChange={(e) => setNuevoUsr({ ...nuevoUsr, sede_id: e.target.value })}>
-                        <option value="">— Elegir —</option>
-                        {sedes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                    </label>
-                  )}
-                </div>
-                <small className="hint">La contraseña se la entregas tú; el usuario puede cambiarla después.</small>
+                <h4>Invitar a alguien</h4>
+                <label className="ev-form-reason">Correo de Google
+                  <input
+                    type="email" value={nuevoUsr.email} autoFocus placeholder="persona@empresa.com"
+                    onChange={(e) => setNuevoUsr({ email: e.target.value })}
+                  />
+                </label>
+                <small className="hint">Entra sola la primera vez que inicie sesión.</small>
                 <div className="dialog-actions">
                   <button className="btn" onClick={() => setNuevoUsr(null)}>Cancelar</button>
-                  <button className="btn primary"
-                    disabled={!nuevoUsr.nombre.trim() || !nuevoUsr.email.trim() || nuevoUsr.password.length < 8}
-                    onClick={crearUsuario}>Crear</button>
+                  <button className="btn primary" disabled={!nuevoUsr.email.includes('@')} onClick={invitar}>
+                    Invitar
+                  </button>
                 </div>
               </div>
             )}
 
+            {/* El sistema no manda correos: el aviso lo lleva el dueño. Tras
+                invitar queda el mensaje listo para copiar y pegar. */}
+            {invitacionCreada && (
+              <div className="inv-aviso" role="status">
+                <span>
+                  <b>{invitacionCreada.email}</b> ya puede entrar.
+                  Avísale tú — el sistema no le envía correo:
+                </span>
+                <span className="inv-acciones">
+                  <button className="btn small primary" onClick={() => copiarInvitacion(invitacionCreada.email)}>
+                    Copiar invitación
+                  </button>
+                  <button className="btn small" onClick={() => setInvitacionCreada(null)}>Listo</button>
+                </span>
+              </div>
+            )}
+
             <div className="scrollable">
-              {usuarios.length === 0 && !usrError && <p className="empty">Aún no hay usuarios.</p>}
+              {usuarios.length === 0 && !usrError && <p className="empty">Aún no hay nadie.</p>}
               {usuarios.length > 0 && (
                 <div className="att-tablewrap">
                   <table className="att-table">
                     <thead>
-                      <tr><th>Usuario</th><th>Rol</th><th>Sede</th><th>Estado</th><th>Último acceso</th><th></th></tr>
+                      <tr><th>Persona</th><th>Estado</th><th>Último acceso</th><th></th></tr>
                     </thead>
                     <tbody>
                       {usuarios.map((u) => (
@@ -1101,19 +1488,6 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                           <td className="att-name">
                             {u.nombre}
                             <br /><small style={{ color: 'var(--muted)' }}>{u.email}{u.email === sesion?.email ? ' · tú' : ''}</small>
-                          </td>
-                          <td>
-                            <select value={u.rol} onChange={(e) => actualizarUsuario(u, { rol: e.target.value })}>
-                              {rolesDisponibles.map((r) => <option key={r.clave} value={r.clave}>{r.etiqueta}</option>)}
-                            </select>
-                          </td>
-                          <td>
-                            {u.rol === 'supervisor' ? (
-                              <select value={u.sedeId ?? ''} onChange={(e) => actualizarUsuario(u, { sede_id: e.target.value })}>
-                                <option value="">— Elegir —</option>
-                                {sedes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                              </select>
-                            ) : 'Todas'}
                           </td>
                           <td>{u.activo ? '🟢 activo' : '⛔ inactivo'}</td>
                           <td>{u.ultimoAcceso ? fmtTs(u.ultimoAcceso) : 'nunca'}</td>
@@ -1131,7 +1505,136 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                   </table>
                 </div>
               )}
+
+              {/* Invitados que todavía no han entrado: para quien administra son
+                  gente con acceso concedido, así que van en la misma pantalla. */}
+              {invitaciones.length > 0 && (
+                <>
+                  <h3 style={{ marginTop: 14 }}>Invitaciones pendientes</h3>
+                  <div className="att-tablewrap">
+                    <table className="att-table">
+                      <thead>
+                        <tr><th>Correo</th><th>Vence</th><th></th></tr>
+                      </thead>
+                      <tbody>
+                        {invitaciones.map((i) => (
+                          <tr key={i.id}>
+                            <td className="att-name">{i.email}</td>
+                            <td>{fmtTs(i.expiraEn)}</td>
+                            <td style={{ whiteSpace: 'nowrap' }}>
+                              <button className="btn small" onClick={() => copiarInvitacion(i.email)}>
+                                Copiar
+                              </button>{' '}
+                              <button className="btn small danger-btn" onClick={() => revocarInvitacion(i)}>
+                                Revocar
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
             </div>
+          </section>
+        )}
+
+        {/* ── Sub-pantalla: Mi empresa ── */}
+        {tab === 'cfg-empresa' && (
+          <section className="card grow">
+            <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
+            <h2>Mi empresa</h2>
+            {!miEmpresa && <p className="empty">Cargando…</p>}
+            {miEmpresa && (
+              <div className="scrollable">
+                <div className="cfg-group">
+                  <h3>Identidad</h3>
+                  {!empDraft ? (
+                    <>
+                      <div className="cfg-row">
+                        <label>Nombre</label>
+                        <div className="cfg-input"><b>{miEmpresa.nombre}</b></div>
+                      </div>
+                      <div className="cfg-row">
+                        <label>NIT</label>
+                        <div className="cfg-input">{miEmpresa.nit || '—'}</div>
+                      </div>
+                      <div className="att-controls">
+                        <button className="btn" onClick={() => setEmpDraft({ nombre: miEmpresa.nombre, nit: miEmpresa.nit })}>
+                          Editar
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="ev-form">
+                      <div className="ev-form-row">
+                        <label>Nombre
+                          <input type="text" value={empDraft.nombre} onChange={(e) => setEmpDraft({ ...empDraft, nombre: e.target.value })} />
+                        </label>
+                        <label>NIT
+                          <input type="text" value={empDraft.nit} placeholder="opcional" onChange={(e) => setEmpDraft({ ...empDraft, nit: e.target.value })} />
+                        </label>
+                      </div>
+                      <div className="dialog-actions">
+                        <button className="btn" onClick={() => setEmpDraft(null)}>Cancelar</button>
+                        <button className="btn primary" disabled={empDraft.nombre.trim().length < 2} onClick={guardarMiEmpresa}>Guardar</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="cfg-group">
+                  <h3>Plan</h3>
+                  <div className="cfg-row">
+                    <label>
+                      {miEmpresa.plan === 'gratis' ? 'Gratis' : 'De pago'}
+                      {miEmpresa.plan === 'pago' && miEmpresa.estado !== 'activa' && (
+                        <small style={{ color: 'var(--crit-text)' }}>Suscripción {miEmpresa.estado}: el panel está en solo lectura.</small>
+                      )}
+                    </label>
+                    <div className="cfg-input">
+                      {miEmpresa.limiteEmpleados == null
+                        ? `${miEmpresa.empleados} empleados`
+                        : <b>{miEmpresa.empleados} de {miEmpresa.limiteEmpleados} empleados</b>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="cfg-group">
+                  <h3>Clave de API</h3>
+                  <p className="cfg-note" style={{ marginTop: 0 }}>
+                    Con ella el sistema de nómina consulta <code>GET /api/horas</code> (encabezado <code>X-API-Key</code>).
+                  </p>
+                  <div className="api-key-row">
+                    <code className="api-key">{apiKeyVisible ? miEmpresa.apiKey : '••••••••••••••••••••'}</code>
+                    <button className="btn small" onClick={() => setApiKeyVisible((v) => !v)}>
+                      {apiKeyVisible ? 'Ocultar' : 'Ver'}
+                    </button>
+                    <button
+                      className="btn small"
+                      onClick={async () => {
+                        try { await navigator.clipboard.writeText(miEmpresa.apiKey); showToast('Clave copiada'); }
+                        catch { showToast('No se pudo copiar.'); }
+                      }}
+                    >
+                      Copiar
+                    </button>
+                    <button className="btn small danger-btn" onClick={regenerarApiKey}>Regenerar</button>
+                  </div>
+                </div>
+
+                <div className="cfg-group">
+                  <h3>Mis datos</h3>
+                  <p className="cfg-note" style={{ marginTop: 0 }}>
+                    Descarga todo en un JSON. Los rostros no van: son datos biométricos.
+                  </p>
+                  <div className="att-controls">
+                    <a className="btn" href="/api/empresa/exportar" download>Exportar datos</a>
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -1140,13 +1643,10 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
             <h2>Dispositivos del kiosco <span className="muted-count">{dispositivos.length}</span></h2>
-            <p className="hint">
-              Cada tablet/celular se activa una vez desde la pantalla del kiosco (con tu sesión) y recibe su clave propia.
-              Si un aparato se pierde, revócalo aquí: deja de poder marcar al instante, sin afectar a los demás.
-            </p>
+            <p className="hint">Revoca el aparato que se pierda: deja de marcar al instante.</p>
             {dispError && <p className="empty">⚠ {dispError}</p>}
             <div className="scrollable">
-              {dispositivos.length === 0 && !dispError && <p className="empty">Aún no hay dispositivos activados. Abre el kiosco en la tablet y actívala desde allí.</p>}
+              {dispositivos.length === 0 && !dispError && <p className="empty">Sin dispositivos. Actívalos desde el kiosco.</p>}
               {dispositivos.length > 0 && (
                 <div className="att-tablewrap">
                   <table className="att-table">
@@ -1177,39 +1677,376 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
         )}
 
         {/* ── Sub-pantalla: Reglamento laboral ── */}
+        {/* ── Sub-pantalla: Valorización de horas extra ── */}
+        {tab === 'cfg-nomina' && (
+          <section className="card grow">
+            <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
+            <h2>Valorización de horas extra</h2>
+            <p className="hint">Los cambios se aplican de inmediato.</p>
+            <div className="scrollable">
+              <div className="cfg-group">
+                <h3>Porcentaje por tipo de hora</h3>
+                <p className="cfg-note" style={{ marginTop: 0, marginBottom: 10 }}>
+                  Porcentaje <b>total</b>, no el recargo: 125&nbsp;% ya incluye la hora.
+                </p>
+                {TIPOS_HORA.map((t) => {
+                  const factor = cfg.factores?.[t.codigo] ?? t.factor;
+                  const mostrado = pctDraft?.[t.codigo] ?? String(Math.round(factor * 100));
+                  return (
+                    <div className="cfg-row" key={t.codigo}>
+                      <label htmlFor={`pct-${t.codigo}`}>
+                        {t.nombre}
+                        <small><code>{t.codigo}</code> — {t.nocturna ? 'franja nocturna' : 'franja diurna'}
+                          {t.dominical ? ', domingo o festivo' : ', día hábil'}</small>
+                      </label>
+                      <div className="cfg-input">
+                        <input
+                          id={`pct-${t.codigo}`} type="number" min="100" max="1000" step="5"
+                          value={mostrado}
+                          onChange={(e) => setPctDraft({ ...(pctDraft ?? {}), [t.codigo]: e.target.value })}
+                          // Se guarda al SALIR del campo, no en cada tecla: al
+                          // escribir "215" el navegador pasa por "2" y "21",
+                          // que se habrían guardado como factores absurdos.
+                          onBlur={() => {
+                            const pct = Number(pctDraft?.[t.codigo]);
+                            setPctDraft(null);
+                            if (!Number.isFinite(pct) || pct < 100 || pct > 1000) {
+                              showToast('El porcentaje debe estar entre 100 y 1000.');
+                              return;
+                            }
+                            const nuevo = Math.round(pct) / 100;
+                            if (nuevo === factor) return;
+                            updateCfg({ factores: { ...(cfg.factores ?? {}), [t.codigo]: nuevo } });
+                          }}
+                        /> %
+                      </div>
+                    </div>
+                  );
+                })}
+                <p className="cfg-note">
+                  {TIPOS_HORA.map((t) => `${t.codigo} ×${(cfg.factores?.[t.codigo] ?? t.factor).toLocaleString('es-CO')}`).join(' · ')}
+                </p>
+              </div>
+
+              <div className="cfg-group">
+                <h3>Valor de la hora ordinaria</h3>
+                {/* El divisor ya no se edita aquí: se deriva de la jornada
+                    reglamentaria (semana × 5). Un solo número que administrar. */}
+                <div className="cfg-row">
+                  <label>
+                    Horas al mes
+                    <small>Jornada semanal × 5. Se cambia en Reglamento laboral.</small>
+                  </label>
+                  <div className="cfg-input">
+                    <b>{cfg.weeklyHours ?? 42} × 5 = {(cfg.weeklyHours ?? 42) * 5} h</b>
+                  </div>
+                </div>
+                <p className="cfg-note">
+                  Ejemplo con $1.500.000: hora ordinaria{' '}
+                  <b>{fmtCOP(Math.round(1500000 / (cfg.divisorHorasMes || DIVISOR_210)))}</b>, extra diurna{' '}
+                  <b>{fmtCOP(Math.round((1500000 / (cfg.divisorHorasMes || DIVISOR_210)) * (cfg.factores?.HED ?? 1.25)))}</b>.
+                </p>
+              </div>
+
+              <div className="cfg-group">
+                <h3>Franja nocturna</h3>
+                <p className="cfg-note" style={{ marginTop: 0, marginBottom: 10 }}>
+                  La extra dentro de la franja se paga como nocturna. Por ley, 21:00–06:00.
+                </p>
+                <div className="cfg-row">
+                  <label htmlFor="cfg-noc-ini">Empieza</label>
+                  <div className="cfg-input">
+                    <input
+                      id="cfg-noc-ini" type="time" className="cfg-time"
+                      value={cfg.nocturnoInicio ?? '21:00'}
+                      onChange={(e) => e.target.value && updateCfg({ nocturnoInicio: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="cfg-row">
+                  <label htmlFor="cfg-noc-fin">Termina</label>
+                  <div className="cfg-input">
+                    <input
+                      id="cfg-noc-fin" type="time" className="cfg-time"
+                      value={cfg.nocturnoFin ?? '06:00'}
+                      onChange={(e) => e.target.value && updateCfg({ nocturnoFin: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <p className="cfg-note">
+                  Un turno que cruce la franja se parte solo: 20:00–23:00 → 1 h diurna + 2 h nocturnas.
+                </p>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ── Sub-pantalla: Simulador de horas extra ──
+            Verifica el cálculo de valor SIN tocar la base: se escriben horas
+            por código y se valorizan con `valorizarRegistro`, la misma función
+            del servidor, leyendo los factores y el divisor configurados. */}
+        {tab === 'cfg-simulador' && (() => {
+          const salario = Number(simSalario) > 0 ? Number(simSalario) : null;
+          const divisor = cfg.divisorHorasMes || DIVISOR_210;
+          const factores = cfg.factores ?? {};
+          const lineas = TIPOS_HORA.map((t) => {
+            const horas = Number(simHoras[t.codigo]);
+            const validas = Number.isFinite(horas) && horas > 0 ? horas : 0;
+            return {
+              tipo: t,
+              horas: validas,
+              ...valorizarRegistro({ tipoHora: t.codigo, horas: validas }, { salarioMensual: salario, factores, divisor }),
+            };
+          });
+          const conHoras = lineas.filter((l) => l.horas > 0);
+          const totalHoras = conHoras.reduce((s, l) => s + l.horas, 0);
+          const totalValor = conHoras.reduce((s, l) => s + (l.valor ?? 0), 0);
+          const valorHora = lineas[0].valorHora;
+
+          // ── Simulación de turno (clasificación) ──
+          // Se arma la MISMA estructura que nomina.js entrega al motor, con una
+          // sola persona y un par entrada→salida.
+          const aMin = (hhmm) => {
+            const [h, m] = String(hhmm).split(':').map(Number);
+            return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+          };
+          const minEntrada = aMin(simTurno.entrada);
+          const minSalida = aMin(simTurno.salida);
+          // Salida <= entrada significa que el turno cruza medianoche.
+          const cruzaMedianoche = minEntrada != null && minSalida != null && minSalida <= minEntrada;
+          const duracion = minEntrada == null || minSalida == null
+            ? 0
+            : ((minSalida - minEntrada + (cruzaMedianoche ? 1440 : 0)) / 60);
+
+          const fechaBase = new Date(`${simTurno.fecha}T12:00:00`);
+          const dow = fechaBase.getDay();
+          const festivos = new Set(cfg.holidays ?? []);
+          const esFestivo = festivos.has(simTurno.fecha);
+          const diaSimulado = {
+            etiqueta: `${fechaBase.toLocaleDateString('es-CO', { weekday: 'long' })}${dow === 0 ? ' · dominical' : esFestivo ? ' · festivo' : ''}`,
+          };
+
+          // Offset Bogotá explícito: el epoch no debe depender de la zona del PC.
+          const epochDe = (fecha, minutos, diaExtra = 0) => {
+            const d = new Date(`${fecha}T00:00:00-05:00`);
+            return d.getTime() / 1000 + (minutos + diaExtra * 1440) * 60;
+          };
+
+          let tramosTurno = [];
+          if (duracion > 0) {
+            const jornadaPactada = Number(simTurno.jornada) > 0 ? Number(simTurno.jornada) : null;
+            const porEmpleado = new Map([['SIM', {
+              cedula: 'SIM', nombre: 'Simulación', sede: '',
+              jornadaSemanal: jornadaPactada == null ? null : Array(6).fill(jornadaPactada),
+              marcas: [
+                { tipo: 'entrada', fecha: simTurno.fecha, minutos: minEntrada, epoch: epochDe(simTurno.fecha, minEntrada), dow },
+                { tipo: 'salida', fecha: simTurno.fecha, minutos: minSalida, epoch: epochDe(simTurno.fecha, minSalida, cruzaMedianoche ? 1 : 0), dow },
+              ],
+            }]]);
+            const nocturnoCfg = {
+              inicio: aMin(cfg.nocturnoInicio ?? '21:00') ?? 21 * 60,
+              fin: aMin(cfg.nocturnoFin ?? '06:00') ?? 6 * 60,
+            };
+            tramosTurno = calcularRegistros(porEmpleado, {
+              festivos,
+              vigencias: vigenciasDeHorasSemana(cfg.weeklyHours ?? 42),
+              nocturno: nocturnoCfg,
+            }).map((r) => valorizarRegistro(r, { salarioMensual: salario, factores, divisor }));
+          }
+          const turnoSim = { duracion, cruzaMedianoche, tramos: tramosTurno };
+
+          return (
+            <section className="card grow">
+              <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
+              <h2>Simulador de horas extra</h2>
+              <p className="hint">Prueba el cálculo sin tocar datos reales.</p>
+              <div className="scrollable">
+                <div className="cfg-group">
+                  <div className="cfg-row">
+                    <label htmlFor="sim-salario">
+                      Salario mensual
+                      <small>{valorHora == null ? 'Escribe un salario para ver valores.' : `Hora ordinaria: ${fmtCOP(valorHora)} (÷ ${divisor} h)`}</small>
+                    </label>
+                    <div className="cfg-input">
+                      <input
+                        id="sim-salario" type="number" min="0" step="1000" inputMode="numeric"
+                        value={simSalario} onChange={(e) => setSimSalario(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="cfg-group">
+                  <h3>Horas por categoría</h3>
+                  {lineas.map((l) => (
+                    <div className="cfg-row" key={l.tipo.codigo}>
+                      <label htmlFor={`sim-${l.tipo.codigo}`}>
+                        {l.tipo.nombre}
+                        <small><code>{l.tipo.codigo}</code> · ×{(factores[l.tipo.codigo] ?? l.tipo.factor).toLocaleString('es-CO')}</small>
+                      </label>
+                      <div className="cfg-input">
+                        <input
+                          id={`sim-${l.tipo.codigo}`} type="number" min="0" max="500" step="0.5" inputMode="decimal"
+                          placeholder="0"
+                          value={simHoras[l.tipo.codigo]}
+                          onChange={(e) => setSimHoras({ ...simHoras, [l.tipo.codigo]: e.target.value })}
+                        /> h
+                      </div>
+                    </div>
+                  ))}
+                  <div className="att-controls">
+                    <button
+                      className="btn"
+                      onClick={() => setSimHoras(Object.fromEntries(CODIGOS_HORA.map((c) => [c, ''])))}
+                    >
+                      Limpiar
+                    </button>
+                  </div>
+                </div>
+
+                {conHoras.length > 0 && (
+                  <div className="cfg-group">
+                    <h3>Resultado</h3>
+                    <div className="sim-table" role="table">
+                      <div className="sim-row head" role="row">
+                        <span>Código</span><span>Horas</span><span>Factor</span><span>Valor hora</span><span className="val-money">Valor</span>
+                      </div>
+                      {conHoras.map((l) => (
+                        <div className="sim-row" role="row" key={l.tipo.codigo}>
+                          <span><code>{l.tipo.codigo}</code></span>
+                          <span>{fmtHoras(l.horas)}</span>
+                          <span>×{l.factor?.toLocaleString('es-CO') ?? '—'}</span>
+                          <span>{l.valorHora == null ? '—' : fmtCOP(Math.round(l.valorHora * l.factor))}</span>
+                          <span className="val-money">{l.valor == null ? 'sin salario' : fmtCOP(l.valor)}</span>
+                        </div>
+                      ))}
+                      <div className="sim-row total" role="row">
+                        <span>Total</span>
+                        <span>{fmtHoras(totalHoras)}</span>
+                        <span />
+                        <span />
+                        <span className="val-money">{salario == null ? 'sin salario' : fmtCOP(totalValor)}</span>
+                      </div>
+                    </div>
+                    <p className="cfg-note">
+                      Cada línea es hora ordinaria × factor × horas, redondeado al peso.
+                    </p>
+                  </div>
+                )}
+
+                {/* ── Parte 2: CLASIFICACIÓN ──
+                    Aquí no se dice qué código es: se escribe un turno y el
+                    motor decide, igual que con una marcación real. */}
+                <div className="cfg-group">
+                  <h3>Turno → categorías</h3>
+                  <p className="cfg-note" style={{ marginTop: 0, marginBottom: 10 }}>
+                    Escribe un turno y mira en qué códigos lo parte el sistema.
+                  </p>
+                  <div className="cfg-row">
+                    <label htmlFor="sim-fecha">
+                      Día
+                      <small>{diaSimulado.etiqueta}</small>
+                    </label>
+                    <div className="cfg-input">
+                      <input id="sim-fecha" type="date" className="cfg-time" value={simTurno.fecha}
+                        onChange={(e) => e.target.value && setSimTurno({ ...simTurno, fecha: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="cfg-row">
+                    <label htmlFor="sim-entrada">Entrada</label>
+                    <div className="cfg-input">
+                      <input id="sim-entrada" type="time" className="cfg-time" value={simTurno.entrada}
+                        onChange={(e) => e.target.value && setSimTurno({ ...simTurno, entrada: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="cfg-row">
+                    <label htmlFor="sim-salida">
+                      Salida
+                      <small>{turnoSim.cruzaMedianoche ? 'Cruza medianoche: termina al día siguiente.' : `Turno de ${fmtHoras(turnoSim.duracion)}`}</small>
+                    </label>
+                    <div className="cfg-input">
+                      <input id="sim-salida" type="time" className="cfg-time" value={simTurno.salida}
+                        onChange={(e) => e.target.value && setSimTurno({ ...simTurno, salida: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="cfg-row">
+                    <label htmlFor="sim-jornada">
+                      Jornada pactada del día
+                      <small>Vacío = la legal ({fmtHoras((cfg.weeklyHours ?? 42) / 6)}).</small>
+                    </label>
+                    <div className="cfg-input">
+                      <input id="sim-jornada" type="number" min="0" max="12" step="0.5" placeholder="—"
+                        value={simTurno.jornada}
+                        onChange={(e) => setSimTurno({ ...simTurno, jornada: e.target.value })} /> h
+                    </div>
+                  </div>
+
+                  {turnoSim.tramos.length === 0 ? (
+                    <p className="cfg-note">
+                      {turnoSim.duracion <= 0
+                        ? 'Turno vacío.'
+                        : `Sin horas extra: ${fmtHoras(turnoSim.duracion)} no superan la jornada del día.`}
+                    </p>
+                  ) : (
+                    <>
+                      <div className="sim-table" role="table">
+                        <div className="sim-row head" role="row">
+                          <span>Código</span><span>Desde</span><span>Hasta</span><span>Horas</span><span className="val-money">Valor</span>
+                        </div>
+                        {turnoSim.tramos.map((t) => (
+                          <div className="sim-row" role="row" key={t.referenciaExterna}>
+                            <span><code>{t.tipoHora}</code></span>
+                            <span>{t.horaInicio}</span>
+                            <span>{t.horaFin}</span>
+                            <span>{fmtHoras(t.horas)}</span>
+                            <span className="val-money">{t.valor == null ? '—' : fmtCOP(t.valor)}</span>
+                          </div>
+                        ))}
+                        <div className="sim-row total" role="row">
+                          <span>Total</span><span /><span />
+                          <span>{fmtHoras(turnoSim.tramos.reduce((s, t) => s + t.horas, 0))}</span>
+                          <span className="val-money">
+                            {turnoSim.tramos.some((t) => t.valor == null)
+                              ? 'sin salario'
+                              : fmtCOP(turnoSim.tramos.reduce((s, t) => s + t.valor, 0))}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="cfg-note">
+                        Franja nocturna {cfg.nocturnoInicio ?? '21:00'}–{cfg.nocturnoFin ?? '06:00'}.
+                        Los tramos de menos de 0,5 h se descartan.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </section>
+          );
+        })()}
+
         {tab === 'cfg-reglamento' && (
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
             <h2>Reglamento laboral</h2>
-            <p className="hint">Regula las horas extra y la puntualidad en todo el panel.</p>
+            <p className="hint">Horas extra y puntualidad.</p>
             <div className="scrollable">
               <div className="cfg-group">
                 <div className="cfg-row">
                   <label htmlFor="cfg-week">
                     Jornada legal semanal
-                    <small>
-                      {cfgEditable('horas_semana')
-                        ? 'Colombia: 42 h (Ley 2101 de 2021). Lo que pase de esto en el día cuenta como hora extra.'
-                        : 'La define el gestor de nómina según la ley vigente (Ley 2101). Aquí solo se consulta.'}
-                    </small>
+                    <small>En Colombia, 42 h (Ley 2101).</small>
                   </label>
                   <div className="cfg-input">
-                    {cfgEditable('horas_semana') ? (
-                      <>
-                        <input
-                          id="cfg-week" type="number" min="1" max="84" value={cfg.weeklyHours ?? 42}
-                          onChange={(e) => { const v = Number(e.target.value); if (v > 0) updateCfg({ weeklyHours: v }); }}
-                        /> h
-                      </>
-                    ) : (
-                      <><b>{cfg.weeklyHours ?? '—'}</b> h</>
-                    )}
+                    <input
+                      id="cfg-week" type="number" min="1" max="84" value={cfg.weeklyHours ?? 42}
+                      onChange={(e) => { const v = Number(e.target.value); if (v > 0) updateCfg({ weeklyHours: v }); }}
+                    /> h
                   </div>
                 </div>
                 <div className="cfg-row">
                   <label htmlFor="cfg-grace">
                     Gracia de puntualidad
-                    <small>Minutos después de la hora esperada sin contar como entrada tardía.</small>
+                    <small>Minutos de tolerancia antes de contar tardanza.</small>
                   </label>
                   <div className="cfg-input">
                     <input
@@ -1223,45 +2060,26 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
               <div className="cfg-group">
                 <h3>Días festivos y dominicales</h3>
                 <p className="cfg-note">
-                  {cfgEditable('festivos') ? (
-                    <>Los festivos oficiales de Colombia (Ley 51 de 1983, con traslado al lunes) se
-                    calculan solos. Aquí solo agregas los <b>decretados aparte</b> o los días que tu
-                    empresa trate como festivos.</>
-                  ) : (
-                    <>
-                      Calendario oficial tomado del gestor de nómina (fuente única).
-                      {cfg.gestorUrl && (
-                        <>
-                          {' '}Para agregar o quitar un festivo decretado,{' '}
-                          <a href={cfg.gestorUrl} target="_blank" rel="noreferrer">edítalo en el gestor ↗</a>.
-                        </>
-                      )}
-                    </>
-                  )}
+                  Los festivos oficiales de Colombia (Ley 51 de 1983, con traslado al lunes) se
+                  calculan solos. Agrega aquí únicamente los decretados aparte o los días que tu
+                  empresa trate como festivos.
                 </p>
-                {cfg.gestorError && (
-                  <p className="cfg-note">⚠ No se pudo consultar el gestor: {cfg.gestorError}</p>
-                )}
-                {cfgEditable('festivos') && (
-                  <div className="holiday-add">
-                    <input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} aria-label="Nuevo festivo" />
-                    <button
-                      className="btn primary"
-                      disabled={!newHoliday || (cfg.holidays ?? []).includes(newHoliday)}
-                      onClick={() => { updateCfg({ holidays: [...(cfg.holidays ?? []), newHoliday].sort() }); setNewHoliday(''); }}
-                    >
-                      ＋ Agregar
-                    </button>
-                  </div>
-                )}
+                <div className="holiday-add">
+                  <input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} aria-label="Nuevo festivo" />
+                  <button
+                    className="btn primary"
+                    disabled={!newHoliday || (cfg.holidays ?? []).includes(newHoliday)}
+                    onClick={() => { updateCfg({ holidays: [...(cfg.holidays ?? []), newHoliday].sort() }); setNewHoliday(''); }}
+                  >
+                    ＋ Agregar
+                  </button>
+                </div>
                 <div className="holiday-list">
                   {(cfg.holidays ?? []).map((d) => (
                     <span className="holiday-chip" key={d}>
                       {new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: '2-digit' })}
-                      {cfgEditable('festivos') && (
-                        <button aria-label={`Quitar festivo ${d}`}
-                          onClick={() => updateCfg({ holidays: (cfg.holidays ?? []).filter((x) => x !== d) })}>✕</button>
-                      )}
+                      <button aria-label={`Quitar festivo ${d}`}
+                        onClick={() => updateCfg({ holidays: (cfg.holidays ?? []).filter((x) => x !== d) })}>✕</button>
                     </span>
                   ))}
                 </div>
@@ -1275,7 +2093,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
             <h2>Sedes <span className="muted-count">{sedes.length}</span></h2>
-            <p className="hint">Cada sede tiene sus coordenadas y su propio radio GPS. El kiosco y el fichaje las usan de inmediato. Clic en una fila para editarla.</p>
+            <p className="hint">Toca una sede para editarla.</p>
             <div className="att-controls">
               <button className="btn primary" onClick={() => setNewSedeOpen(true)}>Nueva sede</button>
             </div>
@@ -1354,10 +2172,49 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
           </button>
         ))}
 
-        <button className="lock-btn" onClick={cerrarSesion} title="Cerrar la sesión del gestor">
-          <span className="icon"><Icon name="lock" /></span>
-          <span className="lbl">Cerrar sesión</span>
-        </button>
+        {/* Quién entró: al fondo del menú, sobre Cerrar sesión. Cerrado muestra
+            solo el nombre; abierto, correo, rol y alcance de sede. */}
+        {sesion && (
+          <div className={`sesion-box${sesionAbierta ? ' abierta' : ''}`}>
+            <button
+              className="sesion-btn"
+              aria-expanded={sesionAbierta}
+              onClick={() => setSesionAbierta((v) => !v)}
+              title={sesion.email}
+            >
+              {/* Con Google llega su foto; sin ella (cuenta local de dev, o si
+                  el navegador no pudo cargarla) quedan las iniciales. */}
+              {sesion.foto ? (
+                <img
+                  className="sesion-avatar"
+                  src={sesion.foto}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling.style.display = 'flex'; }}
+                />
+              ) : null}
+              <span className="sesion-avatar" style={sesion.foto ? { display: 'none' } : undefined}>
+                {iniciales(sesion.nombre || sesion.email)}
+              </span>
+              <span className="lbl sesion-nombre">{sesion.nombre || sesion.email}</span>
+              <span className="lbl sesion-chev"><Icon name="chevronRight" size={13} /></span>
+            </button>
+            {sesionAbierta && (
+              <div className="sesion-detalle">
+                <span>{sesion.email}</span>
+                {/* La empresa, no el rol: con un solo rol dentro de la empresa,
+                    «Empresa» no le diría nada a nadie. */}
+                <span>{sesion.empresa ?? ROL_ETIQUETA[sesion.rol] ?? sesion.rol}</span>
+                {/* Cerrar sesión vive AQUÍ: es una acción de la cuenta, y
+                    escondida evita el clic accidental en el menú. */}
+                <button className="lock-btn" onClick={cerrarSesion} title="Cerrar sesión">
+                  <span className="icon"><Icon name="lock" size={14} /></span>
+                  <span className="lbl">Cerrar sesión</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="side-foot">v0.1 · prototipo</div>
       </nav>
@@ -1385,7 +2242,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                 type="date" value={drawer.hasta} min={drawer.desde} max={todayKey()} aria-label="Hasta"
                 onChange={(e) => { setDrawer({ ...drawer, hasta: e.target.value }); setEvForm(null); }}
               />
-              <span className="drawer-hours">{fmtH(pairedHours(drawerEvents, Date.now()))} en el rango</span>
+              <span className="drawer-hours">{fmtH(pairedHours(drawerEvents, Date.now()))}</span>
             </div>
 
             <div className="drawer-body">
@@ -1415,7 +2272,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                         <input type="time" value={evForm.time} onChange={(e) => setEvForm({ ...evForm, time: e.target.value })} />
                       </label>
                     </div>
-                    <label className="ev-form-reason">Motivo del ajuste
+                    <label className="ev-form-reason">Motivo
                       <input
                         type="text" placeholder="Ej.: olvidó marcar la salida" value={evForm.reason}
                         onChange={(e) => setEvForm({ ...evForm, reason: e.target.value })}
@@ -1502,7 +2359,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                                 ? formularioEv
                                 : (
                                   <button className="btn small block" onClick={() => setEvForm({ mode: 'add', fecha: d.fecha, type: d.evs.length % 2 === 0 ? 'in' : 'out', time: '08:00', reason: '' })}>
-                                    Agregar marcación a este día
+                                    Agregar marcación
                                   </button>
                                 )}
                             </div>
@@ -1517,7 +2374,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                       : null}
                     {!evForm && (
                       <button className="btn block" onClick={() => setEvForm({ mode: 'add', conFecha: true, fecha: drawer.hasta, type: 'in', time: '08:00', reason: '' })}>
-                        Agregar marcación en otro día
+                        Agregar en otro día
                       </button>
                     )}
                   </>
@@ -1540,7 +2397,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
               <button className="btn" onClick={() => setNewSedeOpen(false)}>Cerrar</button>
             </div>
             <div className="drawer-body">
-              <p className="hint">Consigue lat/lon en Google Maps: clic derecho sobre el punto → copiar coordenadas. Verifica luego con el Diagnóstico GPS.</p>
+              <p className="hint">En Google Maps: clic derecho sobre el punto → copiar coordenadas.</p>
               <div className="field">
                 <label htmlFor="n-nombre">Nombre</label>
                 <input id="n-nombre" type="text" placeholder="Ej.: Bodega Norte" value={newSede.name} onChange={(e) => setNewSede({ ...newSede, name: e.target.value })} />
@@ -1591,7 +2448,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
               <button className="btn" onClick={() => setEditSede(null)}>Cerrar</button>
             </div>
             <div className="drawer-body">
-            <p className="hint">Si cambias el nombre, los empleados asignados se actualizan automáticamente.</p>
+            <p className="hint">Al renombrar, los empleados se actualizan solos.</p>
             <div className="field">
               <label htmlFor="s-nombre">Nombre</label>
               <input id="s-nombre" type="text" value={editSede.name} onChange={(e) => setEditSede({ ...editSede, name: e.target.value })} />
@@ -1643,7 +2500,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
               <button
                 className="btn danger-btn block"
                 onClick={async () => {
-                  if (!confirm(`¿Eliminar la sede "${editSede.original}"? Los empleados asignados a ella quedarán sin sede.`)) return;
+                  if (!confirm(`¿Eliminar "${editSede.original}"? Sus empleados quedarán sin sede.`)) return;
                   const r = await removeSede(editSede.original);
                   if (r.error) { showToast(r.error); return; }
                   if (sedeFilter === editSede.original) setSedeFilter('all');
@@ -1672,7 +2529,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
               <button className="btn" onClick={() => setEditEmp(null)}>Cerrar</button>
             </div>
             <div className="drawer-body">
-            <p className="hint">El rostro no se edita aquí: para cambiarlo, elimina y vuelve a registrar con foto nueva.</p>
+            <p className="hint">Para cambiar el rostro, elimina y registra de nuevo.</p>
             <div className="field">
               <label htmlFor="e-nombre">Nombre completo</label>
               <input id="e-nombre" type="text" value={editEmp.name} onChange={(e) => setEditEmp({ ...editEmp, name: e.target.value })} />
@@ -1703,11 +2560,30 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
               </div>
               <small className="hint">
                 {editEmp.expectedEntry && editEmp.expectedExit ? (
-                  <>Jornada esperada: <strong>{fmtH(expectedDailyHours({ ...editEmp, breakMinutes: editEmp.breakMinutes === '' ? null : Number(editEmp.breakMinutes) }))}</strong> al día.
-                  Salir más tarde cuenta como horas extra, no como incidencia.</>
+                  <><strong>{fmtH(expectedDailyHours({ ...editEmp, breakMinutes: editEmp.breakMinutes === '' ? null : Number(editEmp.breakMinutes) }))}</strong> al día.</>
                 ) : (
-                  <>Sin horario fijo: no se generan alertas de puntualidad. Las horas se calculan
-                  igual sumando cada entrada y salida marcada.</>
+                  <>Sin horario fijo: no hay alertas de puntualidad.</>
+                )}
+              </small>
+            </div>
+            <div className="field">
+              <label htmlFor="e-salario">Salario mensual <span className="libre">opcional</span></label>
+              <input
+                id="e-salario" type="number" min="0" step="1000" inputMode="numeric"
+                placeholder="Sin registrar"
+                value={editEmp.salarioMensual}
+                onChange={(e) => setEditEmp({ ...editEmp, salarioMensual: e.target.value })}
+              />
+              <small className="hint">
+                {Number(editEmp.salarioMensual) > 0 ? (
+                  <>
+                    Hora ordinaria:{' '}
+                    <strong>{fmtCOP(Math.round(Number(editEmp.salarioMensual) / (cfg.divisorHorasMes || DIVISOR_210)))}</strong>
+                    {' '}· Extra diurna:{' '}
+                    <strong>{fmtCOP(Math.round((Number(editEmp.salarioMensual) / (cfg.divisorHorasMes || DIVISOR_210)) * (cfg.factores?.HED ?? 1.25)))}</strong>
+                  </>
+                ) : (
+                  <>Sin salario, sus horas se cuentan pero no se valorizan.</>
                 )}
               </small>
             </div>
@@ -1725,9 +2601,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                 Jornada especial (distribuida)
               </label>
               <small className="hint">
-                Solo para acuerdos distintos al estándar de {fmtH((cfg.weeklyHours ?? 42) / 6)}/día
-                (p. ej. 7.5 h L–V y el sábado corto). La hora extra del día empieza
-                donde termina la jornada pactada de ese día.
+                Para acuerdos distintos al estándar de {fmtH((cfg.weeklyHours ?? 42) / 6)}/día.
               </small>
               {editEmp.jornadaSemanal != null && (() => {
                 const DIAS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -1751,10 +2625,8 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                       ))}
                     </div>
                     <small className="hint" style={total > tope ? { color: 'var(--danger, #c0392b)', fontWeight: 600 } : undefined}>
-                      Total semanal: {fmtH(total)} / {fmtH(tope)}{' '}
-                      {total > tope
-                        ? '⚠ supera la jornada legal: cada semana generaría horas extra por diseño.'
-                        : total < tope ? '(por debajo de la legal: válido).' : '✓'}
+                      Total: {fmtH(total)} / {fmtH(tope)}{' '}
+                      {total > tope ? '⚠ supera la jornada legal' : total < tope ? '' : '✓'}
                     </small>
                   </>
                 );
@@ -1774,6 +2646,8 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                     expectedExit: editEmp.expectedExit,
                     breakMinutes: editEmp.breakMinutes === '' ? null : Number(editEmp.breakMinutes),
                     jornadaSemanal: editEmp.jornadaSemanal == null ? null : editEmp.jornadaSemanal.map((h) => Number(h) || 0),
+                    // Vacío o 0 = sin salario registrado, no un sueldo de cero.
+                    salarioMensual: Number(editEmp.salarioMensual) > 0 ? Number(editEmp.salarioMensual) : null,
                   });
                   if (r.error) { showToast(r.error); return; }
                   setEditEmp(null);
@@ -1895,7 +2769,16 @@ const CSS = `
 .rep-controls label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
 .rep-controls input { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
 .rep-table { display: flex; flex-direction: column; font-size: 13px; font-variant-numeric: tabular-nums; }
-.rep-row { display: grid; grid-template-columns: 1.5fr 0.9fr 0.5fr 0.8fr 0.8fr 0.8fr 0.6fr; gap: 6px; padding: 8px 0; border-top: 1px solid var(--grid); align-items: center; }
+/* Empleado · HED · HEN · HEDDF · HENDF · Total · Valor, y dos columnas
+   opcionales: las de asistencia (botón) y la de pagado (permiso liquidar).
+   Las columnas tienen anchos distintos, así que no sirve auto-fit: se
+   declaran las cuatro combinaciones posibles, que son pocas y explícitas. */
+.rep-row { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--grid); align-items: center; }
+.rep-table .rep-row                            { grid-template-columns: 1.6fr repeat(5, .62fr) 1fr; }
+.rep-table.con-pago .rep-row                   { grid-template-columns: 1.5fr repeat(5, .58fr) .95fr .7fr; }
+.rep-table.con-asistencia .rep-row             { grid-template-columns: 1.3fr repeat(5, .5fr) .85fr .8fr .35fr .55fr .45fr; }
+.rep-table.con-asistencia.con-pago .rep-row    { grid-template-columns: 1.2fr repeat(5, .46fr) .8fr .75fr .32fr .5fr .42fr .62fr; }
+.col-pago { text-align: center; }
 
 /* Sub-pantallas de Ajustes */
 .back-btn { align-self: flex-start; margin-bottom: 8px; }
@@ -1929,7 +2812,40 @@ const CSS = `
 .cfg-sede small { color: var(--muted); font-variant-numeric: tabular-nums; }
 .cfg-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
 .cfg-note code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+.cfg-time { width: 106px !important; } /* un <input type="time"> no cabe en los 64px de .cfg-input */
 .tools-title { font-size: 13.5px; font-weight: 650; margin: 14px 0 8px; }
+
+/* ── Reporte por período (tabla única) ── */
+.val-total {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  background: var(--accent-soft); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px;
+}
+.val-total .label { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.val-total .value { font-family: var(--f-data); font-size: 20px; font-weight: 700; color: var(--accent-2); }
+.muted-cell { color: var(--muted); }
+.val-money { text-align: right; font-weight: 600; }
+.sin-salario { color: var(--muted); font-weight: 400; font-style: italic; font-size: 12px; }
+/* El nombre es el acceso a la ficha del empleado: se comporta como enlace
+   pero es un <button>, para que el teclado y los lectores de pantalla lo
+   anuncien como acción y no como navegación a otra página. */
+.rep-link {
+  border: 0; background: transparent; padding: 0; font: inherit; font-weight: 600;
+  color: var(--accent); cursor: pointer; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rep-link:hover { text-decoration: underline; }
+
+/* Estado de pago. El texto acompaña siempre al check: un cuadrito solo no
+   distingue "pendiente" de "no aplica", y aquí se habla de dinero. */
+.pago-check { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.pago-check input { margin: 0; cursor: pointer; accent-color: var(--accent); }
+.pago-txt { font-size: 11px; font-weight: 600; }
+.pago-check.est-pagado .pago-txt { color: var(--good-text); }
+.pago-check.est-parcial .pago-txt { color: var(--warn-text); }
+.pago-check.est-pendiente .pago-txt { color: var(--muted); font-weight: 400; }
+
+/* Botón que solo tiene sentido con espacio: en móvil la tabla no se ve. */
+.solo-pc { display: none; }
 
 /* Horas extra en el gráfico semanal */
 .hrow .track { position: relative; }
@@ -2010,6 +2926,72 @@ const CSS = `
 /* Cabecera del menú (logo + marca): visible también en móvil */
 .side-top { display: flex; align-items: center; gap: 10px; padding: 2px 6px 14px; border-bottom: 1px solid var(--grid); margin-bottom: 6px; }
 .side-foot { display: block; padding: 10px 12px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
+
+/* Onboarding (dashboard sin empleados) */
+.onboarding h2 { margin-bottom: 10px; }
+.pasos { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.pasos li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--grid); border-radius: 10px; }
+.pasos li.bloqueado { opacity: .5; }
+.pasos li.hecho { border-color: var(--good-text); }
+.paso-num { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; }
+.pasos li.hecho .paso-num { background: var(--good-soft, #dcfce7); color: var(--good-text); }
+.paso-txt { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.paso-txt small { color: var(--muted); font-size: 12px; }
+
+/* Aviso de invitación creada (con copia manual) */
+.inv-aviso { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 10px; background: var(--accent-soft); font-size: 13px; margin-bottom: 10px; }
+.inv-acciones { display: flex; gap: 6px; }
+
+/* Clave de API (Mi empresa) */
+.api-key-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.api-key { font-family: var(--f-data); font-size: 13px; background: var(--page); border: 1px solid var(--grid); border-radius: 8px; padding: 8px 10px; letter-spacing: .04em; overflow-wrap: anywhere; }
+
+/* Banner de suscripción vencida */
+.banner-vencida { background: var(--crit-soft); color: var(--crit-text); border: 1px solid var(--crit, #fca5a5); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; }
+
+/* Simulador de horas extra (Ajustes) */
+.sim-table { display: flex; flex-direction: column; border: 1px solid var(--grid); border-radius: 8px; overflow: hidden; }
+.sim-row { display: grid; grid-template-columns: 1fr .8fr .7fr 1.1fr 1.2fr; gap: 6px; padding: 8px 10px; font-size: 13px; border-top: 1px solid var(--grid); align-items: center; }
+.sim-row:first-child { border-top: 0; }
+.sim-row.head { background: var(--page); font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.sim-row.total { background: var(--page); font-weight: 700; }
+.sim-row .val-money { text-align: right; font-family: var(--f-data); font-variant-numeric: tabular-nums; }
+.sim-row code { font-family: var(--f-data); font-size: 12px; }
+
+/* Quién entró (fondo del menú). Toma el margin-top:auto que antes tenía
+   .lock-btn, para que el bloque entero quede anclado abajo. */
+.sesion-box { margin-top: auto; border-top: 1px solid var(--grid); padding-top: 6px; }
+.tabbar .lock-btn { margin-top: 0; }
+.sesion-btn {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  border: 0; background: transparent; color: var(--ink-2); cursor: pointer;
+  font-family: var(--f-body); font-size: 12.5px; font-weight: 600;
+  padding: 8px 12px; border-radius: 9px; text-align: left;
+}
+.sesion-btn:hover { background: var(--accent-soft); }
+.sesion-avatar {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+  display: flex; align-items: center; justify-content: center;
+}
+/* La foto de Google usa la misma caja que las iniciales. */
+img.sesion-avatar { object-fit: cover; display: block; }
+.sesion-nombre { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sesion-chev { display: flex; color: var(--muted); transition: transform .18s ease; }
+.sesion-box.abierta .sesion-chev { transform: rotate(90deg); }
+.sesion-detalle {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 2px 12px 8px 48px; font-size: 11.5px; color: var(--muted);
+}
+.sesion-detalle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sesion-detalle .lock-btn { margin: 6px 0 0; padding: 7px 10px; font-size: 12px; gap: 7px; width: auto; }
+/* Riel colapsado: solo el avatar. Al abrirlo, los datos no caben en 74 px,
+   pero sí el botón de cerrar sesión — que es lo que se viene a buscar. */
+.nav-collapsed .sesion-btn { justify-content: center; padding: 8px 0; }
+.nav-collapsed .sesion-detalle { padding: 4px 2px 6px; align-items: center; }
+.nav-collapsed .sesion-detalle span { display: none; }
+.nav-collapsed .sesion-detalle .lock-btn { padding: 7px; }
 .logo {
   flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
@@ -2199,6 +3181,7 @@ const CSS = `
   /* PC: tablas visibles, acordeón oculto */
   .att-tablewrap { display: block; }
   .rep-table { display: flex; }
+  .solo-pc { display: inline-flex; }
   .acc { display: none; }
   .tabbar > button {
     flex-direction: row; justify-content: flex-start; gap: 10px;
@@ -2228,7 +3211,8 @@ const CSS = `
   .side-foot { display: block; padding: 10px 6px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
 
   /* PC: bloquear como fila del menú, anclado al fondo sobre el pie */
-  .tabbar .lock-btn { flex-direction: row; justify-content: flex-start; gap: 10px; width: 100%; font-size: 12px; padding: 10px 14px; margin-top: auto; text-transform: none; letter-spacing: normal; }
+  /* margin-top:auto lo lleva .sesion-box, que va justo encima. */
+  .tabbar .lock-btn { flex-direction: row; justify-content: flex-start; gap: 10px; width: 100%; font-size: 12px; padding: 10px 14px; margin-top: 0; text-transform: none; letter-spacing: normal; }
   .tabbar .lock-btn .icon { font-size: 18px; }
 
   /* PC: el filtro de sede va ARRIBA del menú, en columna, bajo la cabecera */

@@ -229,15 +229,16 @@ await test('turno que CRUZA MEDIANOCHE no produce horas negativas', () => {
   assert.equal(regs[0].horaInicio, '23:00', 'el inicio debe ser una hora válida, no negativa');
   assert.equal(regs[0].horaFin, '02:00');
   assert.match(regs[0].horaInicio, /^\d{2}:\d{2}$/);
+  assert.equal(regs[0].tipoHora, 'HEN', '23:00–02:00 cae entero en la franja nocturna');
 });
 
-await test('domingo: todo lo trabajado es extra dominical (HEDD)', () => {
+await test('domingo: todo lo trabajado es extra dominical diurna (HEDDF)', () => {
   const regs = calcularRegistros(
     unEmpleado([marca('entrada', '2026-08-02', '08:00', 0), marca('salida', '2026-08-02', '12:00', 0)]),
     { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
   );
   assert.equal(regs.length, 1);
-  assert.equal(regs[0].tipoHora, 'HEDD');
+  assert.equal(regs[0].tipoHora, 'HEDDF');
   assert.equal(regs[0].horas, 4);
 });
 
@@ -247,7 +248,7 @@ await test('festivo entre semana se trata como dominical', () => {
     { festivos: new Set(['2026-08-03']), vigencias: VIGENCIAS },
   );
   assert.equal(regs.length, 1);
-  assert.equal(regs[0].tipoHora, 'HEDD');
+  assert.equal(regs[0].tipoHora, 'HEDDF');
 });
 
 await test('jornada especial: la extra empieza donde termina lo pactado', () => {
@@ -271,6 +272,107 @@ await test('la referencia externa es estable y única por tramo', () => {
   )[0].referenciaExterna;
   assert.equal(hacer(), hacer(), 'el mismo tramo debe dar SIEMPRE la misma referencia');
   assert.equal(hacer(), 'arrive-111-20260803-1500-1800-HED');
+});
+
+// ── Franja nocturna y valorización ──────────────────────────────────────
+// Los cuatro códigos y sus factores son PARÁMETROS editables; lo que se prueba
+// aquí es que el tramo se parta donde debe y que la plata salga de multiplicar
+// horas × valor hora × factor, sin inventar valores cuando falta el salario.
+console.log('\n🌙 Franja nocturna y valorización');
+const { partirPorNocturno, valorizarRegistro, valorHoraOrdinaria, normalizarFactores, NOCTURNO_DEFECTO } =
+  await import('../lib/tiposHora.js');
+
+await test('un tramo extra que atraviesa las 21:00 se parte en diurno y nocturno', () => {
+  // Lunes 08:00–23:00 = 15 h; jornada 7 h → 8 h extra desde las 15:00.
+  // 15:00–21:00 diurnas (HED) y 21:00–23:00 nocturnas (HEN).
+  const regs = calcularRegistros(
+    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '23:00', 1)]),
+    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
+  );
+  assert.equal(regs.length, 2);
+  assert.deepEqual(
+    regs.map((r) => [r.tipoHora, r.horaInicio, r.horaFin, r.horas]),
+    [['HED', '15:00', '21:00', 6], ['HEN', '21:00', '23:00', 2]],
+  );
+});
+
+await test('domingo de madrugada a mañana: HENDF y HEDDF en el mismo turno', () => {
+  // Domingo 04:00–09:00: 04:00–06:00 nocturno, 06:00–09:00 diurno.
+  const regs = calcularRegistros(
+    unEmpleado([marca('entrada', '2026-08-02', '04:00', 0), marca('salida', '2026-08-02', '09:00', 0)]),
+    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
+  );
+  assert.deepEqual(
+    regs.map((r) => [r.tipoHora, r.horas]),
+    [['HENDF', 2], ['HEDDF', 3]],
+  );
+});
+
+await test('la franja nocturna es configurable', () => {
+  // Con corte 22:00–05:00, el mismo turno 08:00–23:00 deja 7 h diurnas y 1 h nocturna.
+  const regs = calcularRegistros(
+    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '23:00', 1)]),
+    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS, nocturno: { inicio: 22 * 60, fin: 5 * 60 } },
+  );
+  assert.deepEqual(regs.map((r) => [r.tipoHora, r.horas]), [['HED', 7], ['HEN', 1]]);
+});
+
+await test('partir un tramo conserva TODAS las horas', () => {
+  // 20:40 → 21:50 (minutos absolutos): nada se puede perder al redondear.
+  const partes = partirPorNocturno(20 * 60 + 40, 21 * 60 + 50, NOCTURNO_DEFECTO);
+  assert.equal(partes.length, 2);
+  assert.deepEqual(partes.map((p) => p.nocturna), [false, true]);
+  assert.equal(partes.reduce((s, p) => s + (p.hasta - p.desde), 0), 70, 'la suma debe dar los 70 minutos');
+});
+
+await test('un tramo que no toca la franja no se parte', () => {
+  const partes = partirPorNocturno(9 * 60, 17 * 60, NOCTURNO_DEFECTO);
+  assert.deepEqual(partes, [{ desde: 540, hasta: 1020, nocturna: false }]);
+});
+
+await test('el mínimo de 0,5 h se mide ANTES de partir, no por pedazo', () => {
+  // Jornada 7 h con entrada 13:20 y salida 21:20 → 8 h, 1 h extra (20:20–21:20)
+  // que se parte en 0,67 h diurnas + 0,33 h nocturnas. Ninguna llega a 0,5 h;
+  // si el mínimo se aplicara a los pedazos se perdería la hora extra entera.
+  const regs = calcularRegistros(
+    unEmpleado([marca('entrada', '2026-08-03', '13:20', 1), marca('salida', '2026-08-03', '21:20', 1)]),
+    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
+  );
+  assert.equal(regs.length, 2);
+  assert.deepEqual(regs.map((r) => r.tipoHora), ['HED', 'HEN']);
+  assert.equal(regs.reduce((s, r) => s + r.horas, 0), 1, 'no se puede perder ni un minuto de la extra');
+});
+
+await test('valor hora ordinaria = salario ÷ divisor configurable', () => {
+  assert.equal(valorHoraOrdinaria(1_440_000, 240), 6000);
+  assert.equal(valorHoraOrdinaria(1_440_000, 180), 8000);
+  assert.equal(valorHoraOrdinaria(null, 240), null, 'sin salario no hay valor hora');
+  assert.equal(valorHoraOrdinaria(1_440_000, 0), null, 'un divisor inválido no puede dar Infinity');
+});
+
+await test('valorizar multiplica horas × valor hora × factor', () => {
+  const r = valorizarRegistro(
+    { tipoHora: 'HED', horas: 3 },
+    { salarioMensual: 1_440_000, factores: { HED: 1.25 }, divisor: 240 },
+  );
+  assert.equal(r.valorHora, 6000);
+  assert.equal(r.factor, 1.25);
+  assert.equal(r.valor, 22_500); // 3 h × 6000 × 1.25
+});
+
+await test('sin salario NO se inventa un valor', () => {
+  const r = valorizarRegistro({ tipoHora: 'HEN', horas: 2 }, { salarioMensual: null });
+  assert.equal(r.valor, null, 'debe quedar en null para que el reporte diga «sin salario»');
+  assert.equal(r.valorHora, null);
+  assert.equal(r.horas, 2, 'las horas se siguen contando aunque no se valoricen');
+});
+
+await test('un factor corrupto cae al de fábrica, no rompe la liquidación', () => {
+  const f = normalizarFactores({ HED: '125', HEN: null, HEDDF: 2.5 });
+  assert.equal(f.HED, 1.25, '"125" no es un factor válido: se usa el de fábrica');
+  assert.equal(f.HEN, 1.75);
+  assert.equal(f.HEDDF, 2.5, 'un valor válido sí se respeta');
+  assert.equal(f.HENDF, 2.65, 'un código ausente se completa');
 });
 
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);

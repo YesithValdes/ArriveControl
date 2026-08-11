@@ -110,7 +110,7 @@ export default function KioskMode() {
 
   const activarEsteDispositivo = async () => {
     if (!cfgSede) { setCfgError('Elige la sede de este dispositivo.'); return; }
-    if (!cfgNombre.trim()) { setCfgError('Ponle un nombre (p. ej. "Tablet recepción").'); return; }
+    if (!cfgNombre.trim()) { setCfgError('Ponle un nombre.'); return; }
     setCfgError(null);
     setActivando(true);
     try {
@@ -121,7 +121,7 @@ export default function KioskMode() {
       });
       const d = await r.json().catch(() => null);
       if (r.status === 401) {
-        setCfgError('Necesitas sesión de administrador. Inicia sesión y vuelve.');
+        setCfgError('Necesitas sesión de administrador.');
         return;
       }
       if (!r.ok || !d?.ok) { setCfgError(d?.error || `El servidor respondió ${r.status}.`); return; }
@@ -129,7 +129,7 @@ export default function KioskMode() {
       setDeviceKey(d.dispositivo.clave);
       setSedeId(cfgSede);
       setConfigurado(true);
-      setStatusNote(`Dispositivo "${d.dispositivo.nombre}" activado. Listo para iniciar.`);
+      setStatusNote(`"${d.dispositivo.nombre}" activado.`);
     } catch (e) {
       setCfgError(`Sin conexión con el servidor: ${e.message}`);
     } finally {
@@ -224,7 +224,7 @@ export default function KioskMode() {
     try {
       const { empleados, deCache } = await cargarRoster();
       all = empleados;
-      if (deCache) setStatusNote('Sin conexión: usando el roster de la última sincronización.');
+      if (deCache) setStatusNote('Sin conexión: usando la última copia.');
     } catch (e) {
       setStatusNote(`No se pudo cargar el roster: ${e.message}`);
       return;
@@ -241,8 +241,8 @@ export default function KioskMode() {
     setPeopleCount(valid.length);
     if (valid.length === 0) {
       setStatusNote(all.length > 0
-        ? 'Hay empleados pero ninguno tiene rostro registrado. Re-regístralos con foto.'
-        : 'No hay empleados en la base de datos. Regístralos desde el panel.');
+        ? 'Ningún empleado tiene rostro registrado.'
+        : 'No hay empleados registrados.');
       return;
     }
     // Aprovechar el arranque para vaciar la cola offline pendiente.
@@ -313,7 +313,7 @@ export default function KioskMode() {
         case 'challenge': {
           if (!lm) { st.phase = 'idle'; setUi('idle'); break; }
           if (now > st.deadline) {
-            concludeResult(false, null, null, 'No se detectó el parpadeo. Inténtalo de nuevo mirando de frente.');
+            concludeResult(false, null, null, 'No se detectó el parpadeo.');
             break;
           }
           if (bothOpen < 0.15) st.sawOpen = true;
@@ -339,7 +339,7 @@ export default function KioskMode() {
             }
             const distance = Math.round(best.distance * 1000) / 1000;
             const ok = distance < MATCH_THRESHOLD;
-            concludeResult(ok, ok ? best.person : null, distance, ok ? null : 'Inténtalo de nuevo mirando de frente, o contacta a Recursos Humanos.');
+            concludeResult(ok, ok ? best.person : null, distance, ok ? null : 'Intenta de nuevo mirando de frente.');
           }
           break;
         }
@@ -407,7 +407,7 @@ export default function KioskMode() {
       stNow.until = performance.now() + RESULT_SHOW_MS;
 
       if (paso.errorConfig) {
-        setResult({ kind: 'no', name: person.name, time, reason: `Identidad verificada, pero la marcación NO quedó: ${paso.errorConfig}` });
+        setResult({ kind: 'no', name: person.name, time, reason: `No se pudo registrar: ${paso.errorConfig}` });
         setUi('no');
         return;
       }
@@ -474,7 +474,7 @@ export default function KioskMode() {
             <div style={s.hudBarra}><div style={{ ...s.hudBarraRelleno, width: `${scanProg}%` }} /></div>
             <div style={s.hudInstruccion}>Parpadea <span className="ac-ojo">👁</span></div>
             <div style={s.hudEstado}>
-              {scanProg >= 75 ? 'Verificando identidad…' : scanProg >= 50 ? 'Parpadea para confirmar que eres tú' : 'Mira de frente'}
+              {scanProg >= 75 ? 'Verificando…' : scanProg >= 50 ? 'Parpadea' : 'Mira de frente'}
             </div>
           </>
         )}
@@ -490,7 +490,7 @@ export default function KioskMode() {
           <div style={s.rName}>¡Bienvenido/a,<br />{result.name}!</div>
           <div style={{ ...s.rTime, color: 'var(--k-in)' }}>{result.time}</div>
           {result.flag === 'late-entry' && (
-            <div style={s.warnNote}>⚠️ Entrada registrada en la tarde. Si olvidaste marcar en la mañana, avisa a RRHH.</div>
+            <div style={s.warnNote}>⚠️ Entrada en la tarde. Avisa a RRHH si olvidaste marcar.</div>
           )}
         </div>
       )}
@@ -508,7 +508,7 @@ export default function KioskMode() {
         <div style={{ ...s.resultScreen, ...s.dupBg }}>
           <div style={{ ...s.badge, ...s.badgeDup }}>ℹ</div>
           <div style={s.rName}>{result.name}</div>
-          <div style={s.rSub}>Ya registraste tu {result.lastLabel} a las {result.lastTime}.</div>
+          <div style={s.rSub}>{result.lastLabel} ya registrada: {result.lastTime}</div>
         </div>
       )}
       {ui === 'ok' && result && result.kind === 'saving' && (
@@ -517,7 +517,7 @@ export default function KioskMode() {
             <span className="ac-emoji ac-float" role="img" aria-label="registrando">⏳</span>
           </div>
           <div style={s.rName}>{result.name}</div>
-          <div style={s.rSub}>Registrando tu marcación…</div>
+          <div style={s.rSub}>Registrando…</div>
         </div>
       )}
       {ui === 'ok' && result && result.kind === 'pending' && (
@@ -526,7 +526,7 @@ export default function KioskMode() {
             <span className="ac-emoji ac-float" role="img" aria-label="pendiente">📶</span>
           </div>
           <div style={s.rName}>{result.name}</div>
-          <div style={s.rSub}>Sin conexión: tu marcación quedó guardada y se sincronizará automáticamente.</div>
+          <div style={s.rSub}>Sin conexión. Guardada; se enviará sola.</div>
         </div>
       )}
       {ui === 'no' && result && (
@@ -548,7 +548,7 @@ export default function KioskMode() {
           <div style={s.idleOval}>
             <span className="ac-emoji ac-float" role="img" aria-label="esperando">⏳</span>
           </div>
-          <div style={s.idleCta}>{running ? 'Acércate para marcar tu asistencia' : statusNote}</div>
+          <div style={s.idleCta}>{running ? 'Acércate para marcar' : statusNote}</div>
 
           {/* Activación del dispositivo (una sola vez, con sesión de admin) */}
           {!running && !configurado && (
@@ -583,7 +583,7 @@ export default function KioskMode() {
             </button>
           )}
           {running && <button style={s.stopBtn} onClick={stopAll}>⏹ Detener</button>}
-          <div style={s.privacy}>🔐 Tus fotos no se almacenan — solo un código matemático</div>
+          <div style={s.privacy}>🔐 No se guardan fotos</div>
           {loadError && <div style={s.errNote}>{loadError}</div>}
         </div>
       )}

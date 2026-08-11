@@ -1,54 +1,64 @@
 /**
  * lib/roles.js — Quién puede hacer qué en ArriveControl.
  *
- * Tres roles a propósito: en una empresa de 30 personas, cinco roles estorban.
- * Se agregan más cuando un cliente los pida, no antes.
+ * DOS roles, y son de dos mundos distintos (no compiten entre sí):
  *
- * La acción `corregir` es la sensible: una marcación editada se convierte en
- * horas extra pagadas. Por eso `consulta` (el contador, quien arma la nómina)
- * ve todo pero no modifica nada — separación de funciones: quien liquida no
- * debería poder fabricar la asistencia que liquida.
+ *   superadmin → alcance PLATAFORMA. Crea y elimina empresas. No entra al
+ *                panel de asistencia de ninguna: no tiene empresa_id, así que
+ *                `estadoAcceso` lo deja en SIN_EMPRESA por construcción.
+ *   empresa    → alcance SU EMPRESA, y ahí puede todo.
+ *
+ * Antes había tres roles dentro de la empresa (dueño, supervisor, consulta).
+ * Se quitaron a propósito: la confidencialidad de los datos es de la empresa y
+ * repartir permisos internos es asunto suyo. Varias personas pueden entrar a la
+ * misma empresa —cada una con su cuenta de Google— con idénticos permisos.
+ *
+ * El vocabulario de ACCIONES se conserva aunque hoy un solo rol las tenga
+ * todas: es lo que usan las rutas para declarar qué exigen, y hace que volver a
+ * partir permisos algún día sea cambiar esta tabla y nada más.
  */
 
 /** Acciones del sistema, en el vocabulario del negocio (no CRUD genérico). */
-export const ACCIONES = ['ver', 'corregir', 'empleados', 'config', 'usuarios']
+export const ACCIONES = ['ver', 'corregir', 'empleados', 'config', 'usuarios', 'liquidar']
 
 export const ROLES = {
-  dueno: {
-    etiqueta: 'Dueño',
-    descripcion: 'Control total, incluida la gestión de usuarios.',
-    acciones: ['ver', 'corregir', 'empleados', 'config', 'usuarios'],
+  empresa: {
+    etiqueta: 'Empresa',
+    descripcion: 'Administra toda la asistencia de su empresa.',
+    acciones: [...ACCIONES],
     alcance: 'todas',
   },
-  supervisor: {
-    etiqueta: 'Supervisor de sede',
-    descripcion: 'Ve y corrige la asistencia de su sede. No registra empleados ni cambia la configuración.',
-    acciones: ['ver', 'corregir'],
-    alcance: 'sede',
-  },
-  consulta: {
-    etiqueta: 'Consulta',
-    descripcion: 'Ve reportes y exporta, sin modificar nada. Pensado para quien arma la nómina.',
-    acciones: ['ver'],
-    alcance: 'todas',
+  superadmin: {
+    etiqueta: 'Superadministrador',
+    descripcion: 'Administra la plataforma: crea y elimina empresas.',
+    // Ninguna acción del panel: sus permisos son de otro plano (control.empresas),
+    // y se verifican con `esSuperadmin`, no con `puede`.
+    acciones: [],
+    alcance: 'plataforma',
   },
 }
 
-/** ¿Este rol puede ejecutar esta acción? */
+/** ¿Este rol puede ejecutar esta acción dentro de una empresa? */
 export function puede(rol, accion) {
   return Boolean(ROLES[rol]?.acciones.includes(accion))
 }
 
+/** ¿Es el administrador de la plataforma? */
+export const esSuperadmin = (usuario) => usuario?.rol === 'superadmin'
+
 /**
  * Sede a la que está limitado un usuario, o null si ve todas.
- * El supervisor sin sede asignada no ve nada: es una configuración incompleta,
- * y es más seguro no mostrar nada que mostrarlo todo.
+ *
+ * Hoy devuelve siempre null: sin rol de supervisor nadie está limitado a una
+ * sede. Se conserva porque las consultas la reciben y filtran con ella; el día
+ * que vuelva a existir un rol por sede, se cambia aquí.
  */
-export function sedeDelAlcance(usuario) {
-  if (!usuario) return null
-  return ROLES[usuario.rol]?.alcance === 'sede' ? (usuario.sedeId ?? '__sin_sede__') : null
+export function sedeDelAlcance() {
+  return null
 }
 
-/** Lista para pintar en la interfaz. */
+/** Roles asignables DENTRO de una empresa (superadmin no lo es: se siembra). */
 export const listaRoles = () =>
-  Object.entries(ROLES).map(([clave, r]) => ({ clave, ...r }))
+  Object.entries(ROLES)
+    .filter(([clave]) => clave !== 'superadmin')
+    .map(([clave, r]) => ({ clave, ...r }))

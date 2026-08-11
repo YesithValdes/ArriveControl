@@ -1,8 +1,8 @@
 'use client'
 
 /**
- * Cliente de Better Auth para el navegador. Apunta a esta misma app; el
- * backend valida contra la base compartida con el gestor de empleados.
+ * Cliente de Better Auth para el navegador. Apunta a esta misma app; la
+ * identidad vive en el esquema compartido `control`.
  */
 import { createAuthClient } from 'better-auth/react'
 

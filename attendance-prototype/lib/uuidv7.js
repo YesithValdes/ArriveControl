@@ -6,7 +6,7 @@
  * tienen DEFAULT. Como esta app habla con la base por `pg` (sin Prisma), tiene
  * que generar el id ella misma, y en el mismo formato para no mezclar v4 y v7
  * en las mismas tablas (el v7 es ordenable por tiempo, que es justo la razón
- * por la que el gestor lo eligió).
+ * por la que se eligió aquí).
  *
  * Estructura: 48 bits de milisegundos Unix + versión 7 + 74 bits aleatorios.
  */

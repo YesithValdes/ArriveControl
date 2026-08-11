@@ -84,11 +84,11 @@ export default function GpsDebug() {
       )}
 
       <div style={s.help}>
-        <strong>Cómo interpretarlo:</strong>
+        <strong>Cómo leerlo</strong>
         <ul style={s.ul}>
-          <li>Si la <strong>precisión (accuracy)</strong> es mayor que {MAX_RADIUS_METERS} m, el GPS no puede confirmar el radio de forma fiable — la distancia se ve "errónea" por eso.</li>
-          <li>Copia <strong>lat/lon</strong> en Google Maps: si el punto no cae donde estás, el GPS del equipo está fallando (no el código).</li>
-          <li>Al aire libre la precisión mejora; en interiores o entre edificios empeora mucho.</li>
+          <li>Precisión mayor a {MAX_RADIUS_METERS} m: el radio no es confiable.</li>
+          <li>Verifica lat/lon en Google Maps.</li>
+          <li>Al aire libre mejora; en interiores empeora.</li>
         </ul>
       </div>
     </div>

@@ -9,3 +9,11 @@ certificates/
 .eslintcache
 .DS_Store
 Thumbs.db
+
+# Volcados y respaldos de la base. Llevan datos PERSONALES —cédulas, salarios,
+# descriptores faciales, hashes de contraseña— y a un repositorio no se suben
+# "provisionalmente": una vez en el historial de git no se quitan.
+db/respaldo-*.json
+db/volcado-*.json
+*.dump
+*.sql.gz

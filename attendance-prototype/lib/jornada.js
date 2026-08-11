@@ -32,7 +32,7 @@ export function horasSemanaEn(vigencias, fechaISO) {
 
 /**
  * Vigencias derivadas de una jornada semanal fija elegida por la empresa
- * (modo autónomo: no hay gestor que publique el calendario legal).
+ * elegida por la empresa.
  */
 export function vigenciasDeHorasSemana(horasSemana) {
   const h = Number(horasSemana) || 42

@@ -1,24 +1,27 @@
 /**
  * app/api/usuarios/[id]/route.js
- * PATCH — cambia el rol, la sede o el estado (activo) de un usuario.
+ * PATCH  — activa o desactiva a alguien de la empresa.
+ * DELETE — revoca una invitación que todavía no se ha aceptado.
  *
- * Dos reglas de seguridad que no se pueden saltar:
- *  - Siempre debe quedar al menos un dueño ACTIVO (si no, nadie podría volver
- *    a administrar la cuenta).
- *  - Nadie puede quitarse a sí mismo el rol de dueño ni desactivarse: es la
- *    forma más común de quedar bloqueado por error.
+ * Ya no hay roles que repartir: todos los usuarios de una empresa tienen el
+ * mismo poder. Lo único que se administra es quién sigue teniendo acceso —
+ * desactivar es lo que se hace cuando alguien deja la empresa.
+ *
+ * Dos reglas que no se pueden saltar:
+ *  - Siempre debe quedar al menos un usuario ACTIVO: si no, nadie podría
+ *    volver a entrar a esa empresa nunca.
+ *  - Nadie puede desactivarse a sí mismo (la forma más común de bloquearse).
  */
 import { NextResponse } from 'next/server'
 import { pool } from '../../../../lib/auth'
-import { estadoAcceso } from '../../../../lib/sesion'
-import { ROLES } from '../../../../lib/roles.js'
+import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../../lib/sesion'
 
 export const runtime = 'nodejs'
 
 export async function PATCH(req, { params }) {
-  const { estado, usuario } = await estadoAcceso('usuarios')
+  const { estado, usuario, empresa } = await estadoAcceso('usuarios')
   if (estado !== 'OK') {
-    return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
+    return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
   }
 
   const { id } = await params
@@ -26,48 +29,50 @@ export async function PATCH(req, { params }) {
   try { c = await req.json() } catch { return NextResponse.json({ ok: false, error: 'JSON inválido.' }, { status: 400 }) }
 
   const { rows: actuales } = await pool.query(
-    `select id, rol, activo from asistencia."user" where id = $1`, [id],
+    `select id, activo from control."user" where id = $1 and empresa_id = $2`, [id, empresa.id],
   )
   if (actuales.length === 0) return NextResponse.json({ ok: false, error: 'Usuario no encontrado.' }, { status: 404 })
-  const actual = actuales[0]
 
-  const nuevoRol = 'rol' in c ? String(c.rol) : actual.rol
-  const nuevoActivo = 'activo' in c ? Boolean(c.activo) : actual.activo
-  if (!ROLES[nuevoRol]) return NextResponse.json({ ok: false, error: 'Rol inválido.' }, { status: 400 })
+  const nuevoActivo = 'activo' in c ? Boolean(c.activo) : actuales[0].activo
 
-  if (id === usuario.id && (nuevoRol !== 'dueno' || !nuevoActivo)) {
-    return NextResponse.json(
-      { ok: false, error: 'No puedes quitarte a ti mismo el rol de dueño ni desactivarte. Pídeselo a otro dueño.' },
-      { status: 400 },
-    )
+  if (id === usuario.id && !nuevoActivo) {
+    return NextResponse.json({ ok: false, error: 'No puedes desactivarte a ti mismo.' }, { status: 400 })
   }
 
-  // ¿Quedaría la cuenta sin ningún dueño activo?
-  const dejaDeSerDueno = actual.rol === 'dueno' && (nuevoRol !== 'dueno' || !nuevoActivo)
-  if (dejaDeSerDueno) {
+  if (!nuevoActivo) {
     const { rows } = await pool.query(
-      `select count(*)::int as n from asistencia."user" where rol = 'dueno' and activo and id <> $1`, [id],
+      `select count(*)::int as n from control."user"
+        where activo and empresa_id = $2 and id <> $1`, [id, empresa.id],
     )
     if (rows[0].n === 0) {
       return NextResponse.json(
-        { ok: false, error: 'Debe quedar al menos un dueño activo. Nombra otro antes de hacer este cambio.' },
+        { ok: false, error: 'Debe quedar al menos una persona con acceso.' },
         { status: 400 },
       )
     }
   }
 
-  // El supervisor necesita sede; los demás roles no la usan.
-  const sedeId = ROLES[nuevoRol].alcance === 'sede' ? (c?.sede_id ?? null) : null
-  if (ROLES[nuevoRol].alcance === 'sede' && !sedeId) {
-    return NextResponse.json({ ok: false, error: 'Un supervisor necesita una sede asignada.' }, { status: 400 })
-  }
-
   const { rows } = await pool.query(
-    `update asistencia."user"
-        set rol = $2, activo = $3, sede_id = $4, updated_at = now()
-      where id = $1
-      returning id, name as nombre, email, rol, sede_id as "sedeId", activo`,
-    [id, nuevoRol, nuevoActivo, sedeId],
+    `update control."user" set activo = $2, updated_at = now()
+      where id = $1 and empresa_id = $3
+      returning id, name as nombre, email, rol, activo`,
+    [id, nuevoActivo, empresa.id],
   )
   return NextResponse.json({ ok: true, usuario: rows[0] })
+}
+
+/** Revoca una invitación pendiente (el id es el de `control.invitaciones`). */
+export async function DELETE(_req, { params }) {
+  const { estado, empresa } = await estadoAcceso('usuarios')
+  if (estado !== 'OK') {
+    return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
+  }
+  const { id } = await params
+  const { rowCount } = await pool.query(
+    `delete from control.invitaciones
+      where id = $1 and empresa_id = $2 and aceptada_en is null`,
+    [id, empresa.id],
+  )
+  if (rowCount === 0) return NextResponse.json({ ok: false, error: 'Invitación no encontrada.' }, { status: 404 })
+  return NextResponse.json({ ok: true })
 }

@@ -16,6 +16,8 @@
  * journeyService original.
  */
 
+import { FACTORES_DEFECTO, DIVISOR_DEFECTO } from '../lib/tiposHora.js';
+
 export const NIGHT_WINDOW_MS = 12 * 60 * 60 * 1000;
 const LATE_TOLERANCE_MIN = 180;
 
@@ -24,7 +26,11 @@ const store = {
   events: [],       // forma journeyService: {id, personId, personName, sede, type, ts, flag, correctedBy}
   people: [],       // forma rosterService: {id, name, cedula, sede, expectedEntry, expectedExit, breakMinutes, createdAt, activo}
   sedes: [],        // forma sedesService: {id, name, lat, lon, radius}
-  cfg: { weeklyHours: 42, graceMinutes: 15, holidays: [] },
+  cfg: {
+    weeklyHours: 42, graceMinutes: 15, holidays: [],
+    factores: FACTORES_DEFECTO, divisorHorasMes: DIVISOR_DEFECTO,
+    nocturnoInicio: '21:00', nocturnoFin: '06:00',
+  },
   audit: [],        // correcciones crudas (para trazabilidad extendida)
   cargado: false,
 };
@@ -37,6 +43,54 @@ async function api(url, opts = {}) {
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false) throw new Error(d.error || `Error ${r.status} en ${url}`);
   return d;
+}
+
+/**
+ * Marcaciones crudas → eventos con la forma de journeyService.
+ *
+ * Vive aparte de `syncPanel` porque los reportes piden un rango cualquiera
+ * (que puede ser más viejo que la ventana sincronizada) y deben interpretar
+ * esas marcaciones EXACTAMENTE igual que el resto del panel: si un reporte
+ * marcara las llegadas tarde con otro criterio, dos pantallas dirían cosas
+ * distintas de la misma persona el mismo día.
+ */
+function construirEventos(marcaciones, correcciones = []) {
+  const correccionPorMarcacion = new Map();
+  for (const c of correcciones) {
+    if (c.marcacion_id && !correccionPorMarcacion.has(c.marcacion_id)) correccionPorMarcacion.set(c.marcacion_id, c);
+  }
+
+  const eventos = marcaciones.map((m) => {
+    const corr = correccionPorMarcacion.get(m.id);
+    return {
+      id: m.id,
+      personId: m.empleado_id,
+      personName: m.empleado_nombre,
+      sede: m.sede_nombre || '',
+      type: m.tipo === 'entrada' ? 'in' : 'out',
+      ts: m.ts,
+      flag: m.origen === 'manual' ? 'manual' : corr ? 'corrected' : null,
+      correctedBy: m.origen === 'manual' || corr ? (corr?.admin_email || 'admin') : null,
+    };
+  });
+
+  // Flag 'late-entry': primera entrada del día muy tarde vs. horario esperado.
+  const horarioPorEmpleado = new Map(store.people.map((p) => [p.id, p.expectedEntry]));
+  const porPersonaDia = new Map();
+  for (const e of eventos) {
+    if (e.type !== 'in') continue;
+    const k = `${e.personId}|${bogotaDay(e.ts)}`;
+    if (!porPersonaDia.has(k) || e.ts < porPersonaDia.get(k).ts) porPersonaDia.set(k, e);
+  }
+  for (const primera of porPersonaDia.values()) {
+    const esperado = horarioPorEmpleado.get(primera.personId);
+    if (!/^\d{2}:\d{2}$/.test(esperado || '')) continue;
+    const d = new Date(new Date(primera.ts).getTime() - 5 * 3600000); // hora Bogotá
+    const min = d.getUTCHours() * 60 + d.getUTCMinutes();
+    const [h, m] = esperado.split(':').map(Number);
+    if (min >= h * 60 + m + LATE_TOLERANCE_MIN && !primera.flag) primera.flag = 'late-entry';
+  }
+  return eventos;
 }
 
 /** Descarga todo del servidor. Llamar al montar el panel y tras cada mutación. */
@@ -63,6 +117,8 @@ export async function syncPanel() {
     expectedExit: hhmm(e.salida_esperada),
     breakMinutes: e.almuerzo_min,
     jornadaSemanal: e.jornada_semanal ?? null, // [lun..sáb] o null = estándar
+    // numeric de Postgres viaja como texto; null = sin registrar (opcional).
+    salarioMensual: e.salario_mensual == null ? null : Number(e.salario_mensual),
     createdAt: e.creado_en,
     activo: e.activo,
     tieneRostro: e.tiene_rostro,
@@ -70,57 +126,21 @@ export async function syncPanel() {
   }));
 
   store.cfg = {
-    // 42 h de respaldo (Ley 2101 vigente) si el gestor no respondió, para que
-    // los cálculos del panel no se rompan; gestorError avisa en Ajustes.
+    // 42 h de respaldo (Ley 2101 vigente) por si la fila viniera incompleta,
+    // para que los cálculos del panel no se rompan.
     weeklyHours: cfg.config.horas_semana ?? 42,
     graceMinutes: cfg.config.gracia_min,
     holidays: (cfg.config.festivos ?? []).map((f) => String(f).slice(0, 10)),
-    // En modo conectado la jornada y los festivos son de SOLO LECTURA (manda
-    // el gestor); en modo autónomo se editan aquí mismo.
-    modo: cfg.modo ?? 'conectado',
-    soloLectura: cfg.solo_lectura ?? ['horas_semana', 'festivos'],
-    gestorUrl: cfg.gestor_url ?? null,
-    gestorError: cfg.gestor_error ?? null,
+    // Valorización: cómo se paga cada tipo de hora extra.
+    factores: cfg.config.factores_hora ?? FACTORES_DEFECTO,
+    divisorHorasMes: cfg.config.divisor_horas_mes ?? DIVISOR_DEFECTO,
+    nocturnoInicio: cfg.config.nocturno_inicio ?? '21:00',
+    nocturnoFin: cfg.config.nocturno_fin ?? '06:00',
   };
 
   store.audit = corr.correcciones;
-  const correccionPorMarcacion = new Map();
-  for (const c of corr.correcciones) {
-    if (c.marcacion_id && !correccionPorMarcacion.has(c.marcacion_id)) correccionPorMarcacion.set(c.marcacion_id, c);
-  }
 
-  const horarioPorEmpleado = new Map(store.people.map((p) => [p.id, p.expectedEntry]));
-  const eventos = marc.marcaciones.map((m) => {
-    const corr = correccionPorMarcacion.get(m.id);
-    return {
-      id: m.id,
-      personId: m.empleado_id,
-      personName: m.empleado_nombre,
-      sede: m.sede_nombre || '',
-      type: m.tipo === 'entrada' ? 'in' : 'out',
-      ts: m.ts,
-      flag: m.origen === 'manual' ? 'manual' : corr ? 'corrected' : null,
-      correctedBy: m.origen === 'manual' || corr ? (corr?.admin_email || 'admin') : null,
-    };
-  });
-
-  // Flag 'late-entry': primera entrada del día muy tarde vs. horario esperado.
-  const porPersonaDia = new Map();
-  for (const e of eventos) {
-    if (e.type !== 'in') continue;
-    const k = `${e.personId}|${bogotaDay(e.ts)}`;
-    if (!porPersonaDia.has(k) || e.ts < porPersonaDia.get(k).ts) porPersonaDia.set(k, e);
-  }
-  for (const primera of porPersonaDia.values()) {
-    const esperado = horarioPorEmpleado.get(primera.personId);
-    if (!/^\d{2}:\d{2}$/.test(esperado || '')) continue;
-    const d = new Date(new Date(primera.ts).getTime() - 5 * 3600000); // hora Bogotá
-    const min = d.getUTCHours() * 60 + d.getUTCMinutes();
-    const [h, m] = esperado.split(':').map(Number);
-    if (min >= h * 60 + m + LATE_TOLERANCE_MIN && !primera.flag) primera.flag = 'late-entry';
-  }
-
-  store.events = eventos;
+  store.events = construirEventos(marc.marcaciones, corr.correcciones);
   store.cargado = true;
   return store;
 }
@@ -185,6 +205,11 @@ export async function updatePerson(id, partial) {
   if ('expectedExit' in partial) body.salida_esperada = partial.expectedExit || null;
   if ('breakMinutes' in partial) body.almuerzo_min = partial.breakMinutes === '' || partial.breakMinutes == null ? null : Number(partial.breakMinutes);
   if ('jornadaSemanal' in partial) body.jornada_semanal = partial.jornadaSemanal;
+  // Salario: '' o null lo dejan SIN registrar (y sus horas sin valorizar).
+  if ('salarioMensual' in partial) {
+    const s = partial.salarioMensual;
+    body.salario_mensual = s === '' || s == null ? null : Number(s);
+  }
   const d = await api(`/api/empleados/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
   return { name: d.empleado.nombre };
 }
@@ -195,15 +220,13 @@ export async function addPerson(name, descriptor, extra = {}) {
     const d = await api('/api/empleados', {
       method: 'POST',
       body: JSON.stringify({
-        // Identidad: el servidor la toma del gestor vía colaborador_id; el
-        // nombre/cédula del cliente son solo referencia.
-        colaborador_id: extra.colaboradorId ?? null,
         nombre: name,
         cedula: extra.cedula || null,
         sede_id: sede?.id ?? extra.sedeId ?? null,
         entrada_esperada: extra.expectedEntry || null,
         salida_esperada: extra.expectedExit || null,
         almuerzo_min: extra.breakMinutes ?? null,
+        salario_mensual: extra.salarioMensual ?? null,
         descriptor_facial: descriptor,
       }),
     });
@@ -291,18 +314,73 @@ export function getLaborConfig() {
 
 /**
  * Actualiza local al instante (para la UI) y persiste en el servidor.
- * Solo la gracia es editable aquí; jornada y festivos se cambian en el gestor.
+ * Todo es editable: cada empresa define sus propias reglas.
  */
 export function saveLaborConfig(partial) {
   store.cfg = { ...store.cfg, ...partial };
   const body = {};
   if ('graceMinutes' in partial) body.gracia_min = partial.graceMinutes;
-  // Jornada y festivos solo viajan si esta instalación los administra.
-  const editable = (campo) => !(store.cfg.soloLectura ?? []).includes(campo);
-  if ('weeklyHours' in partial && editable('horas_semana')) body.horas_semana = partial.weeklyHours;
-  if ('holidays' in partial && editable('festivos')) body.festivos = partial.holidays;
+  if ('weeklyHours' in partial) body.horas_semana = partial.weeklyHours;
+  if ('holidays' in partial) body.festivos = partial.holidays;
+  if ('factores' in partial) body.factores_hora = partial.factores;
+  if ('divisorHorasMes' in partial) body.divisor_horas_mes = Number(partial.divisorHorasMes);
+  if ('nocturnoInicio' in partial) body.nocturno_inicio = partial.nocturnoInicio;
+  if ('nocturnoFin' in partial) body.nocturno_fin = partial.nocturnoFin;
   if (Object.keys(body).length === 0) return store.cfg;
   api('/api/config', { method: 'PATCH', body: JSON.stringify(body) })
     .catch((e) => console.error('No se pudo guardar la configuración:', e.message));
   return store.cfg;
+}
+
+// ── Horas extra valorizadas ───────────────────────────────────────────
+
+/**
+ * Tramos con recargo del período, ya con su valor en pesos.
+ *
+ * Viene del SERVIDOR (`GET /api/horas`), no del cálculo aproximado que el
+ * panel hace para el resto de la pantalla: es exactamente lo mismo que
+ * consume quien liquida, y en un reporte que habla de dinero no puede haber
+ * dos cifras distintas según dónde se mire.
+ *
+ * @param {string} desde  YYYY-MM-DD
+ * @param {string} hasta  YYYY-MM-DD
+ * @returns {Promise<Array>} tramos {documento, fecha, tipoHora, horas, factor, valorHora, valor, …}
+ */
+export async function getHorasValorizadas(desde, hasta) {
+  const d = await api(`/api/horas?desde=${desde}&hasta=${hasta}`);
+  return d.registros ?? [];
+}
+
+/**
+ * Marca (o desmarca) tramos de hora extra como ya pagados.
+ *
+ * Se envían las REFERENCIAS de los tramos, no un rango: la referencia
+ * identifica un tramo concreto y sobrevive a los recálculos.
+ *
+ * @param {string[]} referencias
+ * @param {boolean} pagado
+ */
+export async function marcarHorasPagadas(referencias, pagado) {
+  await api('/api/horas/pagadas', {
+    method: 'POST',
+    body: JSON.stringify({ referencias, pagado }),
+  });
+}
+
+/**
+ * Eventos de asistencia de un rango CUALQUIERA, pedidos al servidor.
+ *
+ * `syncPanel` solo trae los últimos 60 días — suficiente para el dashboard,
+ * pero no para un reporte de un mes viejo. Sin esto, pedir enero mostraba las
+ * horas extra (que sí se calculan en el servidor sobre cualquier rango) al
+ * lado de cero días trabajados, que se lee como un error del sistema.
+ *
+ * @param {string} desde  YYYY-MM-DD (día Bogotá)
+ * @param {string} hasta  YYYY-MM-DD (inclusive)
+ */
+export async function getEventosRango(desde, hasta) {
+  const d = await api(`/api/marcaciones?desde=${desde}&hasta=${hasta}`);
+  // Las correcciones ya están en memoria y no dependen del rango: se reusan
+  // en vez de pedirlas otra vez (solo aportan el flag 'corrected').
+  return construirEventos(d.marcaciones ?? [], store.audit);
 }

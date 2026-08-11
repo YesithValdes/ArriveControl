@@ -5,7 +5,7 @@
  *          conserva; el kiosco deja de reconocerlo.
  */
 import { NextResponse } from 'next/server'
-import { pool } from '../../../../lib/db.js'
+import { conEmpresa } from '../../../../lib/db.js'
 import { estadoAcceso } from '../../../../lib/sesion'
 
 export const runtime = 'nodejs'
@@ -18,6 +18,7 @@ const CAMPOS = {
   salida_esperada: 'salida_esperada',
   almuerzo_min: 'almuerzo_min',
   jornada_semanal: 'jornada_semanal',
+  salario_mensual: 'salario_mensual',
   descriptor_facial: 'descriptor_facial',
   activo: 'activo',
 }
@@ -26,8 +27,14 @@ const CAMPOS = {
 const jornadaValida = (v) =>
   v === null || (Array.isArray(v) && v.length === 6 && v.every((h) => typeof h === 'number' && h >= 0 && h <= 12))
 
+/**
+ * Salario mensual: OPCIONAL. null borra el que hubiera (y sus horas dejan de
+ * valorizarse); cualquier otro valor debe ser un número positivo.
+ */
+const salarioValido = (v) => v === null || (typeof v === 'number' && Number.isFinite(v) && v > 0)
+
 export async function PATCH(req, { params }) {
-  const { estado } = await estadoAcceso('empleados')
+  const { estado, esquema } = await estadoAcceso('empleados')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params
@@ -44,6 +51,9 @@ export async function PATCH(req, { params }) {
       if (k === 'jornada_semanal' && !jornadaValida(v)) {
         return NextResponse.json({ ok: false, error: 'jornada_semanal debe ser null o 6 horas (lun–sáb) entre 0 y 12.' }, { status: 400 })
       }
+      if (k === 'salario_mensual' && !salarioValido(v)) {
+        return NextResponse.json({ ok: false, error: 'El salario mensual debe ser un número mayor que cero, o null para dejarlo sin registrar.' }, { status: 400 })
+      }
       args.push(v)
       sets.push(`${col} = $${args.length}`)
     }
@@ -52,11 +62,11 @@ export async function PATCH(req, { params }) {
 
   args.push(id)
   try {
-    const { rows } = await pool.query(
-      `update asistencia.empleados set ${sets.join(', ')} where id = $${args.length}
-       returning id, nombre, cedula, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_semanal, activo`,
+    const { rows } = await conEmpresa(esquema, (db) => db.query(
+      `update empleados set ${sets.join(', ')} where id = $${args.length}
+       returning id, nombre, cedula, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_semanal, salario_mensual, activo`,
       args,
-    )
+    ))
     if (rows.length === 0) return NextResponse.json({ ok: false, error: 'Empleado no encontrado.' }, { status: 404 })
     return NextResponse.json({ ok: true, empleado: rows[0] })
   } catch (e) {
@@ -66,14 +76,14 @@ export async function PATCH(req, { params }) {
 }
 
 export async function DELETE(req, { params }) {
-  const { estado } = await estadoAcceso('empleados')
+  const { estado, esquema } = await estadoAcceso('empleados')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params
-  const { rows } = await pool.query(
-    `update asistencia.empleados set activo = false where id = $1 returning id`,
+  const { rows } = await conEmpresa(esquema, (db) => db.query(
+    `update empleados set activo = false where id = $1 returning id`,
     [id],
-  )
+  ))
   if (rows.length === 0) return NextResponse.json({ ok: false, error: 'Empleado no encontrado.' }, { status: 404 })
   return NextResponse.json({ ok: true })
 }
