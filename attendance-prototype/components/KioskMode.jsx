@@ -235,11 +235,47 @@ export default function KioskMode() {
   const acquireWakeLock = useCallback(async () => {
     try { if ('wakeLock' in navigator) wakeLockRef.current = await navigator.wakeLock.request('screen'); } catch {}
   }, []);
+  // Al volver del segundo plano (una LLAMADA, cambiar de app, apagar la
+  // pantalla), Android le QUITA la cámara al WebView: el track queda 'ended',
+  // el video congelado y el kiosco se veía "pegado". Aquí se recupera solo:
+  // se vuelve a pedir la cámara, se re-engancha al <video> y el reto se
+  // reinicia limpio (el que estaba a medias ya no vale tras la interrupción).
+  const reanudarCamara = useCallback(async () => {
+    const track = streamRef.current?.getVideoTracks?.()[0];
+    if (track && track.readyState === 'live') {
+      // La cámara sobrevivió: basta reanudar el video (queda pausado a veces).
+      videoRef.current?.play?.().catch(() => {});
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      streamRef.current?.getTracks?.().forEach((t) => t.stop());
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        if (document.visibilityState === 'visible') reanudarCamara();
+      });
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      stateRef.current = { phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], lastCapture: 0, captures: 0 };
+      setResult(null);
+      ponerProgreso(0);
+      ponerEncuadre('ok');
+      setUi('idle');
+    } catch {
+      // Sin permiso o cámara aún ocupada por la llamada: el próximo
+      // visibilitychange (o tocar Detener/Iniciar) lo reintenta.
+    }
+  }, []);
+
   useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === 'visible' && running) acquireWakeLock(); };
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || !running) return;
+      acquireWakeLock();
+      reanudarCamara();
+    };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [running, acquireWakeLock]);
+  }, [running, acquireWakeLock, reanudarCamara]);
 
   const stopAll = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -297,6 +333,12 @@ export default function KioskMode() {
     }).catch(() => {});
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      // Si el sistema mata el track SIN ocultar la app (llamada en burbuja,
+      // otra app pidiendo la cámara), se recupera igual que al volver del
+      // segundo plano. Oculta, no: el visibilitychange lo hará al volver.
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        if (document.visibilityState === 'visible') reanudarCamara();
+      });
       streamRef.current = stream;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
