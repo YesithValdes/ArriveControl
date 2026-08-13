@@ -566,8 +566,11 @@ export default function KioskMode() {
           ) : ui === 'challenge' ? (
             <>
               <div style={s.hudTitulo}>Parpadea <span className="ac-ojo">👁</span></div>
+              {/* Sin estado "Verificando…": el avance ya lo cuenta la barra
+                  de progreso, y con el cierre instantáneo solo alcanzaba a
+                  parpadear en pantalla. */}
               <div style={s.hudDetalle}>
-                {scanProg >= 75 ? 'Verificando…' : scanProg >= 50 ? 'Parpadea' : 'Mira de frente'}
+                {scanProg >= 50 ? 'Parpadea' : 'Mira de frente'}
               </div>
             </>
           ) : (
