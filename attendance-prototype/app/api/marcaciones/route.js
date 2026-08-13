@@ -61,7 +61,9 @@ export async function POST(req) {
     return NextResponse.json({ ok: false, error: 'Un envío diferido necesita ts_dispositivo.' }, { status: 400 })
   }
 
-  const r = await registrarPaso({ esquema: ctx.esquema, empleadoId, sedeId, tsDispositivo: tsDispositivo ?? null, diferido: !!diferido })
+  // sede_id "" (dispositivo sin sede, o colas viejas del kiosco) se vuelve
+  // null: la columna es uuid y la cadena vacía revienta el insert con 500.
+  const r = await registrarPaso({ esquema: ctx.esquema, empleadoId, sedeId: sedeId || null, tsDispositivo: tsDispositivo ?? null, diferido: !!diferido })
   if (r.error) return NextResponse.json({ ok: false, error: r.error }, { status: 404 })
   if (r.duplicado) return NextResponse.json({ ok: true, duplicado: true, ultima: r.ultima })
   return NextResponse.json({ ok: true, tipo: r.tipo, marcacion: r.marcacion })

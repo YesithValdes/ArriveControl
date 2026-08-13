@@ -131,7 +131,9 @@ export const pendientesEnCola = () => leerCola().length;
  * su marcación quedó guardada pero aún no sincronizada.
  */
 export async function registrarPaso(empleadoId) {
-  const cuerpo = { empleado_id: empleadoId, sede_id: getSedeId() };
+  // sede_id nulo (no ""): un dispositivo sin sede mandaba cadena vacía y el
+  // insert reventaba en Postgres (la columna es uuid) — 500 en cada intento.
+  const cuerpo = { empleado_id: empleadoId, sede_id: getSedeId() || null };
   let r;
   try {
     r = await fetch('/api/marcaciones', { method: 'POST', headers: headers(), body: JSON.stringify(cuerpo) });
@@ -155,12 +157,20 @@ export async function registrarPaso(empleadoId) {
   return { tipo: d.tipo, marcacion: d.marcacion };
 }
 
-/** Reenvía la cola pendiente. Devuelve cuántas SALIERON de la cola. */
+/**
+ * Reenvía la cola pendiente.
+ * @returns {{enviadas:number, quedan:number, motivo:string|null}} `motivo` es
+ * la causa (legible) por la que quedaron marcaciones sin enviar, para que el
+ * kiosco la MUESTRE — una cola que no baja sin decir por qué es indebuggeable.
+ */
 export async function sincronizarCola() {
   const cola = leerCola();
-  if (cola.length === 0) return 0;
+  if (cola.length === 0) return { enviadas: 0, quedan: 0, motivo: null };
   const restantes = [];
+  let motivo = null;
   for (const item of cola) {
+    // sede_id "" de colas viejas: se normaliza a null (uuid inválido → 500).
+    if (item.sede_id === '') item.sede_id = null;
     try {
       const r = await fetch('/api/marcaciones', { method: 'POST', headers: headers(), body: JSON.stringify(item) });
       if (r.ok) continue; // sincronizada
@@ -168,13 +178,17 @@ export async function sincronizarCola() {
       // 401 (clave revocada), 402 (suscripción vencida), 5xx: son horas
       // trabajadas y el rechazo puede ser transitorio — se conservan y se
       // reintentará cuando el aparato se reactive / la suscripción vuelva.
+      let d = null;
+      try { d = await r.json(); } catch { /* cuerpo vacío o no-JSON */ }
+      motivo = d?.detalle || d?.error || `El servidor respondió ${r.status}.`;
       restantes.push(item);
     } catch {
+      motivo = 'Sin conexión con el servidor.';
       restantes.push(item); // sigue sin red: se conserva
     }
   }
   guardarCola(restantes);
-  return cola.length - restantes.length;
+  return { enviadas: cola.length - restantes.length, quedan: restantes.length, motivo };
 }
 
 /** Log de intento de reconocimiento (fire-and-forget: nunca bloquea el kiosco). */

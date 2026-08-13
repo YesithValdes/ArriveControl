@@ -79,6 +79,7 @@ export default function KioskMode() {
   const [result, setResult] = useState(null); // { ok, name, time, distance, reason }
   const [peopleCount, setPeopleCount] = useState(0);
   const [pendientes, setPendientes] = useState(0); // cola offline sin sincronizar
+  const [syncMotivo, setSyncMotivo] = useState(null); // por qué la cola no baja
 
   // ACTIVACIÓN del dispositivo (una sola vez, SOLO con código): el
   // administrador genera el código en el panel web (Dispositivos → Vincular
@@ -118,13 +119,17 @@ export default function KioskMode() {
     });
   }, []);
 
-  // Cola offline: reintenta al reconectar y cada minuto.
+  // Cola offline: reintenta al ABRIR la app, al reconectar y cada minuto.
+  // (Antes no había intento al abrir: recién conectado, la cola se quedaba
+  // quieta hasta un minuto, o hasta que dispararan el evento 'online'.)
   useEffect(() => {
     const flush = async () => {
-      await sincronizarCola();
+      const { motivo } = await sincronizarCola();
       // Siempre se refresca: también bajan las que el servidor descartó.
       setPendientes(pendientesEnCola());
+      setSyncMotivo(motivo);
     };
+    flush().catch(() => {});
     window.addEventListener('online', flush);
     const id = setInterval(flush, 60000);
     return () => { window.removeEventListener('online', flush); clearInterval(id); };
@@ -278,7 +283,10 @@ export default function KioskMode() {
       return;
     }
     // Aprovechar el arranque para vaciar la cola offline pendiente.
-    sincronizarCola().then(() => setPendientes(pendientesEnCola())).catch(() => {});
+    sincronizarCola().then(({ motivo }) => {
+      setPendientes(pendientesEnCola());
+      setSyncMotivo(motivo);
+    }).catch(() => {});
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
       streamRef.current = stream;
@@ -654,6 +662,7 @@ export default function KioskMode() {
           {pendientes > 0 && (
             <div style={s.pendNote}>
               📶 {pendientes === 1 ? '1 marcación guardada' : `${pendientes} marcaciones guardadas`} por enviar; se envían solas al volver el internet.
+              {syncMotivo && <div style={s.errNote}>No se pudieron enviar: {syncMotivo}</div>}
             </div>
           )}
           <div style={s.privacy}>🔐 No se guardan fotos</div>
