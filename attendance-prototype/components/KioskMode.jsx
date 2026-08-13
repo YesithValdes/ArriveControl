@@ -121,8 +121,9 @@ export default function KioskMode() {
   // Cola offline: reintenta al reconectar y cada minuto.
   useEffect(() => {
     const flush = async () => {
-      const n = await sincronizarCola();
-      if (n > 0) setPendientes(pendientesEnCola());
+      await sincronizarCola();
+      // Siempre se refresca: también bajan las que el servidor descartó.
+      setPendientes(pendientesEnCola());
     };
     window.addEventListener('online', flush);
     const id = setInterval(flush, 60000);
@@ -448,6 +449,7 @@ export default function KioskMode() {
       stNow.until = performance.now() + RESULT_SHOW_MS;
 
       if (paso.errorConfig) {
+        // (con clave rechazada, registrarPaso lanza y cae al catch de abajo)
         setResult({ kind: 'no', name: person.name, time, reason: `No se pudo registrar: ${paso.errorConfig}` });
         setUi('no');
         return;
@@ -475,6 +477,20 @@ export default function KioskMode() {
         flag: null,
       });
       setUi('ok');
+    }).catch((e) => {
+      const stNow = stateRef.current;
+      stNow.until = performance.now() + RESULT_SHOW_MS;
+      if (e instanceof ClaveRechazada) {
+        // El aparato fue revocado: parar y pedir reactivación (la cola local
+        // se conserva; son horas trabajadas).
+        stopAll();
+        olvidarActivacion();
+        setConfigurado(false);
+        setCfgError('Este dispositivo ya no está autorizado. Vuelve a registrarlo.');
+        return;
+      }
+      setResult({ kind: 'no', name: person.name, time, reason: `No se pudo registrar: ${e.message}` });
+      setUi('no');
     });
   }
 
@@ -635,6 +651,11 @@ export default function KioskMode() {
             </button>
           )}
           {running && <button style={s.stopBtn} onClick={stopAll}>⏹ Detener</button>}
+          {pendientes > 0 && (
+            <div style={s.pendNote}>
+              📶 {pendientes === 1 ? '1 marcación guardada' : `${pendientes} marcaciones guardadas`} por enviar; se envían solas al volver el internet.
+            </div>
+          )}
           <div style={s.privacy}>🔐 No se guardan fotos</div>
           {loadError && <div style={s.errNote}>{loadError}</div>}
         </div>
@@ -833,6 +854,7 @@ const s = {
   stopBtn: { marginTop: 24, background: 'transparent', color: 'var(--muted)', border: '1px solid var(--border)', fontSize: 14, fontFamily: 'inherit', padding: '10px 28px', borderRadius: 'var(--r-md)', cursor: 'pointer' },
   privacy: { marginTop: 'auto', paddingTop: 24, textAlign: 'center', fontSize: 11, color: 'var(--muted)' },
   errNote: { marginTop: 10, fontSize: 12, color: 'var(--k-no)', textAlign: 'center', fontFamily: 'var(--f-data)' },
+  pendNote: { marginTop: 10, fontSize: 12, color: 'var(--muted)', textAlign: 'center', maxWidth: 300 },
   // Configuración del dispositivo (clave + sede) y cola offline
   cfgBox: { marginTop: 20, display: 'flex', flexDirection: 'column', gap: 10, width: '100%', maxWidth: 300 },
   cfgTitle: { fontSize: 13, fontWeight: 700, textAlign: 'center', opacity: 0.85 },

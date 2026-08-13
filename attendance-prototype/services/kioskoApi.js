@@ -132,41 +132,49 @@ export const pendientesEnCola = () => leerCola().length;
  */
 export async function registrarPaso(empleadoId) {
   const cuerpo = { empleado_id: empleadoId, sede_id: getSedeId() };
+  let r;
   try {
-    const r = await fetch('/api/marcaciones', { method: 'POST', headers: headers(), body: JSON.stringify(cuerpo) });
-    const d = await r.json();
-    if (r.status === 404) return { errorConfig: 'Empleado no encontrado en la base de datos.' };
-    if (r.status === 400 || r.status === 500) return { errorConfig: d.error };
-    if (!r.ok) throw new Error(d.error || `Error ${r.status}`);
-    if (d.duplicado) return { duplicado: true, ultima: d.ultima };
-    return { tipo: d.tipo, marcacion: d.marcacion };
+    r = await fetch('/api/marcaciones', { method: 'POST', headers: headers(), body: JSON.stringify(cuerpo) });
   } catch {
-    // Sin red: a la cola con la hora del dispositivo (única vez que se usa).
+    // Sin red DE VERDAD (el fetch ni llegó): a la cola con la hora del
+    // dispositivo (única vez que se usa). Cualquier otra cosa —el servidor
+    // respondió, aunque sea con error— NO es un problema de conexión y no
+    // debe encolarse: antes un 401/402 se encolaba como "sin red", el kiosco
+    // decía "se enviará sola" y el reintento la rechazaba para siempre.
     const cola = leerCola();
     cola.push({ ...cuerpo, ts_dispositivo: new Date().toISOString(), diferido: true });
     guardarCola(cola);
     return { pendiente: true, enCola: cola.length };
   }
+  let d = null;
+  try { d = await r.json(); } catch { /* cuerpo vacío o no-JSON */ }
+  if (r.status === 401) throw new ClaveRechazada(d?.detalle || d?.error);
+  if (r.status === 404) return { errorConfig: 'Empleado no encontrado en la base de datos.' };
+  if (!r.ok) return { errorConfig: d?.detalle || d?.error || `El servidor respondió ${r.status}.` };
+  if (d?.duplicado) return { duplicado: true, ultima: d.ultima };
+  return { tipo: d.tipo, marcacion: d.marcacion };
 }
 
-/** Reenvía la cola pendiente. Devuelve cuántas se sincronizaron. */
+/** Reenvía la cola pendiente. Devuelve cuántas SALIERON de la cola. */
 export async function sincronizarCola() {
   const cola = leerCola();
   if (cola.length === 0) return 0;
   const restantes = [];
-  let ok = 0;
   for (const item of cola) {
     try {
       const r = await fetch('/api/marcaciones', { method: 'POST', headers: headers(), body: JSON.stringify(item) });
-      if (r.ok) ok += 1;
-      else if (r.status === 404) ok += 0; // empleado borrado: se descarta
-      else restantes.push(item);
+      if (r.ok) continue; // sincronizada
+      if (r.status === 404 || r.status === 400) continue; // rechazo definitivo (empleado borrado, datos inválidos): reintentar jamás va a funcionar
+      // 401 (clave revocada), 402 (suscripción vencida), 5xx: son horas
+      // trabajadas y el rechazo puede ser transitorio — se conservan y se
+      // reintentará cuando el aparato se reactive / la suscripción vuelva.
+      restantes.push(item);
     } catch {
       restantes.push(item); // sigue sin red: se conserva
     }
   }
   guardarCola(restantes);
-  return ok;
+  return cola.length - restantes.length;
 }
 
 /** Log de intento de reconocimiento (fire-and-forget: nunca bloquea el kiosco). */
