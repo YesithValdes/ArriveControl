@@ -394,6 +394,10 @@ export default function KioskMode() {
             st.deadline = now + CHALLENGE_TIMEOUT_MS;
             st.sawOpen = false; st.sawClosed = false;
             st.descs = []; st.captures = 0; st.lastCapture = 0;
+            // Cronómetro del reto: cuánto tarda cada validación (se lee en el
+            // logcat de Android como mensajes de consola del WebView).
+            st.t0 = now; st.tParpadeo = null; st.tCaptura = null;
+            console.log('[Kiosco⏱] reto iniciado: cara detectada');
             setResult(null);
             ponerProgreso(25); // fase 1: rostro detectado
             setUi('challenge');
@@ -433,6 +437,10 @@ export default function KioskMode() {
           // párpados es lo que demuestra vida; una foto no lo tiene.
           if (bothOpen < 0.15) st.sawOpen = true;
           if (bothClosed > 0.55) st.sawClosed = true;
+          if (st.sawOpen && st.sawClosed && st.tParpadeo == null) {
+            st.tParpadeo = now - st.t0;
+            console.log(`[Kiosco⏱] OJOS listos a los ${Math.round(st.tParpadeo)} ms (abierto y cerrado vistos)`);
+          }
           // Barra HUD atada a las fases reales del reto.
           ponerProgreso(st.sawOpen && st.sawClosed ? 75 : (st.sawOpen || st.sawClosed) ? 50 : 25);
 
@@ -441,7 +449,17 @@ export default function KioskMode() {
             faBusy = true; st.captures += 1; st.lastCapture = now;
             faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }))
               .withFaceLandmarks().withFaceDescriptor()
-              .then((det) => { if (det) st.descs.push(Array.from(det.descriptor)); })
+              .then((det) => {
+                if (det) {
+                  st.descs.push(Array.from(det.descriptor));
+                  if (st.tCaptura == null) {
+                    st.tCaptura = performance.now() - st.t0;
+                    console.log(`[Kiosco⏱] ROSTRO listo a los ${Math.round(st.tCaptura)} ms (primera captura de identidad)`);
+                  }
+                } else {
+                  console.log('[Kiosco⏱] captura de rostro sin resultado (face-api no vio la cara en ese cuadro)');
+                }
+              })
               .catch(() => {}).finally(() => { faBusy = false; });
           }
 
@@ -451,6 +469,9 @@ export default function KioskMode() {
           // condición extra es tener al menos una captura de identidad, que
           // se toma en los cuadros previos con los ojos abiertos.
           if (st.sawOpen && st.sawClosed && st.descs.length > 0) {
+            const total = Math.round(now - st.t0);
+            const primero = (st.tParpadeo ?? Infinity) <= (st.tCaptura ?? Infinity) ? 'OJOS' : 'ROSTRO';
+            console.log(`[Kiosco⏱] CONCLUYE a los ${total} ms — primero terminó: ${primero} (ojos: ${Math.round(st.tParpadeo ?? -1)} ms, rostro: ${Math.round(st.tCaptura ?? -1)} ms)`);
             const live = averageDescriptors(st.descs);
             let best = { distance: Infinity, person: null };
             for (const p of peopleRef.current) {
