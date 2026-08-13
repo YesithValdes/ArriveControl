@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Logo Control Registro — opción B «C-dial»: la C como carátula de reloj
+       con marcas de hora y una manecilla. Blanco sobre el azul de la marca. -->
+  <rect width="64" height="64" rx="14" fill="#3a5570"/>
+  <g transform="translate(6.4 6.4) scale(0.8)" stroke="#fff" stroke-linecap="round" fill="none">
+    <path d="M 51 17.5 A 24 24 0 1 0 51 46.5" stroke-width="7.5"/>
+    <line x1="32" y1="10" x2="32" y2="15" stroke-width="3.4"/>
+    <line x1="10" y1="32" x2="15" y2="32" stroke-width="3.4"/>
+    <line x1="32" y1="49" x2="32" y2="54" stroke-width="3.4"/>
+    <circle cx="32" cy="32" r="3" fill="#fff" stroke="none"/>
+    <line x1="32" y1="32" x2="41" y2="23" stroke-width="4.4"/>
+  </g>
+</svg>

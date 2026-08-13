@@ -11,8 +11,8 @@
  * `sede_id` sí apunta al esquema de la empresa y va sin llave foránea — la
  * base no puede validarlo, así que se valida al activar el dispositivo.
  */
-import { createHash, randomBytes } from 'node:crypto'
-import { control, conEmpresa } from './db.js'
+import { createHash, randomBytes, randomInt } from 'node:crypto'
+import { control, conEmpresa, enTransaccion } from './db.js'
 
 const sha256 = (s) => createHash('sha256').update(s).digest('hex')
 
@@ -61,6 +61,105 @@ export async function listarDispositivos(empresa) {
   )
   const porId = new Map(sedes.map((s) => [s.id, s.nombre]))
   return rows.map((d) => ({ ...d, sede_nombre: porId.get(d.sede_id) ?? null }))
+}
+
+// ── Vinculación por código ─────────────────────────────────────────────
+//
+// Activar un kiosco sin iniciar sesión en él. El administrador genera el
+// código desde el panel (donde sí tiene sesión) y lo teclea en el aparato.
+// Ver db/migrations/control/004_vinculaciones.sql para el porqué.
+
+/** 8 dígitos con aleatoriedad criptográfica: es una credencial, no un id. */
+const generarCodigo = () => String(randomInt(0, 100_000_000)).padStart(8, '0')
+
+/** 12345678 → "1234-5678". Solo para mostrar; en la base va sin guion. */
+export const formatearCodigo = (c) => `${c.slice(0, 4)}-${c.slice(4)}`
+
+/**
+ * Crea un código para vincular un aparato nuevo.
+ * El nombre y la sede se deciden AQUÍ, no en el aparato: así un kiosco no
+ * puede asignarse a una sede que no le corresponde.
+ */
+export async function crearVinculacion({ empresa, nombre, sedeId = null, creadaPor = null }) {
+  if (sedeId) {
+    const existe = await conEmpresa(empresa.esquema, async (db) =>
+      (await db.query(`select 1 from sedes where id = $1`, [sedeId])).rowCount > 0,
+    )
+    if (!existe) return { error: 'SEDE_NO_ENCONTRADA' }
+  }
+
+  // Reintento por si el código ya existía: con 100 millones es rarísimo, pero
+  // la clave primaria lo rechazaría y el usuario vería un error incomprensible.
+  for (let intento = 0; intento < 5; intento++) {
+    try {
+      const { rows } = await control(
+        `insert into control.vinculaciones (codigo, empresa_id, nombre, sede_id, creada_por)
+         values ($1,$2,$3,$4,$5)
+         returning codigo, expira_en`,
+        [generarCodigo(), empresa.id, nombre, sedeId, creadaPor],
+      )
+      return rows[0]
+    } catch (e) {
+      if (e.code !== '23505') throw e
+    }
+  }
+  return { error: 'NO_SE_PUDO_GENERAR' }
+}
+
+/**
+ * Canjea un código por la clave definitiva del dispositivo.
+ *
+ * Esta es la ÚNICA operación del sistema que se atiende sin sesión y sin clave
+ * de dispositivo — el código es toda la credencial. Por eso: de un solo uso,
+ * caduca en minutos, y se marca como usado dentro de la misma transacción en
+ * que se crea el aparato, para que dos canjes simultáneos no den dos claves.
+ *
+ * @returns {Promise<{clave, nombre, sedeId, empresa}|{error}>}
+ */
+export async function canjearVinculacion(codigoCrudo) {
+  const codigo = String(codigoCrudo ?? '').replace(/\D/g, '')
+  if (!/^\d{8}$/.test(codigo)) return { error: 'CODIGO_INVALIDO' }
+
+  return enTransaccion(async (db) => {
+    // `for update` serializa dos canjes del mismo código: el segundo espera y
+    // encuentra `usada_en` ya puesto.
+    const { rows } = await db.query(
+      `select v.codigo, v.empresa_id, v.nombre, v.sede_id, v.expira_en, v.usada_en,
+              e.esquema, e.nombre as empresa_nombre
+         from control.vinculaciones v
+         join control.empresas e on e.id = v.empresa_id
+        where v.codigo = $1
+        for update of v`,
+      [codigo],
+    )
+    const v = rows[0]
+    if (!v) return { error: 'CODIGO_INVALIDO' }
+    if (v.usada_en) return { error: 'CODIGO_USADO' }
+    if (new Date(v.expira_en) < new Date()) return { error: 'CODIGO_VENCIDO' }
+
+    const clave = randomBytes(24).toString('base64url')
+    await db.query(
+      `insert into control.dispositivos (empresa_id, nombre, sede_id, clave_hash, activado_por)
+       values ($1,$2,$3,$4,$5)`,
+      [v.empresa_id, v.nombre, v.sede_id, sha256(clave), `vinculación ${codigo}`],
+    )
+    await db.query(
+      `update control.vinculaciones set usada_en = now() where codigo = $1`, [codigo],
+    )
+    return { clave, nombre: v.nombre, sedeId: v.sede_id, empresa: v.empresa_nombre }
+  })
+}
+
+/** Códigos vivos de una empresa, para mostrarlos en el panel. */
+export async function vinculacionesPendientes(empresa) {
+  const { rows } = await control(
+    `select codigo, nombre, sede_id, expira_en
+       from control.vinculaciones
+      where empresa_id = $1 and usada_en is null and expira_en > now()
+      order by creada_en desc`,
+    [empresa.id],
+  )
+  return rows
 }
 
 /**

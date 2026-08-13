@@ -9,6 +9,18 @@
  * `horasDia` asume semana de 6 días, que es la de esta empresa.
  */
 
+/**
+ * Salario mínimo mensual legal vigente, en pesos.
+ *
+ * Se usa como valor POR DEFECTO al registrar a alguien: es lo que gana la
+ * mayoría en las empresas que usan esto, y evita dejar el campo vacío —sin
+ * salario las horas extra no se valorizan— o teclear siete dígitos cada vez.
+ *
+ * OJO: cambia cada enero por decreto. Actualízalo aquí y punto: es el único
+ * sitio donde vive.
+ */
+export const SALARIO_MINIMO = 1_759_905
+
 /** Vigencias de la jornada máxima legal, de la más reciente a la más antigua. */
 export const VIGENCIAS_LEY_2101 = [
   { desde: '2026-07-15', horasSemana: 42, horasDia: 7 },

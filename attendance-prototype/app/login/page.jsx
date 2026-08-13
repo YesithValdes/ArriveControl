@@ -1,10 +1,11 @@
 'use client'
 
 /**
- * app/login/page.jsx — Inicio de sesión.
+ * app/login/page.jsx — Inicio de sesión de Control Registro.
  *
- * Usuarios PROPIOS de ArriveControl (esquema `asistencia`). Aquí no se crean
- * cuentas: las da de alta un dueño desde Ajustes → Usuarios.
+ * Pantalla dividida: a la izquierda la marca e información del sistema, a la
+ * derecha el formulario. Usuarios PROPIOS del sistema (esquema `asistencia`).
+ * Aquí no se crean cuentas: las da de alta un dueño desde Ajustes → Usuarios.
  */
 import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -19,6 +20,23 @@ export default function LoginPage() {
   )
 }
 
+/* Logotipo oficial «C-dial»: la C como carátula de reloj con marcas de hora
+   y una manecilla. El mismo arte de public/icon.svg, en blanco. */
+function LogoControlRegistro({ size = 72 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
+      <g stroke="#fff" strokeLinecap="round" fill="none">
+        <path d="M 51 17.5 A 24 24 0 1 0 51 46.5" strokeWidth="7.5" />
+        <line x1="32" y1="10" x2="32" y2="15" strokeWidth="3.4" />
+        <line x1="10" y1="32" x2="15" y2="32" strokeWidth="3.4" />
+        <line x1="32" y1="49" x2="32" y2="54" strokeWidth="3.4" />
+        <circle cx="32" cy="32" r="3" fill="#fff" stroke="none" />
+        <line x1="32" y1="32" x2="41" y2="23" strokeWidth="4.4" />
+      </g>
+    </svg>
+  )
+}
+
 function LoginForm() {
   const router = useRouter()
   const params = useSearchParams()
@@ -29,9 +47,11 @@ function LoginForm() {
     : '')
   const [cargando, setCargando] = useState(false)
 
-  // Correo y contraseña solo existen en desarrollo (ver lib/auth.js). En
-  // producción el formulario ni se pinta: entrar es entrar con Google.
-  const conClave = process.env.NODE_ENV !== 'production'
+  // Correo y contraseña SIEMPRE disponibles, pero como segunda opción: Google
+  // arriba porque es quien verifica la identidad, y la contraseña abajo para
+  // los sitios donde Google no funciona — sobre todo la app de Android, donde
+  // Google bloquea su propio inicio de sesión.
+  const conClave = true
 
   const destino = params.get('destino') || '/admin'
 
@@ -60,84 +80,151 @@ function LoginForm() {
   }
 
   return (
-    <main style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24 }}>
-      <form
-        onSubmit={enviar}
-        style={{ width: '100%', maxWidth: 380, display: 'flex', flexDirection: 'column', gap: 14 }}
+    <main
+      style={{
+        minHeight: '100dvh',
+        display: 'grid',
+        placeItems: 'center',
+        padding: 24,
+        background: 'linear-gradient(160deg, #3a5570 0%, #557d9e 100%)',
+      }}
+    >
+      {/* En móvil solo se muestra el formulario: la mitad de marca se oculta. */}
+      <style>{`
+        /* Sin este reset (globals.css no lo trae), el padding de inputs y
+           botones se suma al ancho y se salen de la tarjeta en móvil. */
+        .login-tarjeta, .login-tarjeta * { box-sizing: border-box; }
+        .login-tarjeta input { width: 100%; min-width: 0; }
+        .login-tarjeta section { min-width: 0; }
+        @media (max-width: 720px) {
+          .login-marca { display: none !important; }
+          .login-tarjeta { grid-template-columns: 1fr !important; }
+          .login-tarjeta section { padding: 32px 20px; }
+        }
+      `}</style>
+      {/* Tarjeta redondeada que encierra las dos mitades. */}
+      <div
+        className="login-tarjeta"
+        style={{
+          width: '100%', maxWidth: 980,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))',
+          borderRadius: 20,
+          overflow: 'hidden',
+          boxShadow: '0 24px 60px rgba(2, 6, 23, 0.45)',
+          background: '#fff',
+        }}
       >
+      {/* Mitad izquierda: marca e información del sistema. */}
+      <section
+        className="login-marca"
+        style={{
+          display: 'flex', flexDirection: 'column', justifyContent: 'center',
+          gap: 20, padding: '48px 40px', minHeight: 560,
+          background: 'linear-gradient(160deg, #0f172a 0%, #1e3a5f 100%)',
+          color: '#fff',
+        }}
+      >
+        <LogoControlRegistro />
         <div>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>ArriveControl</h1>
-          <p style={{ margin: '6px 0 0', opacity: 0.7, fontSize: 14 }}>
-            Panel de asistencia
+          <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800, letterSpacing: -0.5 }}>
+            Control Registro
+          </h1>
+          <p style={{ margin: '8px 0 0', fontSize: 16, opacity: 0.85, maxWidth: 420 }}>
+            Registro y control de asistencia para tu empresa: entradas, salidas
+            y novedades de tus colaboradores en un solo lugar.
           </p>
         </div>
+        <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, fontSize: 15, opacity: 0.9 }}>
+          <li>✓ Marcación en kiosco con verificación de rostro</li>
+          <li>✓ Control por sedes y ubicación GPS</li>
+          <li>✓ Reportes de asistencia y novedades</li>
+        </ul>
+      </section>
 
-        {/* Único camino en producción. Un solo botón: entrar y registrarse son
-            lo mismo — quien llega sin empresa recibe la suya al entrar. */}
-        <button
-          type="button"
-          onClick={entrarConGoogle}
-          disabled={cargando}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-            padding: '11px 16px', borderRadius: 8, border: '1px solid #cbd5e1',
-            fontSize: 15, fontWeight: 600, background: '#fff', color: '#0f172a',
-            cursor: cargando ? 'default' : 'pointer', opacity: cargando ? 0.6 : 1,
-          }}
+      {/* Mitad derecha: formulario de ingreso. */}
+      <section style={{ display: 'grid', placeItems: 'center', padding: 24, background: '#f8fafc' }}>
+        <form
+          onSubmit={enviar}
+          style={{ width: '100%', maxWidth: 380, display: 'flex', flexDirection: 'column', gap: 14 }}
         >
-          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-            <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-3.9H24v7.1h12.1c-.2 1.8-1.6 4.6-4.5 6.4l6.9 5.3c4.1-3.8 6.6-9.4 6.6-14.9z" />
-            <path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.1l-7.1 5.5C8.1 41.1 15.4 46 24 46z" />
-            <path fill="#FBBC05" d="M11.5 28.5c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l-7.1-5.5C2.9 17 2 20.4 2 24s.9 7 2.4 10z" />
-            <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.4 29.9 2 24 2 15.4 2 8.1 6.9 4.4 14l7.1 5.5c1.8-5.3 6.7-8.9 12.5-8.9z" />
-          </svg>
-          {cargando ? 'Abriendo Google…' : 'Continuar con Google'}
-        </button>
-
-        {error && (
-          <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 14 }}>{error}</p>
-        )}
-
-        {/* Solo en desarrollo: poder trabajar sin credenciales de OAuth ni red. */}
-        {conClave && (
-          <>
-            <p style={{ margin: 0, fontSize: 12, opacity: 0.55, textAlign: 'center' }}>
-              solo en desarrollo
+          <div>
+            <h2 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: '#0f172a' }}>
+              Iniciar sesión
+            </h2>
+            <p style={{ margin: '6px 0 0', opacity: 0.7, fontSize: 14, color: '#0f172a' }}>
+              Accede al panel de asistencia
             </p>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14 }}>
-              Correo
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="username"
-                style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 15 }}
-              />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14 }}>
-              Contraseña
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 15 }}
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={cargando}
-              style={{
-                padding: '11px 16px', borderRadius: 8, border: 'none', fontSize: 15, fontWeight: 600,
-                background: cargando ? '#94a3b8' : '#0f172a', color: '#fff',
-                cursor: cargando ? 'default' : 'pointer',
-              }}
-            >
-              {cargando ? 'Entrando…' : 'Entrar'}
-            </button>
-          </>
-        )}
-      </form>
+          </div>
+
+          {/* Único camino en producción. Un solo botón: entrar y registrarse son
+              lo mismo — quien llega sin empresa recibe la suya al entrar. */}
+          <button
+            type="button"
+            onClick={entrarConGoogle}
+            disabled={cargando}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+              padding: '11px 16px', borderRadius: 8, border: '1px solid #cbd5e1',
+              fontSize: 15, fontWeight: 600, background: '#fff', color: '#0f172a',
+              cursor: cargando ? 'default' : 'pointer', opacity: cargando ? 0.6 : 1,
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+              <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-3.9H24v7.1h12.1c-.2 1.8-1.6 4.6-4.5 6.4l6.9 5.3c4.1-3.8 6.6-9.4 6.6-14.9z" />
+              <path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.1l-7.1 5.5C8.1 41.1 15.4 46 24 46z" />
+              <path fill="#FBBC05" d="M11.5 28.5c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l-7.1-5.5C2.9 17 2 20.4 2 24s.9 7 2.4 10z" />
+              <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.4 29.9 2 24 2 15.4 2 8.1 6.9 4.4 14l7.1 5.5c1.8-5.3 6.7-8.9 12.5-8.9z" />
+            </svg>
+            {cargando ? 'Abriendo Google…' : 'Continuar con Google'}
+          </button>
+
+          {error && (
+            <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 14 }}>{error}</p>
+          )}
+
+          {/* Solo en desarrollo: poder trabajar sin credenciales de OAuth ni red. */}
+          {conClave && (
+            <>
+              <p style={{ margin: 0, fontSize: 12, opacity: 0.55, textAlign: 'center', color: '#0f172a' }}>
+                solo en desarrollo
+              </p>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14, color: '#0f172a' }}>
+                Correo
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="username"
+                  style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 15 }}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14, color: '#0f172a' }}>
+                Contraseña
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 15 }}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={cargando}
+                style={{
+                  padding: '11px 16px', borderRadius: 8, border: 'none', fontSize: 15, fontWeight: 600,
+                  background: cargando ? '#94a3b8' : '#0f172a', color: '#fff',
+                  cursor: cargando ? 'default' : 'pointer',
+                }}
+              >
+                {cargando ? 'Entrando…' : 'Entrar'}
+              </button>
+            </>
+          )}
+        </form>
+      </section>
+      </div>
     </main>
   )
 }

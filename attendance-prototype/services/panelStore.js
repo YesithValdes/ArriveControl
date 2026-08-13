@@ -26,6 +26,7 @@ const store = {
   events: [],       // forma journeyService: {id, personId, personName, sede, type, ts, flag, correctedBy}
   people: [],       // forma rosterService: {id, name, cedula, sede, expectedEntry, expectedExit, breakMinutes, createdAt, activo}
   sedes: [],        // forma sedesService: {id, name, lat, lon, radius}
+  horarios: [],     // plantillas POR DÍAS: {id, nombre, dias: {"0".."6": {entrada, salida, almuerzoMin}}}
   cfg: {
     weeklyHours: 42, graceMinutes: 15, holidays: [],
     factores: FACTORES_DEFECTO, divisorHorasMes: DIVISOR_DEFECTO,
@@ -37,6 +38,92 @@ const store = {
 
 const hhmm = (t) => (t ? String(t).slice(0, 5) : '');
 const bogotaDay = (iso) => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
+
+// ── Jornada POR DÍAS de la semana ─────────────────────────────────────
+// Forma API/BD: {"0".."6": {entrada, salida, almuerzo_min}} (0=domingo …
+// 6=sábado); día ausente = libre. En el cliente el campo es almuerzoMin.
+
+export const DIAS_CORTOS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+// Orden de edición/lectura: la semana laboral empieza en lunes.
+export const ORDEN_SEMANA = [1, 2, 3, 4, 5, 6, 0];
+
+const diasACliente = (d) => {
+  if (d == null) return null;
+  const out = {};
+  for (const [k, f] of Object.entries(d)) {
+    out[k] = { entrada: hhmm(f.entrada), salida: hhmm(f.salida), almuerzoMin: f.almuerzo_min ?? 0 };
+  }
+  return out;
+};
+const diasAApi = (d) => {
+  const out = {};
+  for (const [k, f] of Object.entries(d ?? {})) {
+    if (!f) continue;
+    out[k] = { entrada: f.entrada, salida: f.salida, almuerzo_min: Number(f.almuerzoMin) || 0 };
+  }
+  return out;
+};
+
+/**
+ * Franja esperada de una persona para una FECHA concreta (día Bogotá).
+ * Con jornada por días manda el día de la semana; sin ella, la franja
+ * uniforme de siempre. null = ese día es libre (o no tiene horario).
+ * @returns {{entrada, salida, almuerzoMin} | null}
+ */
+export function franjaEsperada(person, fechaISO) {
+  if (person?.jornadaDias) {
+    const dow = new Date(`${fechaISO}T12:00:00Z`).getUTCDay(); // 0=dom … 6=sáb
+    return person.jornadaDias[String(dow)] ?? null;
+  }
+  const HHMM = /^\d{2}:\d{2}$/;
+  if (person && HHMM.test(person.expectedEntry || '') && HHMM.test(person.expectedExit || '')) {
+    return { entrada: person.expectedEntry, salida: person.expectedExit, almuerzoMin: person.breakMinutes ?? 0 };
+  }
+  return null;
+}
+
+/** Horas de una franja (salida − entrada − almuerzo); null si no hay franja. */
+export function horasFranja(f) {
+  if (!f) return null;
+  const [eh, em] = f.entrada.split(':').map(Number);
+  const [xh, xm] = f.salida.split(':').map(Number);
+  let mins = (xh * 60 + xm) - (eh * 60 + em);
+  if (mins <= 0) mins += 24 * 60; // turno que cruza medianoche
+  mins -= Number(f.almuerzoMin) || 0;
+  return Math.max(0, mins) / 60;
+}
+
+/** Suma de horas de la semana de un mapa de días. */
+export function horasSemanaDias(dias) {
+  return Object.values(dias ?? {}).reduce((s, f) => s + (horasFranja(f) ?? 0), 0);
+}
+
+/**
+ * Resumen legible de un mapa de días, agrupando días CONSECUTIVOS (en orden
+ * lunes→domingo) con la misma franja: "Lun–Vie 08:00–17:00 · Sáb 08:00–12:00".
+ */
+export function resumenDias(dias) {
+  if (!dias || Object.keys(dias).length === 0) return 'sin días';
+  const franjaTxt = (f) => `${f.entrada}–${f.salida}`;
+  const grupos = [];
+  for (const d of ORDEN_SEMANA) {
+    const f = dias[String(d)];
+    if (!f) { grupos.push(null); continue; }
+    const txt = franjaTxt(f);
+    const prev = grupos[grupos.length - 1];
+    if (prev && prev.txt === txt) prev.dias.push(d);
+    else grupos.push({ txt, dias: [d] });
+  }
+  return grupos
+    .filter(Boolean)
+    .map((g) => {
+      const nombre = g.dias.length > 1
+        ? `${DIAS_CORTOS[g.dias[0]]}–${DIAS_CORTOS[g.dias[g.dias.length - 1]]}`
+        : DIAS_CORTOS[g.dias[0]];
+      return `${nombre} ${g.txt}`;
+    })
+    .join(' · ');
+}
 
 async function api(url, opts = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -74,8 +161,9 @@ function construirEventos(marcaciones, correcciones = []) {
     };
   });
 
-  // Flag 'late-entry': primera entrada del día muy tarde vs. horario esperado.
-  const horarioPorEmpleado = new Map(store.people.map((p) => [p.id, p.expectedEntry]));
+  // Flag 'late-entry': primera entrada del día muy tarde vs. la franja
+  // esperada de ESE día de la semana (la jornada puede variar por día).
+  const personaPorId = new Map(store.people.map((p) => [p.id, p]));
   const porPersonaDia = new Map();
   for (const e of eventos) {
     if (e.type !== 'in') continue;
@@ -83,7 +171,8 @@ function construirEventos(marcaciones, correcciones = []) {
     if (!porPersonaDia.has(k) || e.ts < porPersonaDia.get(k).ts) porPersonaDia.set(k, e);
   }
   for (const primera of porPersonaDia.values()) {
-    const esperado = horarioPorEmpleado.get(primera.personId);
+    const franja = franjaEsperada(personaPorId.get(primera.personId), bogotaDay(primera.ts));
+    const esperado = franja?.entrada;
     if (!/^\d{2}:\d{2}$/.test(esperado || '')) continue;
     const d = new Date(new Date(primera.ts).getTime() - 5 * 3600000); // hora Bogotá
     const min = d.getUTCHours() * 60 + d.getUTCMinutes();
@@ -97,15 +186,19 @@ function construirEventos(marcaciones, correcciones = []) {
 export async function syncPanel() {
   // Rango: últimos 60 días — suficiente para dashboard, reportes y anomalías.
   const desde = bogotaDay(new Date(Date.now() - 60 * 24 * 3600000).toISOString());
-  const [marc, emp, sed, cfg, corr] = await Promise.all([
+  const [marc, emp, sed, cfg, corr, hor] = await Promise.all([
     api(`/api/marcaciones?desde=${desde}`),
     api('/api/empleados'),
     api('/api/sedes'),
     api('/api/config'),
     api('/api/correcciones'),
+    api('/api/horarios'),
   ]);
 
   store.sedes = sed.sedes.map((s) => ({ id: s.id, name: s.nombre, lat: s.lat, lon: s.lon, radius: s.radio_m }));
+  store.horarios = hor.horarios.map((h) => ({
+    id: h.id, nombre: h.nombre, dias: diasACliente(h.dias),
+  }));
 
   store.people = emp.empleados.map((e) => ({
     id: e.id,
@@ -113,9 +206,13 @@ export async function syncPanel() {
     cedula: e.cedula || '',
     sede: e.sede_nombre || '',
     sedeId: e.sede_id || '',
+    validarSede: e.validar_sede === true,
+    validarUbicacion: e.validar_ubicacion === true,
     expectedEntry: hhmm(e.entrada_esperada),
     expectedExit: hhmm(e.salida_esperada),
     breakMinutes: e.almuerzo_min,
+    // Jornada POR DÍAS (copia del horario asignado); null = usar la uniforme.
+    jornadaDias: diasACliente(e.jornada_dias),
     jornadaSemanal: e.jornada_semanal ?? null, // [lun..sáb] o null = estándar
     // numeric de Postgres viaja como texto; null = sin registrar (opcional).
     salarioMensual: e.salario_mensual == null ? null : Number(e.salario_mensual),
@@ -204,7 +301,10 @@ export async function updatePerson(id, partial) {
   if ('expectedEntry' in partial) body.entrada_esperada = partial.expectedEntry || null;
   if ('expectedExit' in partial) body.salida_esperada = partial.expectedExit || null;
   if ('breakMinutes' in partial) body.almuerzo_min = partial.breakMinutes === '' || partial.breakMinutes == null ? null : Number(partial.breakMinutes);
+  if ('jornadaDias' in partial) body.jornada_dias = partial.jornadaDias == null ? null : diasAApi(partial.jornadaDias);
   if ('jornadaSemanal' in partial) body.jornada_semanal = partial.jornadaSemanal;
+  if ('validarSede' in partial) body.validar_sede = partial.validarSede === true;
+  if ('validarUbicacion' in partial) body.validar_ubicacion = partial.validarUbicacion === true;
   // Salario: '' o null lo dejan SIN registrar (y sus horas sin valorizar).
   if ('salarioMensual' in partial) {
     const s = partial.salarioMensual;
@@ -223,9 +323,12 @@ export async function addPerson(name, descriptor, extra = {}) {
         nombre: name,
         cedula: extra.cedula || null,
         sede_id: sede?.id ?? extra.sedeId ?? null,
+        validar_sede: extra.validarSede === true,
+        validar_ubicacion: extra.validarUbicacion === true,
         entrada_esperada: extra.expectedEntry || null,
         salida_esperada: extra.expectedExit || null,
         almuerzo_min: extra.breakMinutes ?? null,
+        jornada_dias: extra.jornadaDias == null ? null : diasAApi(extra.jornadaDias),
         salario_mensual: extra.salarioMensual ?? null,
         descriptor_facial: descriptor,
       }),
@@ -301,6 +404,46 @@ export async function removeSede(nombre) {
   if (!sede) return { error: 'Sede no encontrada.' };
   try {
     await api(`/api/sedes/${sede.id}`, { method: 'DELETE' });
+    return { ok: true };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+// ── horariosService ───────────────────────────────────────────────────
+// Plantillas de jornada POR DÍAS con nombre: al asignarlas a un empleado se
+// COPIA su mapa de días (los cálculos siguen leyendo del empleado).
+export function getHorarios() {
+  return store.horarios ?? [];
+}
+
+export async function addHorario({ nombre, dias }) {
+  try {
+    const d = await api('/api/horarios', {
+      method: 'POST',
+      body: JSON.stringify({ nombre, dias: diasAApi(dias) }),
+    });
+    return { nombre: d.horario.nombre };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+export async function updateHorario(id, partial) {
+  const body = {};
+  if ('nombre' in partial) body.nombre = partial.nombre;
+  if ('dias' in partial) body.dias = diasAApi(partial.dias);
+  try {
+    await api(`/api/horarios/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    return { ok: true };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+export async function removeHorario(id) {
+  try {
+    await api(`/api/horarios/${id}`, { method: 'DELETE' });
     return { ok: true };
   } catch (e) {
     return { error: e.message };

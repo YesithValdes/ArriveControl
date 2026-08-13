@@ -7,6 +7,7 @@
 import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../../lib/db.js'
 import { estadoAcceso } from '../../../../lib/sesion'
+import { validarDias } from '../../../../lib/horariosDias.js'
 
 export const runtime = 'nodejs'
 
@@ -17,10 +18,16 @@ const CAMPOS = {
   entrada_esperada: 'entrada_esperada',
   salida_esperada: 'salida_esperada',
   almuerzo_min: 'almuerzo_min',
+  // Jornada POR DÍAS (copia del horario asignado); null = usar los uniformes.
+  jornada_dias: 'jornada_dias',
   jornada_semanal: 'jornada_semanal',
   salario_mensual: 'salario_mensual',
   descriptor_facial: 'descriptor_facial',
   activo: 'activo',
+  // Exigir que marque en su sede (la sede en sí es solo organizativa).
+  validar_sede: 'validar_sede',
+  // Sin sede: registrar la ubicación GPS de cada marcación.
+  validar_ubicacion: 'validar_ubicacion',
 }
 
 /** Jornada distribuida válida: null (estándar) o [lun..sáb] con horas 0–12. */
@@ -48,6 +55,15 @@ export async function PATCH(req, { params }) {
       let v = c[k]
       if (k === 'cedula' && v != null) v = String(v).replace(/\D/g, '') || null
       if (k === 'nombre') { v = String(v).trim(); if (!v) return NextResponse.json({ ok: false, error: 'El nombre no puede quedar vacío.' }, { status: 400 }) }
+      if (k === 'jornada_dias') {
+        if (v === null) {
+          // null borra la jornada por días: vuelve a mandar la uniforme.
+        } else {
+          const r = validarDias(v)
+          if (r.error) return NextResponse.json({ ok: false, error: r.error }, { status: 400 })
+          v = JSON.stringify(r.dias)
+        }
+      }
       if (k === 'jornada_semanal' && !jornadaValida(v)) {
         return NextResponse.json({ ok: false, error: 'jornada_semanal debe ser null o 6 horas (lun–sáb) entre 0 y 12.' }, { status: 400 })
       }
@@ -64,7 +80,7 @@ export async function PATCH(req, { params }) {
   try {
     const { rows } = await conEmpresa(esquema, (db) => db.query(
       `update empleados set ${sets.join(', ')} where id = $${args.length}
-       returning id, nombre, cedula, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_semanal, salario_mensual, activo`,
+       returning id, nombre, cedula, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo`,
       args,
     ))
     if (rows.length === 0) return NextResponse.json({ ok: false, error: 'Empleado no encontrado.' }, { status: 404 })

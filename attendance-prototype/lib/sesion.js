@@ -22,10 +22,19 @@ export async function obtenerSesion() {
   const sesion = await auth.api.getSession({ headers: await headers() })
   if (!sesion?.user) return null
 
+  // `tieneContrasena` decide si al entrar hay que pedirle una. Quien se
+  // registró con Google no tiene ninguna, y sin ella no puede abrir el panel
+  // desde el celular: Google bloquea su inicio de sesión dentro de una app.
   const { rows } = await pool.query(
-    `select id, email, name as nombre, rol, image as foto,
-            empresa_id as "empresaId", activo
-       from control."user" where id = $1`,
+    `select u.id, u.email, u.name as nombre, u.rol, u.image as foto,
+            u.empresa_id as "empresaId", u.activo,
+            exists (
+              select 1 from control.account a
+               where a.user_id = u.id
+                 and a.provider_id = 'credential'
+                 and a.password is not null
+            ) as "tieneContrasena"
+       from control."user" u where u.id = $1`,
     [sesion.user.id],
   )
   return rows[0] ?? null

@@ -59,11 +59,23 @@ export const auth = betterAuth({
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
     },
   },
-  // Correo y contraseña solo en DESARROLLO: sin esto haría falta conexión a
-  // Google (y credenciales de OAuth) para poder abrir el panel en local.
+  // Correo y contraseña como SEGUNDA llave, no como puerta de entrada.
+  //
+  // Se registra uno con Google —que verifica el correo— y al terminar se pone
+  // una contraseña para esta app. Existe por un motivo concreto: Google NO
+  // permite iniciar sesión dentro de la ventana de una app de Android (bloquea
+  // los `disallowed_useragent`), así que sin contraseña no hay forma de entrar
+  // al panel desde el celular.
+  //
+  // `disableSignUp` se queda en true: nadie CREA una cuenta con contraseña. La
+  // identidad siempre nace de Google o de una invitación, y por eso no hace
+  // falta verificar correos ni montar un servicio de envío. Y si alguien la
+  // olvida, entra con Google desde el computador y se pone otra: Google es la
+  // recuperación.
   emailAndPassword: {
-    enabled: process.env.NODE_ENV !== 'production',
-    disableSignUp: true, // ni siquiera en local se crean cuentas por aquí
+    enabled: true,
+    disableSignUp: true,
+    minPasswordLength: 8,
   },
 
   // El registro es SELF-SERVICE: quien entra por primera vez sale con empresa.

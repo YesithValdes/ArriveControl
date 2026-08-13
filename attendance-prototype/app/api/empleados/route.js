@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../lib/db.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
 import { cabeOtroEmpleado } from '../../../lib/empresas.js'
+import { validarDias } from '../../../lib/horariosDias.js'
 
 export const runtime = 'nodejs'
 
@@ -30,7 +31,7 @@ export async function GET(req) {
       )
     }
     const { rows } = await conEmpresa(ctx.esquema, (db) => db.query(
-      `select e.id, e.nombre, e.cedula, e.sede_id, e.descriptor_facial
+      `select e.id, e.nombre, e.cedula, e.sede_id, e.validar_sede, e.descriptor_facial
          from empleados e
         where e.activo
         order by e.nombre`,
@@ -47,8 +48,8 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url)
   const incluirInactivos = searchParams.get('inactivos') === '1'
   const { rows: empleados } = await conEmpresa(esquema, (db) => db.query(
-    `select e.id, e.nombre, e.cedula, e.sede_id, s.nombre as sede_nombre,
-            e.entrada_esperada, e.salida_esperada, e.almuerzo_min, e.jornada_semanal,
+    `select e.id, e.nombre, e.cedula, e.sede_id, s.nombre as sede_nombre, e.validar_sede, e.validar_ubicacion,
+            e.entrada_esperada, e.salida_esperada, e.almuerzo_min, e.jornada_dias, e.jornada_semanal,
             e.salario_mensual, e.activo, e.creado_en,
             (e.descriptor_facial is not null) as tiene_rostro
        from empleados e
@@ -94,6 +95,14 @@ export async function POST(req) {
     && c.jornada_semanal.every((h) => typeof h === 'number' && h >= 0 && h <= 12)
     ? c.jornada_semanal : null
 
+  // Jornada POR DÍAS (opcional): copia del horario asignado, día por día.
+  let jornadaDias = null
+  if (c?.jornada_dias != null) {
+    const v = validarDias(c.jornada_dias)
+    if (v.error) return NextResponse.json({ ok: false, error: v.error }, { status: 400 })
+    jornadaDias = v.dias
+  }
+
   // Salario mensual: OPCIONAL. Registrar a alguien no debe exigir saber su
   // sueldo; sin él sus horas se cuentan igual, solo que no se valorizan.
   const salario = c?.salario_mensual == null || c.salario_mensual === '' ? null : Number(c.salario_mensual)
@@ -104,11 +113,11 @@ export async function POST(req) {
   try {
     const { rows } = await conEmpresa(esquema, (db) => db.query(
       `insert into empleados
-         (nombre, cedula, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_semanal, salario_mensual, descriptor_facial)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       returning id, nombre, cedula, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_semanal, salario_mensual, activo, creado_en`,
-      [nombre, cedula, c.sede_id ?? null, c.entrada_esperada ?? null, c.salida_esperada ?? null,
-       c.almuerzo_min ?? 60, jornada, salario, descriptor],
+         (nombre, cedula, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, descriptor_facial)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       returning id, nombre, cedula, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo, creado_en`,
+      [nombre, cedula, c.sede_id ?? null, c.validar_sede === true, c.validar_ubicacion === true, c.entrada_esperada ?? null, c.salida_esperada ?? null,
+       c.almuerzo_min ?? 60, jornadaDias == null ? null : JSON.stringify(jornadaDias), jornada, salario, descriptor],
     ))
     return NextResponse.json({ ok: true, empleado: rows[0] })
   } catch (e) {

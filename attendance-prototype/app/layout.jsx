@@ -15,17 +15,21 @@ const montserrat = Montserrat({
 });
 
 export const metadata = {
-  title: 'Control de Asistencia',
+  title: 'Control Registro',
   // PWA instalable: sin manifest con íconos 192/512, Chrome ofrece "agregar
   // a inicio" pero RECHAZA la instalación real como app.
   manifest: '/manifest.webmanifest',
   icons: {
-    icon: '/icon-192.png',
-    apple: '/icon-192.png', // iOS no lee el manifest: necesita su propio tag
+    // El SVG escala a cualquier tamaño; el PNG queda de respaldo.
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: '/apple-touch-icon.png', // iOS no lee el manifest: necesita su propio tag
   },
   appleWebApp: {
     capable: true,
-    title: 'ArriveControl',
+    title: 'Control Registro',
     statusBarStyle: 'default',
   },
 };
@@ -34,7 +38,7 @@ export const viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
-  themeColor: '#16224e',
+  themeColor: '#3a5570',
   // Sin cover, env(safe-area-inset-*) siempre vale 0 y el contenido queda
   // detrás del notch/barra de gestos en la PWA instalada (y en Capacitor).
   viewportFit: 'cover',

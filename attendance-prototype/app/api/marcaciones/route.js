@@ -52,9 +52,10 @@ export async function POST(req) {
   } catch {
     return NextResponse.json({ ok: false, error: 'Cuerpo JSON inválido.' }, { status: 400 })
   }
+  // sede_id es OPCIONAL: un dispositivo móvil (sin sede) marca con sede nula.
   const { empleado_id: empleadoId, sede_id: sedeId, ts_dispositivo: tsDispositivo, diferido } = cuerpo ?? {}
-  if (!empleadoId || !sedeId) {
-    return NextResponse.json({ ok: false, error: 'Faltan empleado_id o sede_id.' }, { status: 400 })
+  if (!empleadoId) {
+    return NextResponse.json({ ok: false, error: 'Falta empleado_id.' }, { status: 400 })
   }
   if (diferido && !tsDispositivo) {
     return NextResponse.json({ ok: false, error: 'Un envío diferido necesita ts_dispositivo.' }, { status: 400 })

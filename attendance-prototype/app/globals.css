@@ -12,20 +12,28 @@
  */
 
 :root {
-  /* Superficies */
-  --page: #f4f6fa;
-  --surface: #ffffff;
-  --ink: #101828;
-  --ink-2: #475467;
-  --muted: #8a94a6;
-  --grid: #e4e8f0;
-  --border: #e4e8f0;
+  /* Superficies — paleta DESCANSADA: Alice Blue en vez de blanco puro,
+     tinta pizarra en vez de negro. Menos luz, misma legibilidad. */
+  --page: #eaf1f8;
+  --surface: #f7fafd;
+  /* Cuadros internos (grupos de ajustes, formularios en línea): blanco puro,
+     para que dentro de una tarjeta no se vean "sombreados" azulados. */
+  --surface-blanca: #ffffff;
+  --ink: #233240;
+  --ink-2: #46586a;
+  --muted: #7b8ca0;
+  --grid: #d8e2ee;
+  --border: #d8e2ee;
 
-  /* Acento */
-  --accent: #2563eb;
-  --accent-2: #1e40af;
+  /* Acento: azul AERO desaturado (antes #2563eb saturado). */
+  --accent: #6e96b8;
+  --accent-2: #557d9e;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(37, 99, 235, 0.07);
+  --accent-soft: rgba(110, 150, 184, 0.14);
+
+  /* Botón primario y sidebar: azul JEANS/ACERO (antes #16224e). */
+  --btn-primary: #3a5570;
+  --btn-primary-hover: #2e455d;
 
   /* Elevaciones sutiles */
   --glow: 0 1px 3px rgba(16, 24, 40, 0.10);
@@ -34,14 +42,15 @@
   --elev-2: 0 2px 6px rgba(16, 24, 40, 0.08), 0 6px 16px rgba(16, 24, 40, 0.08);
   --press: inset 0 1px 3px rgba(16, 24, 40, 0.12);
 
-  /* Estados en la familia azul (panel, formularios, diagnóstico) */
-  --good-text: #2563eb;
-  --good-soft: rgba(37, 99, 235, 0.08);
-  --warn-text: #1e40af;
-  --warn-soft: rgba(30, 64, 175, 0.08);
-  --crit: #172554;
-  --crit-text: #172554;
-  --crit-soft: rgba(23, 37, 84, 0.08);
+  /* Estados en tonos suaves: menta (bien), arena (aviso), teja (crítico).
+     Fondos pastel, texto oscuro de la misma familia: informan sin gritar. */
+  --good-text: #2f6b55;
+  --good-soft: #ddf0e7;
+  --warn-text: #7a6432;
+  --warn-soft: #f3ecd9;
+  --crit: #8a4a42;
+  --crit-text: #8a4a42;
+  --crit-soft: #f2e0dd;
 
   /* Estados del KIOSCO: se leen a distancia, por eso sí usan color semántico.
      Entrada = verde · Salida = ámbar · Rechazo = rojo · Info = azul. */

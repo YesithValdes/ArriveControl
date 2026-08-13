@@ -7,9 +7,8 @@
  *
  * Datos reales: journeyService (eventos/correcciones) + rosterService (personas).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 // Todos los datos vienen de POSTGRES vía API (services/panelStore.js), con
 // las mismas formas que los services locales que reemplaza.
 import {
@@ -21,8 +20,10 @@ import {
   deleteEvent,
   NIGHT_WINDOW_MS,
   listPeople, removePerson, updatePerson, expectedDailyHours, jornadaDelDia,
+  franjaEsperada, horasFranja, horasSemanaDias, resumenDias, DIAS_CORTOS, ORDEN_SEMANA,
   getLaborConfig, saveLaborConfig, getHorasValorizadas, getEventosRango, marcarHorasPagadas,
   getSedes, addSede, updateSede, removeSede,
+  getHorarios, addHorario, updateHorario, removeHorario,
 } from '../services/panelStore.js';
 // valorizarRegistro es LA MISMA función que usa el servidor para poner el
 // valor en pesos (lib/nomina.js). El simulador de Ajustes la llama directo:
@@ -33,7 +34,13 @@ import { TIPOS_HORA, CODIGOS_HORA, valorizarRegistro } from '../lib/tiposHora.js
 // entra una lista de marcas, sale la lista de tramos.
 import { calcularRegistros } from '../lib/calculoHoras.js';
 import { vigenciasDeHorasSemana } from '../lib/jornada.js';
+import { rutaDe, tabDeRuta } from '../lib/rutasPanel.js';
 import { signOut } from '../lib/auth-client';
+// Diagnóstico GPS embebido en Ajustes (la página /gps sigue existiendo).
+import GpsDebug from './GpsDebug.jsx';
+// Formulario de alta de empleados: el mismo de /admin/registro, embebido en
+// un cajón para registrar sin salir de la pestaña.
+import { RegistroEmpleadoForm } from './EmployeeRegister.jsx';
 
 /** Iconos de línea (estilo Lucide, inline SVG): heredan el color del texto. */
 function Icon({ name, size = 17 }) {
@@ -95,6 +102,143 @@ function AccList({ items }) {
   );
 }
 
+// Mapa de días L–V con la franja de oficina, punto de partida al crear.
+const diasLunesAViernes = () => Object.fromEntries(
+  [1, 2, 3, 4, 5].map((d) => [String(d), { entrada: '08:00', salida: '17:00', almuerzoMin: 60 }]),
+);
+
+/**
+ * Solo los NOMBRES de los días laborables, agrupando consecutivos:
+ * "Lun–Vie · Sáb". (resumenDias incluye además las franjas.)
+ */
+const nombresDias = (dias) => {
+  const grupos = [];
+  for (const d of ORDEN_SEMANA) {
+    if (!dias?.[String(d)]) { grupos.push(null); continue; }
+    const prev = grupos[grupos.length - 1];
+    if (prev) prev.push(d);
+    else grupos.push([d]);
+  }
+  return grupos
+    .filter(Boolean)
+    .map((g) => (g.length > 1 ? `${DIAS_CORTOS[g[0]]}–${DIAS_CORTOS[g[g.length - 1]]}` : DIAS_CORTOS[g[0]]))
+    .join(' · ');
+};
+
+/** Franjas distintas del horario, en orden de la semana: "08:00 – 17:00 · 08:00 – 12:00". */
+const franjasDe = (dias) => [...new Set(
+  ORDEN_SEMANA.map((d) => dias?.[String(d)]).filter(Boolean).map((f) => `${f.entrada} – ${f.salida}`),
+)].join(' · ');
+
+/** Almuerzo del horario: minutos únicos, o el rango si varía por día. */
+const almuerzoDe = (dias) => {
+  const mins = [...new Set(Object.values(dias ?? {}).map((f) => Number(f.almuerzoMin) || 0))];
+  if (mins.length === 0) return '—';
+  if (mins.length === 1) return mins[0] ? `${mins[0]} min` : '—';
+  return `${Math.min(...mins)}–${Math.max(...mins)} min`;
+};
+
+/**
+ * Editor de jornada POR DÍAS: una fila por día (lunes→domingo), cada una
+ * activable con su propia franja y almuerzo. Lo usan el formulario de
+ * horarios y la ficha del empleado, para que editar "qué días y a qué horas"
+ * se vea igual en los dos sitios.
+ */
+function EditorDias({ dias, onChange }) {
+  const toggle = (d) => {
+    const k = String(d);
+    const next = { ...dias };
+    if (next[k]) {
+      delete next[k];
+    } else {
+      // Al activar un día arranca con la franja de otro día ya definido: lo
+      // normal es que la semana comparta horas y solo cambien excepciones.
+      const modelo = ORDEN_SEMANA.map((x) => next[String(x)]).find(Boolean);
+      next[k] = modelo ? { ...modelo } : { entrada: '08:00', salida: '17:00', almuerzoMin: 60 };
+    }
+    onChange(next);
+  };
+  const set = (d, campo, v) => {
+    const k = String(d);
+    onChange({ ...dias, [k]: { ...dias[k], [campo]: v } });
+  };
+  return (
+    <div className="hd-editor">
+      {ORDEN_SEMANA.map((d) => {
+        const f = dias[String(d)];
+        return (
+          <div className={`hd-dia${f ? '' : ' hd-off'}`} key={d}>
+            <label className="hd-nombre">
+              <input type="checkbox" checked={!!f} onChange={() => toggle(d)} />
+              {DIAS_CORTOS[d]}
+            </label>
+            {f ? (
+              <>
+                <input className="num" type="time" value={f.entrada} onChange={(e) => set(d, 'entrada', e.target.value)} aria-label={`Entrada del ${DIAS_CORTOS[d]}`} />
+                <span className="hd-sep">–</span>
+                <input className="num" type="time" value={f.salida} onChange={(e) => set(d, 'salida', e.target.value)} aria-label={`Salida del ${DIAS_CORTOS[d]}`} />
+                <span className="hd-almuerzo">
+                  <input
+                    className="num" type="number" min="0" max="240" step="15" value={f.almuerzoMin}
+                    onChange={(e) => set(d, 'almuerzoMin', e.target.value === '' ? 0 : Math.min(240, Math.max(0, Number(e.target.value))))}
+                    aria-label={`Almuerzo del ${DIAS_CORTOS[d]} en minutos`}
+                  />
+                  <span>min</span>
+                </span>
+              </>
+            ) : (
+              <span className="hd-libre">día libre</span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Signo de pregunta con explicación al pasar el mouse (o al enfocarlo). */
+function Q({ texto }) {
+  return (
+    <span className="q-ico" tabIndex={0}>
+      ?
+      <span className="q-tip">{texto}</span>
+    </span>
+  );
+}
+
+/** Logo «C-dial» (el de public/icon.svg), en el color del texto. */
+function MarcaCDial({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
+      <g stroke="currentColor" strokeLinecap="round" fill="none">
+        <path d="M 51 17.5 A 24 24 0 1 0 51 46.5" strokeWidth="7.5" />
+        <line x1="32" y1="10" x2="32" y2="15" strokeWidth="3.4" />
+        <line x1="10" y1="32" x2="15" y2="32" strokeWidth="3.4" />
+        <line x1="32" y1="49" x2="32" y2="54" strokeWidth="3.4" />
+        <circle cx="32" cy="32" r="3" fill="currentColor" stroke="none" />
+        <line x1="32" y1="32" x2="41" y2="23" strokeWidth="4.4" />
+      </g>
+    </svg>
+  );
+}
+
+/** Interruptor tipo switch (verde = activo). Detiene el clic de la fila. */
+function Toggle({ on, disabled, onClick, label }) {
+  return (
+    <button
+      type="button"
+      className={`sw${on ? ' on' : ''}`}
+      disabled={disabled}
+      aria-pressed={on}
+      aria-label={label}
+      title={label}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+    >
+      <span />
+    </button>
+  );
+}
+
 // Día calendario en BOGOTÁ (UTC-5 fijo). Nunca cortar el ISO crudo: una
 // marcación de las 22:00 Bogotá ya es "mañana" en UTC y caería en el día
 // equivocado del acordeón.
@@ -117,6 +261,18 @@ const fmtH = (n) => {
   const s = total % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
+// Horas compactas hh:mm (sin segundos), para la tabla de asistencia.
+const fmtHM = (n) => {
+  if (n == null) return '—';
+  const total = Math.round(n * 60);
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+};
+// Hora del día corta "7:02" (sin segundos ni cero inicial).
+const horaCorta = (iso) => {
+  const d = new Date(iso);
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
 const fmtTs = (iso) =>
   new Date(iso).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) + ', ' + fmt12(iso);
 
@@ -157,16 +313,51 @@ const iniciales = (texto) =>
 
 const ROL_ETIQUETA = { empresa: 'Empresa', superadmin: 'Superadministrador' };
 
-// Pestañas que se pueden abrir directamente por URL (?tab=…). Se valida contra
-// esta lista para que un valor inventado no deje el panel en blanco.
-const TABS_VALIDAS = ['dashboard', 'anomalias', 'equipo', 'empleados', 'reportes', 'historial', 'ajustes', 'cfg-simulador', 'cfg-empresa'];
+export default function AdminPanel({ sesion = null, permisos = {}, seccionInicial = 'dashboard' }) {
+  // Cada pantalla tiene su propia dirección (/admin/empleados,
+  // /admin/ajustes/sedes…). La inicial la resuelve el servidor desde la ruta;
+  // aquí solo hay que mantenerlas sincronizadas.
+  const [tab, setTabEstado] = useState(seccionInicial);
 
-export default function AdminPanel({ sesion = null, permisos = {} }) {
-  // Permite enlazar desde fuera a una pestaña concreta —p. ej. un correo que
-  // nómina apunta a /admin?tab=equipo para abrir la tabla de asistencia.
-  const searchParams = useSearchParams();
-  const tabPedida = searchParams.get('tab');
-  const [tab, setTab] = useState(TABS_VALIDAS.includes(tabPedida) ? tabPedida : 'dashboard');
+  /**
+   * Cambia de pantalla Y de dirección. Sustituye al `setTab` de antes, así que
+   * los sitios que ya lo llamaban no cambian.
+   *
+   * Usa `history.pushState` y no el enrutador de Next a propósito: navegar de
+   * verdad volvería a ejecutar el componente de servidor en CADA clic de
+   * pestaña —comprobación de sesión incluida— y el panel se recargaría entero.
+   * Next reconoce este cambio de historia, así que la dirección queda bien y
+   * el botón «atrás» funciona.
+   */
+  // Pila de pantallas visitadas DENTRO del panel: alimenta la flecha de
+  // regresar de la barra. No usa history.back() a propósito — ese botón
+  // podría sacar a la persona del panel (login, otra página); esta flecha
+  // solo deshace la última navegación interna.
+  const pilaTabs = useRef([]);
+
+  const setTab = useCallback((t) => {
+    setTabEstado((actual) => {
+      if (actual !== t) pilaTabs.current.push(actual);
+      return t;
+    });
+    if (typeof window !== 'undefined') window.history.pushState(null, '', rutaDe(t));
+  }, []);
+
+  /** Flecha «regresar»: vuelve a la última pantalla que la persona visitó. */
+  const volverAtras = useCallback(() => {
+    const previa = pilaTabs.current.pop();
+    if (!previa) return;
+    setTabEstado(previa);
+    if (typeof window !== 'undefined') window.history.pushState(null, '', rutaDe(previa));
+  }, []);
+
+  // Botón «atrás» y «adelante»: la dirección cambia sin pasar por `setTab`,
+  // así que hay que volver a leerla.
+  useEffect(() => {
+    const alVolver = () => setTabEstado(tabDeRuta(window.location.pathname));
+    window.addEventListener('popstate', alVolver);
+    return () => window.removeEventListener('popstate', alVolver);
+  }, []);
   const [collapsed, setCollapsed] = useState(false); // menú lateral escondido (solo PC)
   const [navOpen, setNavOpen] = useState(false); // menú off-canvas abierto (solo móvil)
   const [sesionAbierta, setSesionAbierta] = useState(false); // detalle de quién entró
@@ -202,6 +393,11 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
   // Sedes editables (fuente: sedesService; se relee con cada refresh).
   const [sedes, setSedes] = useState([]);
   useEffect(() => { setSedes(getSedes()); }, [tick]);
+
+  // Horarios (plantillas de jornada) + su formulario de crear/editar.
+  const [horarios, setHorarios] = useState([]);
+  useEffect(() => { setHorarios(getHorarios()); }, [tick]);
+  const [horForm, setHorForm] = useState(null); // {id?, nombre, dias: {"0".."6": {entrada, salida, almuerzoMin}}}
   const [newSede, setNewSede] = useState({ name: '', lat: '', lon: '', radius: '50' });
   const [editSede, setEditSede] = useState(null); // { original, name, lat, lon, radius }
   const [newSedeOpen, setNewSedeOpen] = useState(false); // drawer de "Nueva sede"
@@ -324,6 +520,23 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
       .then((d) => { if (d.ok) { setDispositivos(d.dispositivos); setDispError(null); } else setDispError(d.error); })
       .catch((e) => setDispError(e.message));
   };
+  // Vinculación por código: el aparato se registra tecleando un código en vez
+  // de iniciar sesión. Es el único camino en la app de Android, donde Google
+  // no permite autenticarse dentro de la ventana de la app.
+  const [vinculando, setVinculando] = useState(null);   // { nombre, sedeId }
+  const [codigoVinc, setCodigoVinc] = useState(null);   // { codigoLegible, expira_en }
+  const generarCodigoVinculacion = async () => {
+    const r = await fetch('/api/dispositivos/vincular', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre: vinculando.nombre.trim(), sede_id: vinculando.sedeId }),
+    });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
+    setCodigoVinc(d);
+    setVinculando(null);
+  };
+
   const revocarDispositivo = async (d) => {
     if (!confirm(`¿Revocar "${d.nombre}"? Dejará de marcar.`)) return;
     const r = await fetch(`/api/dispositivos/${d.id}`, { method: 'DELETE' });
@@ -343,12 +556,18 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
    */
   const openEdit = (p) => setEditEmp({
     id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '',
+    validarSede: p.validarSede === true,
     expectedEntry: p.expectedEntry || '',
     expectedExit: p.expectedExit || '',
     breakMinutes: p.breakMinutes == null ? '' : String(p.breakMinutes),
+    // Jornada POR DÍAS (copia del horario asignado); null = franja uniforme.
+    jornadaDias: p.jornadaDias ? JSON.parse(JSON.stringify(p.jornadaDias)) : null,
     jornadaSemanal: p.jornadaSemanal ? [...p.jornadaSemanal] : null,
     // '' = sin salario registrado, que es un estado válido.
     salarioMensual: p.salarioMensual == null ? '' : String(p.salarioMensual),
+    // Solo para mostrar: la ficha dice si esta persona puede marcar en el
+    // kiosco. El rostro no se edita desde aquí.
+    tieneRostro: Boolean(p.tieneRostro),
   });
 
   /**
@@ -365,11 +584,35 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
   const [toast, setToast] = useState(null);
 
   // Tabla de asistencia: búsqueda + filtro por estado + paginación.
-  const PAGE_SIZE = 25;
+  // 5 por página: la tarjeta de asistencia del dashboard cabe sin scroll.
+  const PAGE_SIZE = 5;
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); // all|present|absent|anomaly
   const [page, setPage] = useState(0);
   const [empSearch, setEmpSearch] = useState(''); // búsqueda de la tabla Empleados
+  const [empPage, setEmpPage] = useState(0); // paginación de la tabla Empleados
+  // Cajón de registro de empleado (pestaña Empleados, sin cambiar de página).
+  const [regAbierto, setRegAbierto] = useState(false);
+  // Guía "¿Cómo empezar?" (los 3 pasos que antes ocupaban el dashboard).
+  const [guiaAbierta, setGuiaAbierta] = useState(false);
+  // Historial de ajustes: filtro por rango de fechas + paginación.
+  const [histFiltro, setHistFiltro] = useState({ desde: '', hasta: '' });
+  const [histPage, setHistPage] = useState(0);
+  // Bandeja de anomalías (PC): filtro por tipo, caso expandido y su formulario
+  // de corrección en el sitio.
+  const [anomFiltro, setAnomFiltro] = useState('all');
+  const [anomAbierta, setAnomAbierta] = useState(null);
+  const [anomPage, setAnomPage] = useState(0);
+  const [anomForm, setAnomForm] = useState({ time: '17:00', reason: '' });
+  // Período de la gráfica de horas y de costos: la QUINCENA en curso (1–15 o
+  // 16–fin, como se liquida la nómina) o el mes calendario hasta hoy.
+  const [rangoModo, setRangoModo] = useState('quincena');
+  // Costos del período: tramos valorizados por el servidor (misma fuente que Reportes).
+  const [costos, setCostos] = useState({ estado: 'cargando', tramos: [] });
+  // Filtros por columna de la tabla Empleados: cada encabezado lleva su
+  // embudo, que abre el selector correspondiente.
+  const [empFiltros, setEmpFiltros] = useState({ sede: 'all', horario: 'all', config: 'all' });
+  const [filtroAbierto, setFiltroAbierto] = useState(null); // 'sede' | 'horario' | 'config'
 
   // Envío de horas con recargo a la plataforma de nómina (RH).
 
@@ -400,18 +643,44 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // La guía marca "✓ Vincula el dispositivo" con la lista real: se carga al
+  // abrirla (normalmente solo se carga al entrar a la pestaña Dispositivos).
+  useEffect(() => {
+    if (guiaAbierta) cargarDispositivos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guiaAbierta]);
+
+  // Aviso de BIENVENIDA: tras la primera sincronización, si la empresa está
+  // recién nacida (sin empleados ni horarios), la guía se abre sola. Solo una
+  // vez por navegador: quien ya trabaja no quiere volver a verla.
+  useEffect(() => {
+    if (tick < 1) return;
+    try {
+      if (localStorage.getItem('cr_bienvenida')) return;
+      if (listPeople().length === 0 && getHorarios().length === 0) setGuiaAbierta(true);
+      localStorage.setItem('cr_bienvenida', '1');
+    } catch { /* sin localStorage no hay bienvenida, y no pasa nada */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick]);
+
   const data = useMemo(() => {
     const events = listJourneyEvents().sort((a, b) => a.ts.localeCompare(b.ts));
     const nowMs = Date.now();
 
     // Personas: roster ∪ personas vistas en eventos (con sede y horario).
     const byId = new Map();
-    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, sede: p.sede || '', expectedEntry: p.expectedEntry || '', expectedExit: p.expectedExit || '', breakMinutes: p.breakMinutes ?? null });
-    for (const e of events) if (!byId.has(e.personId)) byId.set(e.personId, { id: e.personId, name: e.personName, sede: e.sede || '', expectedEntry: '', expectedExit: '', breakMinutes: null });
+    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '', expectedEntry: p.expectedEntry || '', expectedExit: p.expectedExit || '', breakMinutes: p.breakMinutes ?? null, jornadaDias: p.jornadaDias ?? null });
+    for (const e of events) if (!byId.has(e.personId)) byId.set(e.personId, { id: e.personId, name: e.personName, sede: e.sede || '', expectedEntry: '', expectedExit: '', breakMinutes: null, jornadaDias: null });
     const people = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 
     const perPerson = new Map(people.map((p) => [p.id, events.filter((e) => e.personId === p.id)]));
     const weekAgo = nowMs - 7 * 24 * 3600000;
+    // Período calendario (quincena en curso o mes) para la gráfica. weekHours
+    // se conserva aparte: las novedades de "extra" comparan contra la semana.
+    const hoyD = new Date();
+    const rangoAgo = (rangoModo === 'quincena' && hoyD.getDate() > 15
+      ? new Date(hoyD.getFullYear(), hoyD.getMonth(), 16)
+      : new Date(hoyD.getFullYear(), hoyD.getMonth(), 1)).getTime();
 
     const anomalies = [];
     const rows = people.map((p) => {
@@ -437,10 +706,12 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
 
       const corrected = mine.some((e) => e.correctedBy && dayKey(e.ts) === todayKey());
 
-      // Puntualidad: primera entrada vs horario esperado (+ gracia configurable).
+      // Puntualidad: primera entrada vs la franja esperada de HOY (la jornada
+      // puede variar por día de la semana) + gracia configurable.
       let onTime = null;
-      if (firstIn && /^\d{2}:\d{2}$/.test(p.expectedEntry)) {
-        const [h, m] = p.expectedEntry.split(':').map(Number);
+      const franjaHoy = firstIn ? franjaEsperada(p, todayKey()) : null;
+      if (firstIn && franjaHoy) {
+        const [h, m] = franjaHoy.entrada.split(':').map(Number);
         const d = new Date(firstIn.ts);
         onTime = d.getHours() * 60 + d.getMinutes() <= h * 60 + m + cfg.graceMinutes;
       }
@@ -453,6 +724,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
         onTime,
         hoursToday: firstIn ? pairedHours(today, nowMs) : null,
         weekHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= weekAgo), nowMs),
+        rangoHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= rangoAgo), nowMs),
         present: !!firstIn && today[today.length - 1]?.type === 'in',
         corrected,
       };
@@ -474,8 +746,8 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
     const sinSede = rows.filter((r) => !r.sede).length;
 
     const audit = listJourneyEvents().filter((e) => e.correctedBy);
-    return { rows, anomalies, audit, sedeStats, sinSede };
-  }, [tick, cfg]);
+    return { rows, anomalies, audit, sedeStats, sinSede, rangoInicioMs: rangoAgo };
+  }, [tick, cfg, rangoModo]);
 
   // Vista filtrada por sede: alimenta tarjetas, listas y anomalías.
   const view = useMemo(() => {
@@ -717,6 +989,40 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
     }
   };
 
+  // Bandeja: expande un caso con el formulario precargado (salida esperada
+  // para salidas faltantes; la hora del evento para el resto).
+  const abrirCaso = (a, key) => {
+    if (anomAbierta === key) { setAnomAbierta(null); return; }
+    const d = new Date(a.event.ts);
+    setAnomForm({
+      time: a.kind === 'missing-exit'
+        ? (a.person.expectedExit || '17:00')
+        : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+      reason: '',
+    });
+    setAnomAbierta(key);
+  };
+
+  // Corrección en el sitio: las MISMAS operaciones que el drawer (agregar la
+  // salida faltante o mover la hora del evento), con motivo obligatorio.
+  const guardarAnomalia = async (a) => {
+    if (!anomForm.reason.trim()) { showToast('Escribe el motivo del ajuste.'); return; }
+    const dia = dayKey(a.event.ts);
+    const iso = new Date(`${dia}T${anomForm.time}:00-05:00`).toISOString();
+    try {
+      if (a.kind === 'missing-exit') {
+        await addManualEvent(a.person.id, a.person.name, 'out', iso, anomForm.reason);
+      } else {
+        await updateEventTime(a.event.id, iso, anomForm.reason);
+      }
+      setAnomAbierta(null);
+      refresh();
+      showToast(`Ajuste guardado para ${a.person.name}`);
+    } catch (e) {
+      showToast(`No se pudo guardar: ${e.message}`);
+    }
+  };
+
   // Eventos del RANGO abierto en el drawer, agrupados por día (desc: el más
   // reciente arriba) con sus horas — la vista panorámica.
   const drawerEvents = useMemo(() => {
@@ -773,24 +1079,130 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
   };
 
   // Tabla de asistencia: filas tras búsqueda + filtro de estado, paginadas.
+  // Día que muestra la tabla de asistencia. Por defecto HOY; se puede elegir
+  // cualquier día pasado.
+  const [diaAsistencia, setDiaAsistencia] = useState(todayKey());
+  const esHoy = diaAsistencia === todayKey();
+
   const attRows = useMemo(() => {
+    // Hoy sale de view.rows (en vivo). Otro día se reconstruye con los
+    // eventos de ESE día; nadie está "trabajando ahora" en un día pasado.
+    let base;
+    if (esHoy) {
+      base = view.rows;
+    } else {
+      const delDia = listJourneyEvents()
+        .filter((e) => dayKey(e.ts) === diaAsistencia)
+        .sort((a, b) => a.ts.localeCompare(b.ts));
+      const finDia = new Date(`${diaAsistencia}T23:59:59-05:00`).getTime();
+      base = view.rows.map((r) => {
+        const mine = delDia.filter((e) => e.personId === r.person.id);
+        const firstIn = mine.find((e) => e.type === 'in') || null;
+        const lastOut = [...mine].reverse().find((e) => e.type === 'out') || null;
+        return { ...r, firstIn, lastOut, present: false, hoursToday: firstIn ? pairedHours(mine, finDia) : null };
+      });
+    }
     const q = search.trim().toLowerCase();
-    let rs = view.rows;
+    let rs = base;
     if (q) rs = rs.filter((r) => r.person.name.toLowerCase().includes(q) || r.person.id.toLowerCase().includes(q));
-    if (statusFilter === 'present') rs = rs.filter((r) => r.present);
+    if (statusFilter === 'present') rs = rs.filter((r) => (esHoy ? r.present : !!r.firstIn));
     if (statusFilter === 'absent') rs = rs.filter((r) => !r.firstIn);
-    if (statusFilter === 'anomaly') rs = rs.filter((r) => data.anomalies.some((a) => a.person.id === r.person.id));
     return rs;
-  }, [view, search, statusFilter, data]);
+  }, [view, search, statusFilter, diaAsistencia, esHoy, tick]);
+
+  // Tramos valorizados de un día pasado. OJO: se pide la SEMANA completa del
+  // día, no el día suelto — la clasificación de extras necesita el contexto
+  // semanal (jornada pactada, vigencias); un día aislado sale sin extras.
+  const [tramosDia, setTramosDia] = useState({ dia: null, tramos: [] });
+  useEffect(() => {
+    if (tab !== 'dashboard' || esHoy) return;
+    let vigente = true;
+    const d = new Date(`${diaAsistencia}T12:00:00-05:00`);
+    const lunes = new Date(d);
+    lunes.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    const domingo = new Date(lunes);
+    domingo.setDate(lunes.getDate() + 6);
+    const hasta = dayKey(domingo.toISOString()) < todayKey() ? dayKey(domingo.toISOString()) : todayKey();
+    getHorasValorizadas(dayKey(lunes.toISOString()), hasta)
+      .then((tramos) => { if (vigente) setTramosDia({ dia: diaAsistencia, tramos }); })
+      .catch(() => { if (vigente) setTramosDia({ dia: diaAsistencia, tramos: [] }); });
+    return () => { vigente = false; };
+  }, [tab, diaAsistencia, esHoy]);
+
+  // Extras del día elegido por cédula (tipos HE*), con su valor en pesos,
+  // desde los tramos valorizados del servidor (mismas reglas que Costos).
+  const extrasHoy = useMemo(() => {
+    const fuente = (esHoy ? costos.tramos : (tramosDia.dia === diaAsistencia ? tramosDia.tramos : []))
+      .filter((t) => t.fecha === diaAsistencia);
+    const m = new Map();
+    for (const t of fuente) {
+      if (!String(t.tipoHora || '').startsWith('HE')) continue;
+      const e = m.get(t.documento) ?? { horas: 0, valor: 0, sinSalario: false };
+      e.horas += t.horas ?? 0;
+      if (t.valor == null) e.sinSalario = true; else e.valor += t.valor;
+      m.set(t.documento, e);
+    }
+    return m;
+  }, [costos, tramosDia, diaAsistencia, esHoy]);
   // Roster completo sin filtro de sede (para conteos por sede).
   const allPeople = useMemo(() => listPeople(), [tick]);
 
-  // Tabla de empleados: roster filtrado por búsqueda.
+  // Qué le falta configurar a un empleado. Un faltante aquí es un reporte
+  // roto después (sin sede no compara, sin salario no valoriza).
+  const faltantesDe = (p) => {
+    const f = [];
+    // La sede ya NO cuenta como faltante: es opcional por diseño.
+    if (!p.tieneRostro) f.push('rostro');
+    if (!(p.jornadaDias || (p.expectedEntry && p.expectedExit))) f.push('horario');
+    if (p.salarioMensual == null) f.push('salario');
+    if (!p.cedula) f.push('cédula');
+    return f;
+  };
+
+  // Cambia un flag de ubicación desde la tabla, sin abrir la ficha.
+  const alternarFlag = async (p, campo) => {
+    try {
+      await updatePerson(p.id, { [campo]: !p[campo] });
+      refresh();
+    } catch (e) {
+      showToast(`No se pudo actualizar: ${e.message}`);
+    }
+  };
+
+  // Última marcación por persona (cualquier tipo), para la tabla Empleados.
+  const ultimaMarca = useMemo(() => {
+    const m = new Map();
+    for (const e of listJourneyEvents()) {
+      const prev = m.get(e.personId);
+      if (!prev || e.ts > prev) m.set(e.personId, e.ts);
+    }
+    return m;
+  }, [tick]);
+  const fmtUltima = (iso) => {
+    if (!iso) return 'nunca';
+    const dias = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+    const hhmm = fmt12(iso).slice(0, 5);
+    if (dayKey(iso) === todayKey()) return `hoy, ${hhmm}`;
+    if (dias <= 1) return `ayer, ${hhmm}`;
+    if (dias < 30) return `hace ${dias} días`;
+    return new Date(iso).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' });
+  };
+
+  // Tabla de empleados: búsqueda + filtros por columna.
   const empRows = useMemo(() => {
     const q = empSearch.trim().toLowerCase();
-    if (!q) return roster;
-    return roster.filter((p) => p.name.toLowerCase().includes(q) || (p.cedula || '').includes(q));
-  }, [roster, empSearch]);
+    return roster.filter((p) => {
+      if (q && !(p.name.toLowerCase().includes(q) || (p.cedula || '').includes(q))) return false;
+      if (empFiltros.sede !== 'all' && (p.sede || '') !== empFiltros.sede) return false;
+      const conHorario = !!(p.jornadaDias || (p.expectedEntry && p.expectedExit));
+      if (empFiltros.horario === 'con' && !conHorario) return false;
+      if (empFiltros.horario === 'libre' && conHorario) return false;
+      const completa = faltantesDe(p).length === 0;
+      if (empFiltros.config === 'completa' && !completa) return false;
+      if (empFiltros.config === 'incompleta' && completa) return false;
+      return true;
+    });
+  }, [roster, empSearch, empFiltros]);
 
   const pageCount = Math.max(1, Math.ceil(attRows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -799,39 +1211,104 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
   const tabs = [
     { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
     { id: 'anomalias', icon: 'alert', label: 'Anomalías', badge: data.anomalies.length },
-    { id: 'equipo', icon: 'clock', label: 'Asistencia' },
     { id: 'empleados', icon: 'user', label: 'Empleados' },
+    { id: 'horarios', icon: 'clock', label: 'Horarios' },
+    // Infraestructura al PRIMER nivel: sedes y dispositivos se usan lo
+    // suficiente como para no esconderlos dentro de Ajustes.
+    { id: 'cfg-sedes', icon: 'pin', label: 'Sedes' },
+    { id: 'cfg-dispositivos', icon: 'monitor', label: 'Dispositivos', alAbrir: cargarDispositivos },
     { id: 'reportes', icon: 'file', label: 'Reportes' },
     { id: 'historial', icon: 'history', label: 'Historial' },
-    { id: 'ajustes', icon: 'settings', label: 'Ajustes' },
+    { id: 'ajustes', icon: 'settings', label: 'Ajustes', alClic: () => abrirAjustes() },
   ];
 
+  // Pantallas que muestran el submenú de Ajustes al lado (sedes y
+  // dispositivos ya no: son pestañas del menú principal).
+  const enAjustes = tab === 'ajustes'
+    || (tab.startsWith('cfg-') && tab !== 'cfg-sedes' && tab !== 'cfg-dispositivos');
+
+  // Presionar Ajustes abre de una la PRIMERA opción del submenú (Mi empresa,
+  // o la primera disponible según permisos) — en PC el submenú queda al lado,
+  // así que no hace falta una pantalla intermedia. En móvil sí: la lista es
+  // la única forma de navegar los ajustes.
+  const abrirAjustes = () => {
+    if (typeof window !== 'undefined' && window.innerWidth >= 900) {
+      if (permisos.config) { setTab('cfg-empresa'); cargarMiEmpresa(); return; }
+      if (permisos.usuarios) { setTab('cfg-usuarios'); cargarUsuarios(); return; }
+      setTab('cfg-reglamento');
+      return;
+    }
+    setTab('ajustes');
+  };
+
+  // En PC, la vista general 'ajustes' no se queda: siempre cae a la primera
+  // opción (Mi empresa) para que quede PRESIONADA por defecto — también al
+  // entrar por URL directa o al volver con la flecha de regresar. Se hace con
+  // REEMPLAZO (sin apilar 'ajustes' en el historial interno): si se apilara,
+  // la flecha de regresar caería en 'ajustes' → redirección → 'ajustes'… y
+  // nunca saldría de ahí.
+  useEffect(() => {
+    if (tab !== 'ajustes' || typeof window === 'undefined' || window.innerWidth < 900) return;
+    const primera = permisos.config ? 'cfg-empresa' : permisos.usuarios ? 'cfg-usuarios' : 'cfg-reglamento';
+    if (primera === 'cfg-empresa') cargarMiEmpresa();
+    if (primera === 'cfg-usuarios') cargarUsuarios();
+    setTabEstado(primera);
+    window.history.replaceState(null, '', rutaDe(primera));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   const chip = (cls, text) => <span className={`chip ${cls}`}>{text}</span>;
-  const statusChip = (r) => {
-    if (data.anomalies.some((a) => a.kind === 'missing-exit' && a.person.id === r.person.id))
-      return chip('crit', 'Salida faltante');
-    if (data.anomalies.some((a) => a.kind === 'late-entry' && a.person.id === r.person.id))
-      return chip('warn', 'Entrada tardía');
-    if (r.corrected) return chip('neutral', 'Corregido');
-    if (r.present) return chip('good', 'Presente');
-    if (r.firstIn && r.lastOut) return chip('good', 'Jornada completa');
-    return chip('crit', 'Sin marcación');
-  };
 
-  // Novedades por empleado (como en la demo de nómina): extra semanal,
-  // dominical/festivo trabajado hoy, y correcciones manuales del día.
-  const hoyDominical = new Date().getDay() === 0 || (cfg.holidays || []).includes(todayKey());
-  const novChips = (r) => {
-    const novs = [];
-    const extra = Math.max(0, r.weekHours - cfg.weeklyHours);
-    if (extra > 0.05) novs.push(<span className="nov ex" key="ex">Extra {fmtH(extra)}</span>);
-    if (hoyDominical && r.firstIn) novs.push(<span className="nov dom" key="dom">Dominical</span>);
-    if (r.corrected) novs.push(<span className="nov man" key="man">Corrección ✎</span>);
-    if (novs.length === 0) return <span className="nov none">—</span>;
-    return novs;
-  };
+  // Etiqueta legible del período ("1–15 de agosto" / "agosto").
+  const etiquetaPeriodo = (() => {
+    const ini = new Date(data.rangoInicioMs);
+    const mes = ini.toLocaleDateString('es-CO', { month: 'long' });
+    if (rangoModo === 'mes') return mes;
+    return ini.getDate() === 1 ? `1–15 de ${mes}` : `16 al fin de ${mes}`;
+  })();
+  const maxRango = Math.max(1, ...view.rows.map((r) => r.rangoHours));
 
-  const maxWeek = Math.max(40, ...view.rows.map((r) => r.weekHours));
+  // Resumen de costos del dashboard: pide al servidor los tramos valorizados
+  // del período elegido (la misma fuente que Reportes, no un cálculo aparte).
+  useEffect(() => {
+    if (tab !== 'dashboard') return;
+    let vigente = true;
+    setCostos((c) => ({ ...c, estado: 'cargando' }));
+    const desde = dayKey(new Date(data.rangoInicioMs + 12 * 3600000).toISOString());
+    getHorasValorizadas(desde, todayKey())
+      .then((tramos) => { if (vigente) setCostos({ estado: 'listo', tramos }); })
+      .catch(() => { if (vigente) setCostos({ estado: 'error', tramos: [] }); });
+    return () => { vigente = false; };
+  }, [tab, data.rangoInicioMs, tick]);
+
+  // Agregados del resumen: total en pesos, horas extra y top de tipos.
+  const resumenCostos = useMemo(() => {
+    const t = costos.tramos;
+    const valor = t.reduce((s, x) => s + (x.valor ?? 0), 0);
+    const horas = t.reduce((s, x) => s + (x.horas ?? 0), 0);
+    const sinSalario = new Set(t.filter((x) => x.valor == null).map((x) => x.documento)).size;
+    const porTipo = new Map();
+    for (const x of t) porTipo.set(x.tipoHora, (porTipo.get(x.tipoHora) ?? 0) + (x.valor ?? 0));
+    const tipos = [...porTipo.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1])
+      .map(([codigo, v]) => ({ codigo, nombre: TIPOS_HORA.find((tp) => tp.codigo === codigo)?.nombre ?? codigo, valor: v }));
+    return { valor, horas, sinSalario, tipos };
+  }, [costos]);
+
+  // Tonos de azul para la dona de costos (del más oscuro al más claro,
+  // asignados por peso de cada categoría).
+  const AZULES_DONA = ['#3a5570', '#557d9e', '#6e96b8', '#9dbbd2', '#cfdde9', '#8b99ad'];
+
+  // Horas EXTRA reales por cédula en el período (tipos HE*), tomadas de los
+  // tramos valorizados del servidor: la barra pinta en oscuro exactamente lo
+  // que nómina clasificó como extra, no un umbral prorrateado.
+  const extrasPorCedula = useMemo(() => {
+    const m = new Map();
+    for (const t of costos.tramos) {
+      if (!String(t.tipoHora || '').startsWith('HE')) continue;
+      m.set(t.documento, (m.get(t.documento) ?? 0) + (t.horas ?? 0));
+    }
+    return m;
+  }, [costos]);
 
   // Selector de sede (arriba del menú lateral): filtro GLOBAL — aplica a
   // todas las vistas del panel a la vez.
@@ -865,146 +1342,454 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
       )}
 
       <header className="app-header">
+        {/* Regresar a la ÚLTIMA pantalla visitada dentro del panel (como la
+            flecha de la Configuración de Windows). Aparece solo cuando hay
+            a dónde volver, y nunca saca del panel. */}
+        {pilaTabs.current.length > 0 && (
+          <button className="head-back" onClick={volverAtras} aria-label="Regresar a la pantalla anterior" title="Regresar">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+            </svg>
+          </button>
+        )}
         <button className="menu-btn" onClick={() => setNavOpen(true)} aria-label="Abrir menú">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
             <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
           </svg>
         </button>
+        {/* Marca en móvil: en PC vive en el menú lateral. */}
+        <span className="head-logo" aria-hidden="true"><MarcaCDial size={20} /></span>
+        {/* El nombre COMPLETO del sistema manda en la barra (en el menú
+            lateral se truncaba); la pestaña y la fecha van de subtítulo. */}
         <div className="head-titles">
-          <span className="head-tab">{tabs.find((t) => t.id === tab)?.label || 'Ajustes'}</span>
+          <span className="head-tab">Control Registro</span>
           <span className="date-note">
-            {new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            {tabs.find((t) => t.id === tab)?.label || 'Ajustes'}
+            {' · '}
+            {new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}
             {sedeFilter !== 'all' ? ` · ${sedeFilter}` : ''}
           </span>
         </div>
-        {data.anomalies.length > 0 && (
-          <button className="head-badge" title="Anomalías pendientes" onClick={() => setTab('anomalias')}>
-            {data.anomalies.length}
-          </button>
-        )}
+        <div className="head-right">
+          {/* Guía de arranque: antes era una tarjeta fija del dashboard;
+              ahora vive aquí, bajo demanda. */}
+          <button className="head-guia" onClick={() => setGuiaAbierta(true)}>¿Cómo empezar?</button>
+          {data.anomalies.length > 0 && (
+            <button className="head-badge" title="Anomalías pendientes" onClick={() => setTab('anomalias')}>
+              {data.anomalies.length}
+            </button>
+          )}
+          {/* Filtro global de sede, visible en PC; en móvil sigue en el menú. */}
+          <select
+            className="sede-select head-sede"
+            aria-label="Sede"
+            value={sedeFilter}
+            onChange={(e) => setSedeFilter(e.target.value)}
+          >
+            <option value="all">Todas las sedes</option>
+            {sedes.map((o) => (
+              <option key={o.name} value={o.name}>{o.name}</option>
+            ))}
+          </select>
+          {/* Sesión: avatar + nombre con menú desplegable (correo, empresa,
+              cerrar sesión). Antes vivía escondido al fondo del menú lateral. */}
+          {sesion && (
+            <div className="head-user">
+              <button
+                className="head-user-btn"
+                aria-expanded={sesionAbierta}
+                onClick={() => setSesionAbierta((v) => !v)}
+                title={sesion.email}
+              >
+                {sesion.foto ? (
+                  <img
+                    className="sesion-avatar"
+                    src={sesion.foto}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling.style.display = 'flex'; }}
+                  />
+                ) : null}
+                <span className="sesion-avatar" style={sesion.foto ? { display: 'none' } : undefined}>
+                  {iniciales(sesion.nombre || sesion.email)}
+                </span>
+                <span className="head-user-nombre">{sesion.nombre || sesion.email}</span>
+              </button>
+              {sesionAbierta && (
+                <div className="head-user-menu">
+                  <b>{sesion.nombre || sesion.email}</b>
+                  <span>{sesion.email}</span>
+                  <span>{sesion.empresa ?? ROL_ETIQUETA[sesion.rol] ?? sesion.rol}</span>
+                  <button className="lock-btn" onClick={cerrarSesion} title="Cerrar sesión">
+                    <span className="icon"><Icon name="lock" size={14} /></span>
+                    <span className="lbl">Cerrar sesión</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </header>
 
-      <div className="screen">
+      <div className={`screen${enAjustes ? ' con-submenu' : ''}`}>
+        {/* Submenú de Ajustes (solo PC): como la Configuración de Windows —
+            las opciones a la izquierda y el contenido al lado, sin cambiar
+            de pantalla. En móvil se mantiene lista → subpantalla con volver. */}
+        {enAjustes && (
+          <aside className="cfg-menu" aria-label="Opciones de ajustes">
+            {(permisos.usuarios || permisos.config) && <h4>Cuenta y acceso</h4>}
+            {permisos.config && (
+              <button className={`cfg-item${tab === 'cfg-empresa' ? ' on' : ''}`} onClick={() => { setTab('cfg-empresa'); cargarMiEmpresa(); }}>
+                <Icon name="database" size={16} /> Mi empresa
+              </button>
+            )}
+            {permisos.usuarios && (
+              <button className={`cfg-item${tab === 'cfg-usuarios' ? ' on' : ''}`} onClick={() => { setTab('cfg-usuarios'); cargarUsuarios(); }}>
+                <Icon name="users" size={16} /> Acceso al panel
+              </button>
+            )}
+            <h4>Reglas de la empresa</h4>
+            <button className={`cfg-item${tab === 'cfg-reglamento' ? ' on' : ''}`} onClick={() => setTab('cfg-reglamento')}>
+              <Icon name="file" size={16} /> Reglamento laboral
+            </button>
+            <button className={`cfg-item${tab === 'cfg-nomina' ? ' on' : ''}`} onClick={() => setTab('cfg-nomina')}>
+              <Icon name="clock" size={16} /> Valorización
+            </button>
+            <button className={`cfg-item${tab === 'cfg-simulador' ? ' on' : ''}`} onClick={() => setTab('cfg-simulador')}>
+              <Icon name="file" size={16} /> Simulador
+            </button>
+            <h4>Herramientas</h4>
+            <Link className="cfg-item" href="/"><Icon name="monitor" size={16} /> Ir al kiosco</Link>
+            <button className={`cfg-item${tab === 'cfg-gps' ? ' on' : ''}`} onClick={() => setTab('cfg-gps')}>
+              <Icon name="pin" size={16} /> Diagnóstico GPS
+            </button>
+          </aside>
+        )}
+
         {tab === 'dashboard' && (
           <>
-            {/* Empresa recién nacida: en vez de un tablero en ceros, los tres
-                pasos que la dejan funcionando, en orden y con su enlace. */}
-            {allPeople.length === 0 && (
-              <section className="card onboarding">
-                <h2>Para empezar</h2>
-                <ol className="pasos">
-                  <li className={sedes.length > 0 ? 'hecho' : ''}>
-                    <span className="paso-num">{sedes.length > 0 ? '✓' : '1'}</span>
-                    <span className="paso-txt">
-                      <b>Crea tu primera sede</b>
-                      <small>Dónde queda y su radio GPS.</small>
-                    </span>
-                    {sedes.length === 0 && (
-                      <button className="btn primary" onClick={() => setTab('cfg-sedes')}>Crear sede</button>
-                    )}
-                  </li>
-                  <li className={sedes.length === 0 ? 'bloqueado' : ''}>
-                    <span className="paso-num">2</span>
-                    <span className="paso-txt">
-                      <b>Registra a tu gente</b>
-                      <small>Con una foto por persona.</small>
-                    </span>
-                    {sedes.length > 0 && (
-                      <Link className="btn primary" href="/admin/registro">Registrar</Link>
-                    )}
-                  </li>
-                  <li className="bloqueado">
-                    <span className="paso-num">3</span>
-                    <span className="paso-txt">
-                      <b>Activa el kiosco</b>
-                      <small>Abre esta página en la tablet donde van a marcar.</small>
-                    </span>
-                  </li>
-                </ol>
-              </section>
-            )}
-            <div className="tiles">
-              <div className="tile">
-                <div className="label">Presentes ahora</div>
-                <div className="value">{view.present}</div>
-                <div className="sub">de {view.rows.length} empleados</div>
-              </div>
-              <div className="tile">
-                <div className="label">Ausentes hoy</div>
-                <div className="value">{view.absent}</div>
-                <div className="sub">sin marcación aún</div>
-              </div>
-              <div className="tile">
-                <div className="label">Puntualidad</div>
-                <div className="value">{view.punctuality == null ? '—' : `${view.punctuality}%`}</div>
-                <div className="sub">+{cfg.graceMinutes} min de gracia</div>
-              </div>
-              <div className="tile alerta">
-                <div className="label">Anomalías</div>
-                <div className="value">{view.anomalies.length}</div>
-                <div className="sub">requieren revisión</div>
-              </div>
-            </div>
-
-            {sedeFilter === 'all' && (
-              <section className="card">
-                <h2>Comparativa por sedes</h2>
-                <div className="sede-table" role="table">
-                  <div className="sede-row head" role="row">
-                    <span>Sede</span><span>Presentes</span><span>Ausentes</span><span>Horas hoy</span><span>Anomalías</span>
-                  </div>
-                  {data.sedeStats.map((s) => (
-                    <div className="sede-row" role="row" key={s.name}>
-                      <span className="sede-name">{s.name}</span>
-                      <span>{s.present}/{s.total}</span>
-                      <span className={s.absent > 0 ? 'warn-num' : ''}>{s.absent}</span>
-                      <span>{fmtH(s.hours)}</span>
-                      <span className={s.anomalies > 0 ? 'crit-num' : ''}>{s.anomalies}</span>
-                    </div>
+            <div className="dash-grid">
+              {/* Columna ancha: la asistencia de hoy (antes era pestaña propia;
+                  ahora vive en el dashboard, que es donde se consulta). */}
+              <section className="card asistencia-card">
+                <h2>
+                  {esHoy ? 'Asistencia de hoy' : `Asistencia — ${new Date(`${diaAsistencia}T12:00:00-05:00`).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}`}
+                  {' '}<span className="muted-count">{attRows.length}</span>
+                </h2>
+                <p className="hint">Toca una fila para ver sus marcaciones.</p>
+                <div className="att-controls">
+                  <input
+                    className="att-search mini" type="search" placeholder="Buscar…"
+                    value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+                  />
+                  <input
+                    className="att-fecha" type="date" aria-label="Día"
+                    value={diaAsistencia} max={todayKey()}
+                    onChange={(e) => { setDiaAsistencia(e.target.value || todayKey()); setPage(0); }}
+                  />
+                  {[['all', 'Todos'], ['present', esHoy ? 'Trabajando' : 'Asistieron'], ['absent', 'Ausentes']].map(([id, lbl]) => (
+                    <button
+                      key={id} className="fchip" aria-pressed={statusFilter === id}
+                      onClick={() => { setStatusFilter(id); setPage(0); }}
+                    >
+                      {lbl}
+                    </button>
                   ))}
                 </div>
-                {data.sinSede > 0 && (
-                  <p className="axis-note">{data.sinSede} sin sede asignada.</p>
+                <div className="scrollable">
+                  {attRows.length === 0 && (
+                    <p className="empty">Sin resultados{search ? ` para «${search}»` : ''}.</p>
+                  )}
+                  {attRows.length > 0 && (() => {
+                    // Última marcación en corto; el punto de al lado del nombre
+                    // ya dice el estado (verde marcó hoy, rojo ausente).
+                    const ultima = (r) => {
+                      if (!r.firstIn) return esHoy ? 'sin marcación hoy' : 'sin marcación';
+                      if (r.lastOut && !r.present) return `salió ${horaCorta(r.lastOut.ts)}`;
+                      return `entró ${horaCorta(r.firstIn.ts)}`;
+                    };
+                    const jornadaPrevista = (r) => {
+                      const f = franjaEsperada(r.person, diaAsistencia);
+                      return f ? `${f.entrada} – ${f.salida}` : 'libre';
+                    };
+                    // El verde significa UNA sola cosa: trabajando ahora mismo.
+                    // Quien ya salió (hoy o un día pasado) va en rojo, y la
+                    // letra pequeña dice por qué: "salió 16:02" o "sin marcación".
+                    const estadoPunto = (r) => (r.present ? 'on' : 'off');
+                    const celdaEmpleado = (r) => (
+                      <span className="emp-cell">
+                        <span className="av av-tabla">{iniciales(r.person.name)}</span>
+                        <span>
+                          <span className="att-name">
+                            {r.person.name}
+                            <span className={`punto-estado ${estadoPunto(r)}`} title={estadoPunto(r) === 'on' ? 'Trabajando' : 'No está trabajando'} />
+                          </span>
+                          <span className="emp-cedula">{ultima(r)}</span>
+                        </span>
+                      </span>
+                    );
+                    const celdaExtras = (r) => {
+                      const e = extrasHoy.get(r.person.cedula);
+                      if (!e || e.horas <= 0) return <span className="libre">—</span>;
+                      if (e.sinSalario) return <span className="libre">sin salario</span>;
+                      return <span className="saldo pos">{fmtCOP(e.valor)}</span>;
+                    };
+                    return (
+                    <>
+                      <div className="att-tablewrap">
+                        <table className="att-table">
+                          <thead>
+                            <tr><th>Empleado</th><th>Jornada prevista</th><th className="num">Trabajado</th><th className="num">Extras (COP)</th><th>Sede / Ubicación</th></tr>
+                          </thead>
+                          <tbody>
+                            {pageRows.map((r) => {
+                              const e = extrasHoy.get(r.person.cedula);
+                              return (
+                                <tr key={r.person.id} onClick={() => openDrawer(r.person.id, r.person.name, esHoy ? null : diaAsistencia)} tabIndex={0}
+                                  onKeyDown={(ev) => ev.key === 'Enter' && openDrawer(r.person.id, r.person.name, esHoy ? null : diaAsistencia)}>
+                                  <td>{celdaEmpleado(r)}</td>
+                                  <td>{jornadaPrevista(r) === 'libre' ? <span className="libre">libre</span> : jornadaPrevista(r)}</td>
+                                  <td className="num">
+                                    {fmtH(r.hoursToday)}
+                                    {e && e.horas > 0 && <span className="extra-h">+{fmtHM(e.horas)} extra</span>}
+                                  </td>
+                                  <td className="num">{celdaExtras(r)}</td>
+                                  <td className="att-sede">{r.sede || '—'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <AccList
+                        items={pageRows.map((r) => {
+                          const e = extrasHoy.get(r.person.cedula);
+                          return {
+                            id: r.person.id,
+                            title: r.person.name,
+                            right: <span className={`punto-estado ${r.present ? 'on' : 'off'}`} />,
+                            fields: [
+                              ['Última marcación', ultima(r)],
+                              ['Jornada prevista', jornadaPrevista(r)],
+                              ['Trabajado', `${fmtH(r.hoursToday)}${e && e.horas > 0 ? ` (+${fmtHM(e.horas)} extra)` : ''}`],
+                              ['Extras (COP)', celdaExtras(r)],
+                              ['Sede', r.sede || '—'],
+                            ],
+                            actions: (
+                              <button className="btn primary block" onClick={() => openDrawer(r.person.id, r.person.name, esHoy ? null : diaAsistencia)}>
+                                Ver marcaciones
+                              </button>
+                            ),
+                          };
+                        })}
+                      />
+                    </>
+                    );
+                  })()}
+                </div>
+                {pageCount > 1 && (
+                  <div className="pager">
+                    <button className="btn" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>Anterior</button>
+                    <span>Página {safePage + 1} de {pageCount}</span>
+                    <button className="btn" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>Siguiente</button>
+                  </div>
                 )}
               </section>
-            )}
 
-            <section className="card grow">
-              <h2>Horas acumuladas — últimos 7 días</h2>
-              <div className="scrollable">
-                <div className="chart">
-                  {view.rows.length === 0 && <p className="empty">No hay personas {sedeFilter === 'all' ? 'registradas' : `en ${sedeFilter}`}.</p>}
-                  {[...view.rows].sort((a, b) => b.weekHours - a.weekHours).map((r) => {
-                    const extra = Math.max(0, r.weekHours - cfg.weeklyHours);
-                    return (
-                      <div className="hrow" key={r.person.id} title={`${r.person.name}: ${fmtH(r.weekHours)}${extra > 0 ? ` (${fmtH(extra)} extra)` : ''}`}>
-                        <span className="name">{r.person.name}</span>
-                        <span className="track">
-                          <span className={`fill${extra > 0 ? ' over' : ''}`} style={{ width: `${(r.weekHours / maxWeek) * 100}%` }} />
-                          {/* línea de la jornada legal semanal */}
-                          <span className="limit" style={{ left: `${Math.min(100, (cfg.weeklyHours / maxWeek) * 100)}%` }} />
-                        </span>
-                        <span className="val">
-                          {fmtH(r.weekHours)}
-                          {extra > 0 && <em className="extra">+{fmtH(extra)} extra</em>}
-                        </span>
+              {/* Columna lateral: indicadores de un vistazo */}
+              <div className="dash-lado">
+              {/* Equipo ahora mismo: proporción de estados + avatares. */}
+              <section className="card">
+                <h2>Equipo ahora mismo</h2>
+                {(() => {
+                  const grupos = [
+                    { id: 'trabajando', label: 'Trabajando', color: 'var(--good-text)', rows: view.rows.filter((r) => r.present) },
+                    { id: 'fin', label: 'Fin de jornada', color: 'var(--muted)', rows: view.rows.filter((r) => !r.present && r.firstIn) },
+                    { id: 'sin', label: 'Sin marcación', color: 'var(--crit-text)', rows: view.rows.filter((r) => !r.firstIn) },
+                  ];
+                  const total = view.rows.length || 1;
+                  return (
+                    <>
+                      <div className="prop-bar" aria-hidden="true">
+                        {grupos.filter((g) => g.rows.length > 0).map((g) => (
+                          <span key={g.id} style={{ flex: g.rows.length, background: g.color }} />
+                        ))}
                       </div>
-                    );
+                      <div className="est-grupos">
+                        {grupos.map((g) => (
+                          <div className="est-linea" key={g.id}>
+                            <span className="est-punto" style={{ background: g.color }} />
+                            {g.label} · <strong>{g.rows.length}</strong>
+                            <span className="est-pct">({Math.round((g.rows.length / total) * 100)}%)</span>
+                            <span className="avs">
+                              {g.rows.slice(0, 4).map((r) => (
+                                <span className="av" key={r.person.id} title={r.person.name}>{iniciales(r.person.name)}</span>
+                              ))}
+                              {g.rows.length > 4 && <span className="av av-mas">+{g.rows.length - 4}</span>}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
+              </section>
+
+              <section className="card">
+                <h2>Anomalías por resolver</h2>
+                <button className={`cifrota${view.anomalies.length > 0 ? ' alerta' : ''}`} onClick={() => setTab('anomalias')} title="Abrir anomalías">
+                  {view.anomalies.length}
+                </button>
+                <div className="anom-desglose">
+                  {view.anomalies.length === 0 && <span>Nada pendiente.</span>}
+                  {['missing-exit', 'late-entry', 'early-exit'].map((k) => {
+                    const n = view.anomalies.filter((a) => a.kind === k).length;
+                    if (!n) return null;
+                    const txt = k === 'missing-exit' ? 'sin registrar salida' : k === 'late-entry' ? 'con entrada tardía' : 'con salida temprana';
+                    return <span key={k}>{n} {txt}</span>;
                   })}
                 </div>
+              </section>
+
+              {sedeFilter === 'all' && (
+                <section className="card">
+                  <h2>Sedes — hoy</h2>
+                  <div className="est-grupos">
+                    {data.sedeStats.map((s) => (
+                      <div className="hbarra" key={s.name} title={`${s.name}: ${s.present} presentes de ${s.total}`}>
+                        <span className="hbarra-nombre">{s.name}</span>
+                        <span className="hbarra-pista">
+                          <span className="hbarra-valor" style={{ width: `${s.total ? (s.present / s.total) * 100 : 0}%` }} />
+                        </span>
+                        <span className="hbarra-cifra">{s.present} / {s.total}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {data.sinSede > 0 && (
+                    <p className="axis-note">{data.sinSede} sin sede asignada.</p>
+                  )}
+                </section>
+              )}
               </div>
-              <p className="axis-note">La línea marca las {cfg.weeklyHours} h legales; lo que exceda es extra.</p>
-            </section>
+
+              {/* En PC estas dos van en la PRIMERA fila (orden vía CSS). */}
+              <section className="card grow horas-card">
+                <div className="card-head">
+                  <h2>Horas acumuladas — {etiquetaPeriodo}</h2>
+                  <div className="rango-sel" role="group" aria-label="Período">
+                    {[['quincena', 'Quincena'], ['mes', 'Mes']].map(([id, lbl]) => (
+                      <button key={id} className="fchip" aria-pressed={rangoModo === id} onClick={() => setRangoModo(id)}>
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="scrollable">
+                  <div className="chart">
+                    {view.rows.length === 0 && <p className="empty">No hay personas {sedeFilter === 'all' ? 'registradas' : `en ${sedeFilter}`}.</p>}
+                    {[...view.rows].sort((a, b) => b.rangoHours - a.rangoHours).map((r) => {
+                      const extra = Math.min(r.rangoHours, extrasPorCedula.get(r.person.cedula) ?? 0);
+                      const base = r.rangoHours - extra;
+                      return (
+                        <div className="hrow compacta" key={r.person.id} title={`${r.person.name}: ${fmtH(r.rangoHours)}${extra > 0 ? ` (${fmtH(extra)} extra)` : ''}`}>
+                          <span className="name">{r.person.name}</span>
+                          <span className="track">
+                            <span className="fill" style={{ width: `${(base / maxRango) * 100}%` }} />
+                            {/* lo que traspasa las horas legales, en azul oscuro */}
+                            {extra > 0 && (
+                              <span className="fill-extra" style={{ left: `${(base / maxRango) * 100}%`, width: `${(extra / maxRango) * 100}%` }} />
+                            )}
+                          </span>
+                          <span className="val">
+                            {fmtH(r.rangoHours)}
+                            {extra > 0 && <em className="extra">+{fmtH(extra)}</em>}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <p className="axis-note">
+                  El tramo azul oscuro son las horas extra del período, según las reglas de nómina.
+                </p>
+              </section>
+
+              {/* Resumen de costos del período: lo que las horas con recargo del
+                  rango valen en pesos, valorizadas por el servidor. */}
+              <section className="card costos-card">
+                <h2>Costos — {etiquetaPeriodo}</h2>
+                {costos.estado === 'error' && <p className="empty">No se pudo cargar la valorización.</p>}
+                {costos.estado !== 'error' && (
+                  <>
+                    {(() => {
+                      // Dona en tonos de azul: cada categoría de hora extra es
+                      // un tramo del conic-gradient, por peso.
+                      let acum = 0;
+                      const paradas = resumenCostos.tipos.map((t, i) => {
+                        const desde = (acum / resumenCostos.valor) * 360;
+                        acum += t.valor;
+                        const hasta = (acum / resumenCostos.valor) * 360;
+                        return `${AZULES_DONA[i % AZULES_DONA.length]} ${desde}deg ${hasta}deg`;
+                      }).join(', ');
+                      return (
+                        <div className="costo-viz">
+                          {resumenCostos.tipos.length > 0 && (
+                            <div className="dona" style={{ background: `conic-gradient(${paradas})` }} aria-hidden="true">
+                              <span />
+                            </div>
+                          )}
+                          <div>
+                            <div className="costo-total">
+                              {costos.estado === 'cargando' ? '…' : fmtCOP(resumenCostos.valor)}
+                            </div>
+                            <p className="costo-sub">
+                              {fmtHoras(resumenCostos.horas)} con recargo en el período
+                            </p>
+                            {resumenCostos.tipos.length > 0 && (
+                              <div className="costo-tipos">
+                                {resumenCostos.tipos.map((t, i) => (
+                                  <div className="costo-tipo" key={t.codigo} title={t.nombre}>
+                                    <span className="costo-dot" style={{ background: AZULES_DONA[i % AZULES_DONA.length] }} />
+                                    <span className="costo-cod">{t.codigo}</span>
+                                    <span className="costo-val">{fmtCOP(t.valor)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    <button className="costo-link" onClick={() => setTab('reportes')}>Ver reporte completo →</button>
+                  </>
+                )}
+              </section>
+            </div>
           </>
         )}
 
         {tab === 'anomalias' && (
           <section className="card grow">
             <h2>Anomalías por resolver <span className="muted-count">{view.anomalies.length}</span></h2>
-            <p className="hint">Toca una fila para corregirla.</p>
+            <p className="hint">Corrígelas aquí mismo; lo resuelto sale de la bandeja.</p>
+            {/* Filtro por tipo (aplica a la bandeja de PC y a la lista móvil) */}
+            <div className="att-controls">
+              {[['all', 'Todas'], ['missing-exit', 'Salida faltante'], ['late-entry', 'Entrada tardía'], ['early-exit', 'Salida temprana']].map(([id, lbl]) => (
+                <button key={id} className="fchip" aria-pressed={anomFiltro === id} onClick={() => { setAnomFiltro(id); setAnomAbierta(null); setAnomPage(0); }}>
+                  {lbl}
+                  {id !== 'all' && <span className="fchip-n">{view.anomalies.filter((a) => a.kind === id).length}</span>}
+                </button>
+              ))}
+            </div>
             <div className="scrollable">
-              {view.anomalies.length === 0 && <p className="empty">Sin anomalías pendientes.</p>}
-              {view.anomalies.length > 0 && (() => {
+              {(() => {
+                const casos = anomFiltro === 'all' ? view.anomalies : view.anomalies.filter((a) => a.kind === anomFiltro);
+                // Paginación sobre lo filtrado; corregir un caso puede achicar
+                // la lista, así que la página vigente se recorta sola.
+                const ANOM_PAGE = 9;
+                const anomPages = Math.max(1, Math.ceil(casos.length / ANOM_PAGE));
+                const anomSafe = Math.min(anomPage, anomPages - 1);
+                const casosPagina = casos.slice(anomSafe * ANOM_PAGE, (anomSafe + 1) * ANOM_PAGE);
                 const aChip = (a) =>
                   a.kind === 'missing-exit' ? chip('crit', 'Salida faltante')
                     : a.kind === 'early-exit' ? chip('warn', 'Salida temprana')
@@ -1016,114 +1801,64 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                       ? `Salió ${fmt12(a.event.ts)}, esperada ${a.person.expectedExit || '—'}.`
                       : `Entró ${fmt12(a.event.ts)}.`;
                 const aDay = (a) => new Date(a.event.ts).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
+                if (view.anomalies.length === 0) return <p className="empty">🎉 Bandeja en cero. Sin anomalías pendientes.</p>;
+                if (casos.length === 0) return <p className="empty">Sin anomalías de este tipo.</p>;
                 return (
                   <>
-                    <div className="att-tablewrap">
-                      <table className="att-table">
-                        <thead>
-                          <tr><th>Empleado</th><th>Tipo</th><th>Día</th><th>Detalle</th></tr>
-                        </thead>
-                        <tbody>
-                          {view.anomalies.map((a, i) => (
-                            <tr key={a.event.id + i} onClick={() => openFix(a)} tabIndex={0}
-                              onKeyDown={(e) => e.key === 'Enter' && openFix(a)}>
-                              <td className="att-name">{a.person.name}</td>
-                              <td>{aChip(a)}</td>
-                              <td>{aDay(a)}</td>
-                              <td className="att-sede">{aDesc(a)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    {/* Bandeja de casos expandibles con corrección en el sitio
+                        (única lista: en móvil la cabecera se compacta a foto,
+                        nombre y novedad; el detalle aparece al expandir). */}
+                    <div className="att-tablewrap bandeja">
+                      {casosPagina.map((a) => {
+                        const key = a.event.id + a.kind;
+                        const abierta = anomAbierta === key;
+                        return (
+                          <div className={`caso${abierta ? ' abierto' : ''}`} key={key}>
+                            <button className="caso-cab" aria-expanded={abierta} onClick={() => abrirCaso(a, key)}>
+                              <span className="av av-tabla">{iniciales(a.person.name)}</span>
+                              <span className="caso-nom">
+                                <b>{a.person.name}</b>
+                                <small>{aDay(a)}{a.person.sede ? ` · ${a.person.sede}` : ''}</small>
+                              </span>
+                              {aChip(a)}
+                              <span className="caso-chev"><Icon name="chevronRight" size={13} /></span>
+                            </button>
+                            {abierta && (
+                              <div className="caso-panel">
+                                <p className="caso-det">{aDay(a)}{a.person.sede ? ` · ${a.person.sede}` : ''} — {aDesc(a)}</p>
+                                <div className="caso-fix">
+                                  <label>
+                                    {a.kind === 'missing-exit' ? 'Salida' : 'Hora correcta'}
+                                    <input
+                                      type="time" value={anomForm.time}
+                                      onChange={(e) => setAnomForm({ ...anomForm, time: e.target.value })}
+                                    />
+                                  </label>
+                                  <input
+                                    className="caso-motivo" type="text" placeholder="Motivo del ajuste (obligatorio)"
+                                    value={anomForm.reason}
+                                    onChange={(e) => setAnomForm({ ...anomForm, reason: e.target.value })}
+                                  />
+                                  <button className="btn primary" onClick={() => guardarAnomalia(a)}>Guardar</button>
+                                  <button className="btn" onClick={() => openFix(a)}>Ver día completo</button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                    <AccList
-                      items={view.anomalies.map((a, i) => ({
-                        id: a.event.id + i,
-                        title: a.person.name,
-                        right: aChip(a),
-                        fields: [['Día', aDay(a)], ['Detalle', aDesc(a)]],
-                        actions: <button className="btn primary block" onClick={() => openFix(a)}>Corregir</button>,
-                      }))}
-                    />
+                    {anomPages > 1 && (
+                      <div className="pager">
+                        <button className="btn" disabled={anomSafe === 0} onClick={() => { setAnomPage(anomSafe - 1); setAnomAbierta(null); }}>Anterior</button>
+                        <span>Página {anomSafe + 1} de {anomPages}</span>
+                        <button className="btn" disabled={anomSafe >= anomPages - 1} onClick={() => { setAnomPage(anomSafe + 1); setAnomAbierta(null); }}>Siguiente</button>
+                      </div>
+                    )}
                   </>
                 );
               })()}
             </div>
-          </section>
-        )}
-
-        {tab === 'equipo' && (
-          <section className="card grow">
-            <h2>Asistencia de hoy <span className="muted-count">{attRows.length}</span></h2>
-            <p className="hint">Toca una fila para ver sus marcaciones.</p>
-            <div className="att-controls">
-              <input
-                className="att-search" type="search" placeholder="Buscar por nombre o código…"
-                value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-              />
-              {[['all', 'Todos'], ['present', 'Presentes'], ['absent', 'Ausentes'], ['anomaly', 'Con anomalía']].map(([id, lbl]) => (
-                <button
-                  key={id} className="fchip" aria-pressed={statusFilter === id}
-                  onClick={() => { setStatusFilter(id); setPage(0); }}
-                >
-                  {lbl}
-                </button>
-              ))}
-            </div>
-            <div className="scrollable">
-              {attRows.length === 0 && <p className="empty">Sin resultados{search ? ` para «${search}»` : ''}.</p>}
-              {attRows.length > 0 && (
-                <>
-                  <div className="att-tablewrap">
-                    <table className="att-table">
-                      <thead>
-                        <tr><th>Empleado</th><th>Sede</th><th>Entrada</th><th>Salida</th><th className="num">Horas</th><th>Estado</th><th>Novedades</th></tr>
-                      </thead>
-                      <tbody>
-                        {pageRows.map((r) => (
-                          <tr key={r.person.id} onClick={() => openDrawer(r.person.id, r.person.name)} tabIndex={0}
-                            onKeyDown={(e) => e.key === 'Enter' && openDrawer(r.person.id, r.person.name)}>
-                            <td className="att-name">{r.person.name}</td>
-                            <td className="att-sede">{r.sede || '—'}</td>
-                            <td>{fmt12(r.firstIn?.ts)}</td>
-                            <td>{fmt12(r.lastOut?.ts)}</td>
-                            <td className="num">{fmtH(r.hoursToday)}</td>
-                            <td>{statusChip(r)}</td>
-                            <td><span className="novs">{novChips(r)}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <AccList
-                    items={pageRows.map((r) => ({
-                      id: r.person.id,
-                      title: r.person.name,
-                      right: statusChip(r),
-                      fields: [
-                        ['Sede', r.sede || '—'],
-                        ['Entrada', fmt12(r.firstIn?.ts)],
-                        ['Salida', fmt12(r.lastOut?.ts)],
-                        ['Horas', fmtH(r.hoursToday)],
-                        ['Novedades', <span className="novs" key="n">{novChips(r)}</span>],
-                      ],
-                      actions: (
-                        <button className="btn primary block" onClick={() => openDrawer(r.person.id, r.person.name)}>
-                          Ver marcaciones
-                        </button>
-                      ),
-                    }))}
-                  />
-                </>
-              )}
-            </div>
-            {pageCount > 1 && (
-              <div className="pager">
-                <button className="btn" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>Anterior</button>
-                <span>Página {safePage + 1} de {pageCount}</span>
-                <button className="btn" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>Siguiente</button>
-              </div>
-            )}
           </section>
         )}
 
@@ -1141,58 +1876,218 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                 Llegaste al tope del plan gratuito. Para registrar más, pasa al plan de pago.
               </p>
             )}
-            <p className="hint">Quiénes pueden marcar en el kiosco.</p>
+            <p className="hint">Quiénes pueden marcar en el kiosco. Toca una fila para editar.</p>
             <div className="att-controls">
               <input
-                className="att-search" type="search" placeholder="Buscar por nombre o cédula…"
-                value={empSearch} onChange={(e) => setEmpSearch(e.target.value)}
+                className="att-search mini" type="search" placeholder="Buscar…"
+                value={empSearch} onChange={(e) => { setEmpSearch(e.target.value); setEmpPage(0); }}
               />
-              <Link className="btn primary" href="/admin/registro">Registrar empleado</Link>
+              <button className="btn primary" onClick={() => setRegAbierto(true)}>Registrar empleado</button>
             </div>
             <div className="scrollable">
-              {empRows.length === 0 && <p className="empty">Sin resultados{empSearch ? ` para «${empSearch}»` : ''}.</p>}
-              {empRows.length > 0 && (() => {
-                const horario = (p) => (p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : 'horario libre');
-                const jornada = (p) => {
-                  const exp = expectedDailyHours(p);
-                  return exp == null ? '—' : `${fmtH(exp)}${p.breakMinutes ? ` (−${p.breakMinutes}m)` : ''}`;
+              {(() => {
+                const horario = (p) => (p.jornadaDias
+                  ? resumenDias(p.jornadaDias)
+                  : p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : 'horario libre');
+                const configChips = (p) => {
+                  const f = faltantesDe(p);
+                  if (f.length === 0) return <span className="chip good">Completa</span>;
+                  return f.map((x) => (
+                    <span className={`chip ${x === 'sede' ? 'crit' : 'warn'}`} key={x}>Sin {x}</span>
+                  ));
                 };
+                // Paginación: 9 por página, con la página vigente recortada si
+                // el filtro o la búsqueda achican la lista.
+                const EMP_PAGE = 9;
+                const empPages = Math.max(1, Math.ceil(empRows.length / EMP_PAGE));
+                const empSafe = Math.min(empPage, empPages - 1);
+                const empPagina = empRows.slice(empSafe * EMP_PAGE, (empSafe + 1) * EMP_PAGE);
                 return (
                   <>
                     <div className="att-tablewrap">
                       <table className="att-table">
                         <thead>
-                          <tr><th>Empleado</th><th>Cédula</th><th>Sede</th><th>Horario</th><th>Jornada</th></tr>
+                          {/* Filtros DENTRO de la fila de títulos: un embudo por
+                              columna que abre su selector; azul cuando filtra. */}
+                          <tr>
+                            <th>Empleado</th>
+                            {[
+                              ['sede', 'Sede', [['all', 'Todas'], ...sedes.map((o) => [o.name, o.name])]],
+                              ['horario', 'Horario', [['all', 'Todos'], ['con', 'Con horario'], ['libre', 'Horario libre']]],
+                              ['config', 'Configuración', [['all', 'Todas'], ['completa', 'Completa'], ['incompleta', 'Incompleta']]],
+                            ].map(([campo, titulo, opciones]) => (
+                              <th className="th-filtro" key={campo}>
+                                {titulo}
+                                <button
+                                  className={`filtro-ico${empFiltros[campo] !== 'all' ? ' on' : ''}`}
+                                  aria-label={`Filtrar por ${titulo.toLowerCase()}`}
+                                  aria-expanded={filtroAbierto === campo}
+                                  onClick={() => setFiltroAbierto(filtroAbierto === campo ? null : campo)}
+                                >
+                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                    <path d="M3 5h18l-7 8v5l-4 2v-7L3 5z" />
+                                  </svg>
+                                </button>
+                                {filtroAbierto === campo && (
+                                  <div className="filtro-pop">
+                                    <select
+                                      autoFocus size={opciones.length}
+                                      value={empFiltros[campo]}
+                                      onChange={(e) => { setEmpFiltros({ ...empFiltros, [campo]: e.target.value }); setFiltroAbierto(null); setEmpPage(0); }}
+                                    >
+                                      {opciones.map(([v, txt]) => <option key={v} value={v}>{txt}</option>)}
+                                    </select>
+                                  </div>
+                                )}
+                              </th>
+                            ))}
+                            <th title="Con sede: si está activo, solo puede marcar dentro de su sede">Limitar</th>
+                            <th title="Sin sede: si está activo, se registra el GPS de cada marcación">Validar</th>
+                            <th>Última marcación</th>
+                          </tr>
                         </thead>
                         <tbody>
-                          {empRows.map((p) => (
+                          {empRows.length === 0 && (
+                            <tr className="static"><td colSpan={7} className="empty">Sin resultados{empSearch ? ` para «${empSearch}»` : ''}.</td></tr>
+                          )}
+                          {empPagina.map((p) => (
                             <tr key={p.id} onClick={() => openEdit(p)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && openEdit(p)}>
-                              <td className="att-name">{p.name}</td>
-                              <td>{p.cedula ? `C.C. ${p.cedula}` : '—'}</td>
+                              <td>
+                                <span className="emp-cell">
+                                  <span className="av av-tabla">{iniciales(p.name)}</span>
+                                  <span>
+                                    <span className="att-name">{p.name}</span>
+                                    <span className="emp-cedula">{p.cedula || 'sin cédula'}</span>
+                                  </span>
+                                </span>
+                              </td>
                               <td className="att-sede">{p.sede || '—'}</td>
-                              <td>{p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : <span className="libre">horario libre</span>}</td>
-                              <td>{expectedDailyHours(p) == null ? <span className="libre">—</span> : jornada(p)}</td>
+                              <td>{p.jornadaDias || (p.expectedEntry && p.expectedExit) ? horario(p) : <span className="libre">horario libre</span>}</td>
+                              <td><span className="novs">{configChips(p)}</span></td>
+                              {/* Limitar solo aplica CON sede; Validar solo SIN sede. */}
+                              <td>
+                                <Toggle
+                                  on={p.validarSede} disabled={!p.sede}
+                                  label={p.sede ? '¿Limitar a su sede?' : 'Requiere una sede'}
+                                  onClick={() => alternarFlag(p, 'validarSede')}
+                                />
+                              </td>
+                              <td>
+                                <Toggle
+                                  on={p.validarUbicacion} disabled={!!p.sede}
+                                  label={p.sede ? 'Solo aplica sin sede' : '¿Registrar GPS al marcar?'}
+                                  onClick={() => alternarFlag(p, 'validarUbicacion')}
+                                />
+                              </td>
+                              <td className="att-sede">{fmtUltima(ultimaMarca.get(p.id))}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
                     <AccList
-                      items={empRows.map((p) => ({
+                      items={empPagina.map((p) => ({
                         id: p.id,
                         title: p.name,
                         right: <span className="acc-note">{p.sede || 'sin sede'}</span>,
                         fields: [
-                          ['Cédula', p.cedula ? `C.C. ${p.cedula}` : '—'],
+                          ['Cédula', p.cedula || 'sin cédula'],
                           ['Horario', horario(p)],
-                          ['Jornada', jornada(p)],
+                          ['Configuración', <span className="novs" key="c">{configChips(p)}</span>],
+                          ['Limitar ubicación', <Toggle key="l" on={p.validarSede} disabled={!p.sede} label="Limitar a su sede" onClick={() => alternarFlag(p, 'validarSede')} />],
+                          ['Validar ubicación', <Toggle key="v" on={p.validarUbicacion} disabled={!!p.sede} label="Registrar GPS al marcar" onClick={() => alternarFlag(p, 'validarUbicacion')} />],
+                          ['Última marcación', fmtUltima(ultimaMarca.get(p.id))],
                         ],
                         actions: <button className="btn primary block" onClick={() => openEdit(p)}>Editar</button>,
                       }))}
                     />
+                    {empPages > 1 && (
+                      <div className="pager">
+                        <button className="btn" disabled={empSafe === 0} onClick={() => setEmpPage(empSafe - 1)}>Anterior</button>
+                        <span>Página {empSafe + 1} de {empPages}</span>
+                        <button className="btn" disabled={empSafe >= empPages - 1} onClick={() => setEmpPage(empSafe + 1)}>Siguiente</button>
+                      </div>
+                    )}
                   </>
                 );
               })()}
+            </div>
+          </section>
+        )}
+
+        {tab === 'horarios' && (
+          <section className="card grow">
+            <h2>Horarios <span className="muted-count">{horarios.length}</span></h2>
+            <p className="hint">
+              Plantillas de jornada por cargo o turno, personalizadas POR DÍA: cada día
+              puede tener su propia franja (o quedar libre). Al registrar o editar un
+              empleado se le asigna una, y su semana queda copiada en su ficha.
+            </p>
+            <div className="att-controls">
+              <button
+                className="btn primary"
+                onClick={() => setHorForm({ nombre: '', dias: diasLunesAViernes() })}
+              >
+                Crear horario
+              </button>
+            </div>
+
+            <div className="scrollable">
+              {horarios.length === 0 && !horForm && (
+                <p className="empty">Aún no hay horarios. Crea el primero: por ejemplo «Administrativo, Lun–Vie 08:00 – 17:00».</p>
+              )}
+              {horarios.length > 0 && (
+                <>
+                  <div className="att-tablewrap">
+                    <table className="att-table">
+                      <thead>
+                        <tr>
+                          <th>Nombre</th>
+                          <th>Días</th>
+                          <th>Franja</th>
+                          <th>Almuerzo</th>
+                          <th className="num">Horas/semana</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {/* Fila presionable, como Empleados: abre el cajón de
+                            edición; eliminar vive dentro del cajón. */}
+                        {horarios.map((h) => (
+                          <tr
+                            key={h.id} tabIndex={0}
+                            onClick={() => setHorForm({ id: h.id, nombre: h.nombre, dias: JSON.parse(JSON.stringify(h.dias)) })}
+                            onKeyDown={(e) => e.key === 'Enter' && setHorForm({ id: h.id, nombre: h.nombre, dias: JSON.parse(JSON.stringify(h.dias)) })}
+                          >
+                            <td className="att-name">{h.nombre}</td>
+                            <td>{nombresDias(h.dias)}</td>
+                            <td className="att-sede">{franjasDe(h.dias)}</td>
+                            <td className="att-sede">{almuerzoDe(h.dias)}</td>
+                            <td className="num">{fmtHM(horasSemanaDias(h.dias))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <AccList
+                    items={horarios.map((h) => ({
+                      id: h.id,
+                      title: h.nombre,
+                      right: <span className="acc-note">{fmtHM(horasSemanaDias(h.dias))}/sem</span>,
+                      fields: [
+                        ['Días', resumenDias(h.dias)],
+                        ['Almuerzo', almuerzoDe(h.dias)],
+                        ['Horas por semana', fmtHM(horasSemanaDias(h.dias))],
+                      ],
+                      // Editar (y eliminar, dentro del cajón), como en Empleados.
+                      actions: (
+                        <button className="btn primary block" onClick={() => setHorForm({ id: h.id, nombre: h.nombre, dias: JSON.parse(JSON.stringify(h.dias)) })}>
+                          Editar
+                        </button>
+                      ),
+                    }))}
+                  />
+                </>
+              )}
             </div>
           </section>
         )}
@@ -1346,7 +2241,7 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                   {permisos.liquidar && (
                     <p className="cfg-note">
                       «Pagado» es una anotación de que esas horas ya se liquidaron en nómina —
-                      ArriveControl no paga. Si después se corrige una marcación ya pagada, ese
+                      Control Registro no paga. Si después se corrige una marcación ya pagada, ese
                       tramo vuelve a quedar pendiente y la fila se muestra como parcial.
                     </p>
                   )}
@@ -1356,13 +2251,47 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
           </section>
         )}
 
-        {tab === 'historial' && (
+        {tab === 'historial' && (() => {
+          // Filtro por día (Bogotá) y paginación sobre el resultado filtrado.
+          const HIST_PAGE = 15;
+          const filtrados = data.audit.filter((e) => {
+            const dia = dayKey(e.ts);
+            if (histFiltro.desde && dia < histFiltro.desde) return false;
+            if (histFiltro.hasta && dia > histFiltro.hasta) return false;
+            return true;
+          });
+          const histPages = Math.max(1, Math.ceil(filtrados.length / HIST_PAGE));
+          const histSafe = Math.min(histPage, histPages - 1);
+          const pagina = filtrados.slice(histSafe * HIST_PAGE, (histSafe + 1) * HIST_PAGE);
+          const hayFiltro = histFiltro.desde || histFiltro.hasta;
+          return (
           <section className="card grow">
-            <h2>Historial de ajustes</h2>
+            <h2>Historial de ajustes <span className="muted-count">{filtrados.length}</span></h2>
             <p className="hint">Quién cambió qué y cuándo.</p>
+            <div className="att-controls">
+              <label className="hist-fecha">Desde{' '}
+                <input
+                  className="att-fecha" type="date" value={histFiltro.desde} max={histFiltro.hasta || todayKey()}
+                  onChange={(e) => { setHistFiltro({ ...histFiltro, desde: e.target.value }); setHistPage(0); }}
+                />
+              </label>
+              <label className="hist-fecha">Hasta{' '}
+                <input
+                  className="att-fecha" type="date" value={histFiltro.hasta} min={histFiltro.desde || undefined} max={todayKey()}
+                  onChange={(e) => { setHistFiltro({ ...histFiltro, hasta: e.target.value }); setHistPage(0); }}
+                />
+              </label>
+              {hayFiltro && (
+                <button className="btn" onClick={() => { setHistFiltro({ desde: '', hasta: '' }); setHistPage(0); }}>
+                  Quitar filtro
+                </button>
+              )}
+            </div>
             <div className="scrollable">
-              {data.audit.length === 0 && <p className="empty">Sin correcciones.</p>}
-              {data.audit.map((e) => (
+              {filtrados.length === 0 && (
+                <p className="empty">{hayFiltro ? 'Sin correcciones en ese rango de fechas.' : 'Sin correcciones.'}</p>
+              )}
+              {pagina.map((e) => (
                 <div className="log-item" key={e.id}>
                   <time>{fmtTs(e.ts)}</time>
                   <span className="action">
@@ -1370,54 +2299,77 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                   </span>
                 </div>
               ))}
+              {histPages > 1 && (
+                <div className="pager">
+                  <button className="btn" disabled={histSafe === 0} onClick={() => setHistPage(histSafe - 1)}>Anterior</button>
+                  <span>Página {histSafe + 1} de {histPages}</span>
+                  <button className="btn" disabled={histSafe >= histPages - 1} onClick={() => setHistPage(histSafe + 1)}>Siguiente</button>
+                </div>
+              )}
             </div>
           </section>
-        )}
+          );
+        })()}
 
+        {/* Ajustes: SIN tarjetas ni bordes — filas de icono + nombre sobre el
+            fondo de la página, separadas por una línea fina; la estructura la
+            dan los títulos de grupo. */}
         {tab === 'ajustes' && (
-          <section className="card grow">
+          <section className="card grow ajustes-plano">
             <h2>Ajustes</h2>
             <div className="scrollable">
-              <button className="tool" onClick={() => setTab('cfg-reglamento')}>
-                <span className="icon"><Icon name="file" size={19} /></span>
-                <span><b>Reglamento laboral</b><br /><small>{cfg.weeklyHours ?? '—'} h/sem · {(cfg.holidays ?? []).length} festivos</small></span>
-              </button>
-              <button className="tool" onClick={() => setTab('cfg-nomina')}>
-                <span className="icon"><Icon name="clock" size={19} /></span>
-                <span><b>Valorización</b><br /><small>Cuánto vale cada hora extra</small></span>
-              </button>
-              <button className="tool" onClick={() => setTab('cfg-simulador')}>
-                <span className="icon"><Icon name="file" size={19} /></span>
-                <span><b>Simulador</b><br /><small>Probar el cálculo de horas extra</small></span>
-              </button>
-              <button className="tool" onClick={() => setTab('cfg-sedes')}>
-                <span className="icon"><Icon name="pin" size={19} /></span>
-                <span><b>Sedes</b><br /><small>{sedes.length} registradas</small></span>
-              </button>
-              <button className="tool" onClick={() => { setTab('cfg-dispositivos'); cargarDispositivos(); }}>
-                <span className="icon"><Icon name="monitor" size={19} /></span>
-                <span><b>Dispositivos</b><br /><small>Tablets del kiosco</small></span>
-              </button>
-              {permisos.usuarios && (
-                <button className="tool" onClick={() => { setTab('cfg-usuarios'); cargarUsuarios(); }}>
-                  <span className="icon"><Icon name="users" size={19} /></span>
-                  <span><b>Acceso al panel</b><br /><small>Quién puede entrar</small></span>
-                </button>
+              {(permisos.usuarios || permisos.config) && (
+                <div className="tools-grupo">
+                  <h3>Cuenta y acceso</h3>
+                  {permisos.config && (
+                    <button className="tool" onClick={() => { setTab('cfg-empresa'); cargarMiEmpresa(); }}>
+                      <span className="icon"><Icon name="database" size={19} /></span>
+                      <span className="tool-txt"><b>Mi empresa</b><small>Nombre, clave de API y plan</small></span>
+                      <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
+                    </button>
+                  )}
+                  {permisos.usuarios && (
+                    <button className="tool" onClick={() => { setTab('cfg-usuarios'); cargarUsuarios(); }}>
+                      <span className="icon"><Icon name="users" size={19} /></span>
+                      <span className="tool-txt"><b>Acceso al panel</b><small>Quién puede entrar</small></span>
+                      <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
+                    </button>
+                  )}
+                </div>
               )}
-              {permisos.config && (
-                <button className="tool" onClick={() => { setTab('cfg-empresa'); cargarMiEmpresa(); }}>
-                  <span className="icon"><Icon name="database" size={19} /></span>
-                  <span><b>Mi empresa</b><br /><small>Nombre, clave de API y plan</small></span>
+
+              <div className="tools-grupo">
+                <h3>Reglas de la empresa</h3>
+                <button className="tool" onClick={() => setTab('cfg-reglamento')}>
+                  <span className="icon"><Icon name="file" size={19} /></span>
+                  <span className="tool-txt"><b>Reglamento laboral</b><small>{cfg.weeklyHours ?? '—'} h/sem · {(cfg.holidays ?? []).length} festivos</small></span>
+                  <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
                 </button>
-              )}
-              <Link className="tool" href="/">
-                <span className="icon"><Icon name="monitor" size={19} /></span>
-                <span><b>Ir al kiosco</b><br /><small>Pantalla de marcación</small></span>
-              </Link>
-              <Link className="tool" href="/gps">
-                <span className="icon"><Icon name="pin" size={19} /></span>
-                <span><b>Diagnóstico GPS</b><br /><small>Precisión y distancia a cada sede</small></span>
-              </Link>
+                <button className="tool" onClick={() => setTab('cfg-nomina')}>
+                  <span className="icon"><Icon name="clock" size={19} /></span>
+                  <span className="tool-txt"><b>Valorización</b><small>Cuánto vale cada hora extra</small></span>
+                  <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
+                </button>
+                <button className="tool" onClick={() => setTab('cfg-simulador')}>
+                  <span className="icon"><Icon name="file" size={19} /></span>
+                  <span className="tool-txt"><b>Simulador</b><small>Probar el cálculo de horas extra</small></span>
+                  <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
+                </button>
+              </div>
+
+              <div className="tools-grupo">
+                <h3>Herramientas</h3>
+                <Link className="tool" href="/">
+                  <span className="icon"><Icon name="monitor" size={19} /></span>
+                  <span className="tool-txt"><b>Ir al kiosco</b><small>Pantalla de marcación</small></span>
+                  <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
+                </Link>
+                <button className="tool" onClick={() => setTab('cfg-gps')}>
+                  <span className="icon"><Icon name="pin" size={19} /></span>
+                  <span className="tool-txt"><b>Diagnóstico GPS</b><small>Precisión y distancia a cada sede</small></span>
+                  <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
+                </button>
+              </div>
             </div>
           </section>
         )}
@@ -1641,12 +2593,93 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
         {/* ── Sub-pantalla: Dispositivos del kiosco ── */}
         {tab === 'cfg-dispositivos' && (
           <section className="card grow">
-            <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
             <h2>Dispositivos del kiosco <span className="muted-count">{dispositivos.length}</span></h2>
-            <p className="hint">Revoca el aparato que se pierda: deja de marcar al instante.</p>
+            <p className="hint">
+              Cada aparato tiene su propia clave: revoca el que se pierda y los demás siguen
+              trabajando.
+            </p>
             {dispError && <p className="empty">⚠ {dispError}</p>}
+
+            <div className="att-controls">
+              <button className="btn primary" onClick={() => { setVinculando({ nombre: '', sedeId: '' }); setCodigoVinc(null); }}>
+                Vincular un aparato
+              </button>
+            </div>
+
+            {/* Vinculación en un CAJÓN lateral, como registrar o editar. El
+                código es el camino para la app de Android, donde no se puede
+                iniciar sesión (Google lo bloquea dentro de una app). */}
+            {(vinculando || codigoVinc) && (
+              <div
+                className="overlay right"
+                onClick={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  setVinculando(null);
+                  if (codigoVinc) { setCodigoVinc(null); cargarDispositivos(); }
+                }}
+              >
+                <aside className="drawer" role="dialog" aria-modal="true" aria-label="Vincular un aparato">
+                  <div className="drawer-head">
+                    <div><h3>Vincular un aparato</h3></div>
+                    <button
+                      className="btn"
+                      onClick={() => { setVinculando(null); if (codigoVinc) { setCodigoVinc(null); cargarDispositivos(); } }}
+                    >
+                      Cerrar
+                    </button>
+                  </div>
+                  <div className="drawer-body">
+                    {codigoVinc ? (
+                      <div className="codigo-vinc">
+                        <div className="codigo-num">{codigoVinc.codigoLegible}</div>
+                        <p className="cfg-note">
+                          Escríbelo en el aparato, en la pantalla del kiosco. Vale una sola vez y
+                          vence {new Date(codigoVinc.expira_en).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}.
+                        </p>
+                        <button className="btn primary block" onClick={() => { setCodigoVinc(null); cargarDispositivos(); }}>
+                          Listo
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="field">
+                          <label htmlFor="v-nombre">Nombre del aparato</label>
+                          <input
+                            id="v-nombre" type="text" autoFocus placeholder="Celular recepción"
+                            value={vinculando.nombre}
+                            onChange={(e) => setVinculando({ ...vinculando, nombre: e.target.value })}
+                          />
+                        </div>
+                        <div className="field">
+                          <label htmlFor="v-tipo">
+                            Tipo de dispositivo
+                            <Q texto={vinculando.sedeId
+                              ? 'Kiosco fijo: sus marcaciones quedan atribuidas a esa sede, y ahí marcan los empleados con sede exigida.'
+                              : 'Móvil: sin sede; las marcaciones no quedan atadas a un local.'} />
+                          </label>
+                          <select id="v-tipo" value={vinculando.sedeId} onChange={(e) => setVinculando({ ...vinculando, sedeId: e.target.value })}>
+                            <option value="">Móvil — registra desde cualquier lugar</option>
+                            {sedes.map((s) => <option key={s.id} value={s.id}>Kiosco fijo en {s.name}</option>)}
+                          </select>
+                        </div>
+                        <button
+                          className="btn primary block"
+                          disabled={!vinculando.nombre.trim()}
+                          onClick={generarCodigoVinculacion}
+                        >
+                          Generar código
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </aside>
+              </div>
+            )}
+
             <div className="scrollable">
-              {dispositivos.length === 0 && !dispError && <p className="empty">Sin dispositivos. Actívalos desde el kiosco.</p>}
+              {dispositivos.length === 0 && !dispError && !vinculando && (
+                <p className="empty">Sin dispositivos. Usa «Vincular un aparato» para registrar el primero.</p>
+              )}
               {dispositivos.length > 0 && (
                 <div className="att-tablewrap">
                   <table className="att-table">
@@ -1785,6 +2818,21 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
             Verifica el cálculo de valor SIN tocar la base: se escriben horas
             por código y se valorizan con `valorizarRegistro`, la misma función
             del servidor, leyendo los factores y el divisor configurados. */}
+        {/* Diagnóstico GPS dentro del panel: coordenadas, precisión y
+            distancia a cada sede en vivo, sin salir a /gps. */}
+        {tab === 'cfg-gps' && (
+          <section className="card grow">
+            <h2>Diagnóstico GPS</h2>
+            <p className="hint">
+              Coordenadas crudas, precisión y distancia a cada sede en vivo. Ábrelo desde el
+              dispositivo con dudas: sirve para saber si una «distancia errónea» es culpa del GPS.
+            </p>
+            <div className="scrollable">
+              <GpsDebug />
+            </div>
+          </section>
+        )}
+
         {tab === 'cfg-simulador' && (() => {
           const salario = Number(simSalario) > 0 ? Number(simSalario) : null;
           const divisor = cfg.divisorHorasMes || DIVISOR_210;
@@ -2091,7 +3139,6 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
         {/* ── Sub-pantalla: CRUD de sedes ── */}
         {tab === 'cfg-sedes' && (
           <section className="card grow">
-            <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
             <h2>Sedes <span className="muted-count">{sedes.length}</span></h2>
             <p className="hint">Toca una sede para editarla.</p>
             <div className="att-controls">
@@ -2146,9 +3193,9 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
       <nav className="tabbar" aria-label="Navegación del panel">
         {/* Cabecera del menú lateral (solo PC): logo + nombre + botón esconder */}
         <div className="side-top">
-          <span className="logo" aria-hidden="true">AC</span>
+          <span className="logo" aria-hidden="true"><MarcaCDial size={22} /></span>
           <span className="side-brand">
-            ARRIVE<b>CONTROL</b>
+            CONTROL<b>REGISTRO</b>
             <small>Panel de administración</small>
           </span>
           <button
@@ -2165,57 +3212,20 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
         {sedeChips}
 
         {tabs.map((t) => (
-          <button key={t.id} aria-pressed={tab === t.id} onClick={() => { setTab(t.id); setNavOpen(false); }} title={t.label}>
+          <button
+            key={t.id}
+            aria-pressed={tab === t.id || (t.id === 'ajustes' && enAjustes)}
+            onClick={() => { if (t.alClic) t.alClic(); else setTab(t.id); setNavOpen(false); t.alAbrir?.(); }}
+            title={t.label}
+          >
             <span className="icon"><Icon name={t.icon} /></span>
             <span className="lbl">{t.label}</span>
             {t.badge ? <span className="badge">{t.badge}</span> : null}
           </button>
         ))}
 
-        {/* Quién entró: al fondo del menú, sobre Cerrar sesión. Cerrado muestra
-            solo el nombre; abierto, correo, rol y alcance de sede. */}
-        {sesion && (
-          <div className={`sesion-box${sesionAbierta ? ' abierta' : ''}`}>
-            <button
-              className="sesion-btn"
-              aria-expanded={sesionAbierta}
-              onClick={() => setSesionAbierta((v) => !v)}
-              title={sesion.email}
-            >
-              {/* Con Google llega su foto; sin ella (cuenta local de dev, o si
-                  el navegador no pudo cargarla) quedan las iniciales. */}
-              {sesion.foto ? (
-                <img
-                  className="sesion-avatar"
-                  src={sesion.foto}
-                  alt=""
-                  referrerPolicy="no-referrer"
-                  onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling.style.display = 'flex'; }}
-                />
-              ) : null}
-              <span className="sesion-avatar" style={sesion.foto ? { display: 'none' } : undefined}>
-                {iniciales(sesion.nombre || sesion.email)}
-              </span>
-              <span className="lbl sesion-nombre">{sesion.nombre || sesion.email}</span>
-              <span className="lbl sesion-chev"><Icon name="chevronRight" size={13} /></span>
-            </button>
-            {sesionAbierta && (
-              <div className="sesion-detalle">
-                <span>{sesion.email}</span>
-                {/* La empresa, no el rol: con un solo rol dentro de la empresa,
-                    «Empresa» no le diría nada a nadie. */}
-                <span>{sesion.empresa ?? ROL_ETIQUETA[sesion.rol] ?? sesion.rol}</span>
-                {/* Cerrar sesión vive AQUÍ: es una acción de la cuenta, y
-                    escondida evita el clic accidental en el menú. */}
-                <button className="lock-btn" onClick={cerrarSesion} title="Cerrar sesión">
-                  <span className="icon"><Icon name="lock" size={14} /></span>
-                  <span className="lbl">Cerrar sesión</span>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
+        {/* La sesión (avatar, correo, cerrar sesión) vive ahora en la barra
+            superior; el menú queda solo para navegar. */}
         <div className="side-foot">v0.1 · prototipo</div>
       </nav>
 
@@ -2314,7 +3324,8 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                                 {new Date(`${d.fecha}T12:00:00`).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })}
                               </span>
                               <span className={`dia-horas${exceso > 0.05 ? ' extra' : ''}`}>
-                                {fmtH(d.horas)}{exceso > 0.05 ? ` (+${fmtH(exceso)})` : ''}
+                                {fmtH(d.horas)}
+                                {exceso > 0.05 && <em className="dia-exceso"> (+{fmtH(exceso)})</em>}
                               </span>
                               <span className="dia-chev">›</span>
                             </span>
@@ -2351,11 +3362,12 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                                   </div>
                                   {/* El formulario de edición, JUSTO bajo la marcación editada */}
                                   {evForm?.mode === 'edit' && evForm.eventId === e.id && formularioEv}
+                                  {/* (el alta con fecha libre —conFecha— se pinta abajo, no aquí) */}
                                 </div>
                               ))}
 
                               {/* Alta manual: el formulario aparece bajo el botón, dentro del día */}
-                              {evForm?.mode === 'add' && evForm.fecha === d.fecha
+                              {evForm?.mode === 'add' && !evForm.conFecha && evForm.fecha === d.fecha
                                 ? formularioEv
                                 : (
                                   <button className="btn small block" onClick={() => setEvForm({ mode: 'add', fecha: d.fecha, type: d.evs.length % 2 === 0 ? 'in' : 'out', time: '08:00', reason: '' })}>
@@ -2368,18 +3380,84 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                       );
                     })}
 
-                    {/* Alta en un día que no aparece en el rango (sin marcaciones) */}
-                    {evForm && evForm.mode === 'add' && !drawerDias.some((d) => d.fecha === evForm.fecha && openDia === d.fecha)
-                      ? (!drawerDias.some((d) => d.fecha === evForm.fecha) ? formularioEv : null)
-                      : null}
+    {/* Alta con fecha libre: el formulario vive AQUÍ abajo siempre que
+                        se abrió desde este botón — antes, si la fecha elegida ya
+                        tenía un día en la lista, solo se pintaba dentro de su
+                        acordeón (cerrado) y parecía que el botón no hacía nada. */}
+                    {evForm?.mode === 'add' && evForm.conFecha ? formularioEv : null}
                     {!evForm && (
                       <button className="btn block" onClick={() => setEvForm({ mode: 'add', conFecha: true, fecha: drawer.hasta, type: 'in', time: '08:00', reason: '' })}>
-                        Agregar en otro día
+                        Agregar marcación en otro día
                       </button>
                     )}
                   </>
                 );
               })()}
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Drawer de crear/editar horario: mismo cajón lateral que el resto
+          (registrar empleado, sedes), en vez de un formulario en el sitio. */}
+      {horForm && (
+        <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setHorForm(null)}>
+          <aside className="drawer" role="dialog" aria-modal="true" aria-label={horForm.id ? `Editar horario ${horForm.nombre}` : 'Crear horario'}>
+            <div className="drawer-head">
+              <div>
+                <h3>{horForm.id ? 'Editar horario' : 'Crear horario'}</h3>
+                <span className="drawer-id">Cada día con su franja, o libre</span>
+              </div>
+              <button className="btn" onClick={() => setHorForm(null)}>Cerrar</button>
+            </div>
+            <div className="drawer-body">
+              <div className="field">
+                <label htmlFor="h-nombre">Nombre</label>
+                <input
+                  id="h-nombre" type="text" placeholder="Ej.: Administrativo, Turno tarde"
+                  value={horForm.nombre} onChange={(e) => setHorForm({ ...horForm, nombre: e.target.value })}
+                />
+              </div>
+              <EditorDias dias={horForm.dias} onChange={(dias) => setHorForm({ ...horForm, dias })} />
+              <div className="hd-resumen">
+                <span>Horas por semana</span>
+                <b>{fmtHM(horasSemanaDias(horForm.dias))}</b>
+              </div>
+              <div className="dialog-actions">
+                <button className="btn" onClick={() => setHorForm(null)}>Cancelar</button>
+                <button
+                  className="btn primary"
+                  disabled={!horForm.nombre.trim() || Object.keys(horForm.dias).length === 0}
+                  onClick={async () => {
+                    const datos = { nombre: horForm.nombre.trim(), dias: horForm.dias };
+                    const r = horForm.id ? await updateHorario(horForm.id, datos) : await addHorario(datos);
+                    if (r.error) { showToast(r.error); return; }
+                    setHorForm(null);
+                    refresh();
+                    showToast(horForm.id ? 'Horario actualizado' : `Horario «${datos.nombre}» creado`);
+                  }}
+                >
+                  {horForm.id ? 'Guardar cambios' : 'Crear horario'}
+                </button>
+              </div>
+
+              {horForm.id && (
+                <div className="danger-zone">
+                  <button
+                    className="btn danger-btn block"
+                    onClick={async () => {
+                      if (!confirm(`¿Eliminar el horario «${horForm.nombre}»? Los empleados que lo tenían conservan su jornada.`)) return;
+                      const r = await removeHorario(horForm.id);
+                      if (r.error) { showToast(r.error); return; }
+                      setHorForm(null);
+                      refresh();
+                      showToast('Horario eliminado');
+                    }}
+                  >
+                    Eliminar horario
+                  </button>
+                </div>
+              )}
             </div>
           </aside>
         </div>
@@ -2518,122 +3596,153 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
       )}
 
       {/* Diálogo de edición de empleado (CRUD: actualizar datos no biométricos) */}
-      {editEmp && (
+      {editEmp && (() => {
+        // Todo lo DERIVADO se calcula una vez aquí: son consecuencias de lo que
+        // se está escribiendo, y por eso se muestran como cifras al lado del
+        // campo y no como una frase suelta debajo.
+        const salario = Number(String(editEmp.salarioMensual).replace(/\D/g, '')) || 0;
+        const divisor = cfg.divisorHorasMes || DIVISOR_210;
+        const valorHora = salario > 0 ? salario / divisor : null;
+        const iniciales = editEmp.name.trim().split(/\s+/).slice(0, 2).map((p) => p[0] ?? '').join('').toUpperCase();
+
+        return (
         <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setEditEmp(null)}>
-          <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Editar empleado ${editEmp.name}`}>
-            <div className="drawer-head">
-              <div>
-                <h3>Editar empleado</h3>
-                <span className="drawer-id">{editEmp.id}</span>
+          <aside className="drawer ficha" role="dialog" aria-modal="true" aria-label={`Editar empleado ${editEmp.name}`}>
+
+            {/* Cabecera: el nombre y cómo se identifica a alguien al hablar
+                (cédula y sede). El id interno no ocupa el mejor sitio. */}
+            <div className="ficha-head">
+              <span className="ficha-avatar" aria-hidden="true">{iniciales || '—'}</span>
+              <div className="ficha-quien">
+                <h3>{editEmp.name.trim() || 'Empleado'}</h3>
+                <span className="ficha-sub">
+                  {editEmp.cedula ? `C.C. ${Number(editEmp.cedula).toLocaleString('es-CO')}` : 'sin cédula'}
+                  {editEmp.sede ? ` · ${editEmp.sede}` : ''}
+                </span>
               </div>
               <button className="btn" onClick={() => setEditEmp(null)}>Cerrar</button>
             </div>
-            <div className="drawer-body">
-            <p className="hint">Para cambiar el rostro, elimina y registra de nuevo.</p>
-            <div className="field">
-              <label htmlFor="e-nombre">Nombre completo</label>
-              <input id="e-nombre" type="text" value={editEmp.name} onChange={(e) => setEditEmp({ ...editEmp, name: e.target.value })} />
-            </div>
-            <div className="field">
-              <label htmlFor="e-cedula">Cédula</label>
-              <input id="e-cedula" type="text" inputMode="numeric" value={editEmp.cedula} onChange={(e) => setEditEmp({ ...editEmp, cedula: e.target.value.replace(/\D/g, '') })} />
-            </div>
-            <div className="field">
-              <label htmlFor="e-sede">Sede asignada</label>
-              <select id="e-sede" value={editEmp.sede} onChange={(e) => setEditEmp({ ...editEmp, sede: e.target.value })}>
-                <option value="">Sin sede</option>
-                {sedes.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}
-              </select>
-            </div>
-            <div className="field">
-              <label>Horario esperado <span className="libre">opcional</span></label>
-              <div className="hours-row">
-                <label className="sub-field">Entrada
-                  <input type="time" value={editEmp.expectedEntry} onChange={(e) => setEditEmp({ ...editEmp, expectedEntry: e.target.value })} />
-                </label>
-                <label className="sub-field">Salida
-                  <input type="time" value={editEmp.expectedExit} onChange={(e) => setEditEmp({ ...editEmp, expectedExit: e.target.value })} />
-                </label>
-                <label className="sub-field">Almuerzo
-                  <input type="number" min="0" max="240" step="15" value={editEmp.breakMinutes} onChange={(e) => setEditEmp({ ...editEmp, breakMinutes: e.target.value })} />
-                </label>
-              </div>
-              <small className="hint">
-                {editEmp.expectedEntry && editEmp.expectedExit ? (
-                  <><strong>{fmtH(expectedDailyHours({ ...editEmp, breakMinutes: editEmp.breakMinutes === '' ? null : Number(editEmp.breakMinutes) }))}</strong> al día.</>
-                ) : (
-                  <>Sin horario fijo: no hay alertas de puntualidad.</>
-                )}
-              </small>
-            </div>
-            <div className="field">
-              <label htmlFor="e-salario">Salario mensual <span className="libre">opcional</span></label>
-              <input
-                id="e-salario" type="number" min="0" step="1000" inputMode="numeric"
-                placeholder="Sin registrar"
-                value={editEmp.salarioMensual}
-                onChange={(e) => setEditEmp({ ...editEmp, salarioMensual: e.target.value })}
-              />
-              <small className="hint">
-                {Number(editEmp.salarioMensual) > 0 ? (
-                  <>
-                    Hora ordinaria:{' '}
-                    <strong>{fmtCOP(Math.round(Number(editEmp.salarioMensual) / (cfg.divisorHorasMes || DIVISOR_210)))}</strong>
-                    {' '}· Extra diurna:{' '}
-                    <strong>{fmtCOP(Math.round((Number(editEmp.salarioMensual) / (cfg.divisorHorasMes || DIVISOR_210)) * (cfg.factores?.HED ?? 1.25)))}</strong>
-                  </>
-                ) : (
-                  <>Sin salario, sus horas se cuentan pero no se valorizan.</>
-                )}
-              </small>
-            </div>
-            <div className="field">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={editEmp.jornadaSemanal != null}
-                  onChange={(e) => setEditEmp({
-                    ...editEmp,
-                    // Al activar: arranca en la estándar (7 h L–S) para ajustar.
-                    jornadaSemanal: e.target.checked ? [7, 7, 7, 7, 7, 7] : null,
-                  })}
-                />{' '}
-                Jornada especial (distribuida)
-              </label>
-              <small className="hint">
-                Para acuerdos distintos al estándar de {fmtH((cfg.weeklyHours ?? 42) / 6)}/día.
-              </small>
-              {editEmp.jornadaSemanal != null && (() => {
-                const DIAS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-                const total = editEmp.jornadaSemanal.reduce((s, h) => s + (Number(h) || 0), 0);
-                const tope = cfg.weeklyHours ?? 42;
-                return (
-                  <>
-                    <div className="hours-row" style={{ flexWrap: 'wrap' }}>
-                      {DIAS.map((dia, i) => (
-                        <label className="sub-field" key={dia}>{dia}
-                          <input
-                            type="number" min="0" max="12" step="0.5" style={{ width: '4.2em' }}
-                            value={editEmp.jornadaSemanal[i]}
-                            onChange={(e) => {
-                              const j = [...editEmp.jornadaSemanal];
-                              j[i] = e.target.value === '' ? 0 : Math.min(12, Math.max(0, Number(e.target.value)));
-                              setEditEmp({ ...editEmp, jornadaSemanal: j });
-                            }}
-                          />
-                        </label>
-                      ))}
+
+            <div className="drawer-body ficha-body">
+
+              <section className="ficha-sec">
+                <div className="ficha-fila dos">
+                  <div className="field">
+                    <label htmlFor="e-nombre">Nombre completo</label>
+                    <input id="e-nombre" type="text" value={editEmp.name}
+                      onChange={(e) => setEditEmp({ ...editEmp, name: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="e-cedula">Cédula</label>
+                    <input id="e-cedula" className="num" type="text" inputMode="numeric" value={editEmp.cedula}
+                      onChange={(e) => setEditEmp({ ...editEmp, cedula: e.target.value.replace(/\D/g, '') })} />
+                  </div>
+                </div>
+                {/* El rostro es un ESTADO, no una instrucción suelta: lo primero
+                    que se quiere saber es si esta persona puede marcar. */}
+                <div className="ficha-estado">
+                  <span className={`ficha-punto${editEmp.tieneRostro ? '' : ' apagado'}`} />
+                  <span><b>{editEmp.tieneRostro ? 'Rostro registrado' : 'Sin rostro'}</b></span>
+                  <Q texto={editEmp.tieneRostro
+                    ? 'Puede marcar en el kiosco. Para cambiar el rostro, elimina al empleado y regístralo de nuevo con la foto nueva.'
+                    : 'No podrá marcar en el kiosco hasta que se le registre el rostro con una foto.'} />
+                </div>
+              </section>
+
+              <section className="ficha-sec">
+                <div className="ficha-fila dos">
+                  <div className="field">
+                    <label htmlFor="e-sede">Sede asignada</label>
+                    <select
+                      id="e-sede" value={editEmp.sede}
+                      onChange={(e) => setEditEmp({ ...editEmp, sede: e.target.value, validarSede: e.target.value ? editEmp.validarSede : false })}
+                    >
+                      <option value="">Sin sede</option>
+                      {sedes.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}
+                    </select>
+                    {editEmp.sede && (
+                      <label className="consent">
+                        <input
+                          type="checkbox" checked={editEmp.validarSede}
+                          onChange={(e) => setEditEmp({ ...editEmp, validarSede: e.target.checked })}
+                        />{' '}
+                        ¿Limitar ubicación?
+                        <Q texto="Marcado, solo puede marcar dentro de su sede; sin marcar, la sede es informativa y puede marcar desde cualquier parte." />
+                      </label>
+                    )}
+                  </div>
+                  {horarios.length > 0 && (
+                    <div className="field">
+                      <label htmlFor="e-horario">Horario</label>
+                      <select
+                        id="e-horario" value=""
+                        onChange={(e) => {
+                          const h = horarios.find((x) => x.id === e.target.value);
+                          // Asignar copia el mapa POR DÍAS completo a la ficha;
+                          // desde ahí es editable como una variación personal.
+                          if (h) setEditEmp({ ...editEmp, jornadaDias: JSON.parse(JSON.stringify(h.dias)) });
+                        }}
+                      >
+                        <option value="">Asignar un horario…</option>
+                        {horarios.map((h) => (
+                          <option key={h.id} value={h.id}>{h.nombre} ({resumenDias(h.dias)})</option>
+                        ))}
+                      </select>
                     </div>
-                    <small className="hint" style={total > tope ? { color: 'var(--danger, #c0392b)', fontWeight: 600 } : undefined}>
-                      Total: {fmtH(total)} / {fmtH(tope)}{' '}
-                      {total > tope ? '⚠ supera la jornada legal' : total < tope ? '' : '✓'}
-                    </small>
-                  </>
-                );
-              })()}
+                  )}
+                </div>
+
+                {/* La jornada SIEMPRE sale de una plantilla de la pestaña
+                    Horarios: aquí solo se elige, no se edita por días. */}
+                {editEmp.jornadaDias ? (
+                  <div className="hd-resumen">
+                    <span>{resumenDias(editEmp.jornadaDias)}</span>
+                    <b>{fmtHM(horasSemanaDias(editEmp.jornadaDias))} / semana</b>
+                  </div>
+                ) : (
+                  <p className="hint">
+                    Sin horario asignado
+                    <Q texto="Elige una plantilla en «Asignar un horario…». Los horarios se crean y editan en su pestaña; la jornada del empleado siempre sale de una plantilla." />
+                  </p>
+                )}
+              </section>
+
+              <section className="ficha-sec">
+                {/* Se escribe con separadores de miles: seis ceros seguidos se
+                    cuentan con el dedo. Al guardar se limpian los puntos. */}
+                <div className="field con-prefijo">
+                  <label htmlFor="e-salario">
+                    Salario mensual <span className="libre">opcional</span>
+                    <Q texto="Sirve para valorizar sus horas extra en pesos. Sin salario, las horas se cuentan pero no se valorizan." />
+                  </label>
+                  <input
+                    id="e-salario" className="num" type="text" inputMode="numeric"
+                    placeholder="Sin registrar"
+                    value={salario > 0 ? salario.toLocaleString('es-CO') : ''}
+                    onChange={(e) => setEditEmp({ ...editEmp, salarioMensual: e.target.value.replace(/\D/g, '') })}
+                  />
+                  <span className="prefijo">$</span>
+                </div>
+                {valorHora ? (
+                  <div className="derivado">
+                    <div><span className="k">Hora ordinaria</span><span className="v">{fmtCOP(Math.round(valorHora))}</span></div>
+                    {TIPOS_HORA.filter((t) => !t.dominical).map((t) => (
+                      <div key={t.codigo}>
+                        <span className="k">{t.nocturna ? 'Extra nocturna' : 'Extra diurna'}</span>
+                        <span className="v">{fmtCOP(Math.round(valorHora * (cfg.factores?.[t.codigo] ?? t.factor)))}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="hint">Sin salario, sus horas se cuentan pero no se valorizan.</p>
+                )}
+              </section>
+
             </div>
-            <div className="dialog-actions">
-              <button className="btn" onClick={() => setEditEmp(null)}>Cancelar</button>
+
+            {/* Pie fijo: antes Guardar quedaba al final de un formulario que no
+                cabe en pantalla. Eliminar va al lado, en gris, sin competir. */}
+            <div className="ficha-pie">
               <button
                 className="btn primary"
                 disabled={!editEmp.name.trim()}
@@ -2642,12 +3751,14 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                     name: editEmp.name,
                     cedula: editEmp.cedula,
                     sede: editEmp.sede,
+                    validarSede: editEmp.validarSede,
                     expectedEntry: editEmp.expectedEntry,
                     expectedExit: editEmp.expectedExit,
                     breakMinutes: editEmp.breakMinutes === '' ? null : Number(editEmp.breakMinutes),
+                    jornadaDias: editEmp.jornadaDias,
                     jornadaSemanal: editEmp.jornadaSemanal == null ? null : editEmp.jornadaSemanal.map((h) => Number(h) || 0),
                     // Vacío o 0 = sin salario registrado, no un sueldo de cero.
-                    salarioMensual: Number(editEmp.salarioMensual) > 0 ? Number(editEmp.salarioMensual) : null,
+                    salarioMensual: salario > 0 ? salario : null,
                   });
                   if (r.error) { showToast(r.error); return; }
                   setEditEmp(null);
@@ -2657,11 +3768,8 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
               >
                 Guardar cambios
               </button>
-            </div>
-
-            <div className="danger-zone">
               <button
-                className="btn danger-btn block"
+                className="btn ficha-eliminar"
                 onClick={async () => {
                   if (confirm(`¿Eliminar a ${editEmp.name}? Ya no podrá marcar asistencia.`)) {
                     try {
@@ -2675,11 +3783,85 @@ export default function AdminPanel({ sesion = null, permisos = {} }) {
                   }
                 }}
               >
-                Eliminar empleado
+                Eliminar
               </button>
             </div>
+          </aside>
+        </div>
+        );
+      })()}
+
+      {/* Cajón de registro de empleado: el formulario de /admin/registro,
+          sin salir de la pestaña. */}
+      {regAbierto && (
+        <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setRegAbierto(false)}>
+          <aside className="drawer reg-drawer" role="dialog" aria-modal="true" aria-label="Registrar empleado">
+            <div className="drawer-head">
+              <div><h3>Registrar empleado</h3></div>
+              <button className="btn" onClick={() => setRegAbierto(false)}>Cerrar</button>
+            </div>
+            <div className="reg-drawer-scroll">
+              <RegistroEmpleadoForm
+                alRegistrar={(name) => { refresh(); showToast(`${name} registrado correctamente`); }}
+                irAHorarios={() => { setRegAbierto(false); setTab('horarios'); }}
+              />
             </div>
           </aside>
+        </div>
+      )}
+
+      {/* Guía "¿Cómo empezar?": los pasos que dejan la empresa funcionando. */}
+      {guiaAbierta && (
+        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setGuiaAbierta(false)}>
+          <div className="dialog" role="dialog" aria-modal="true" aria-label="Cómo empezar">
+            <h3>¡Bienvenido a Control Registro!</h3>
+            <p className="hint">Cuatro pasos y tu empresa queda marcando asistencia.</p>
+            <ol className="pasos">
+              <li className={horarios.length > 0 ? 'hecho' : ''}>
+                <span className="paso-num">{horarios.length > 0 ? '✓' : '1'}</span>
+                <span className="paso-txt">
+                  <b>Crea los horarios</b>
+                  <small>Las plantillas de jornada por cargo o turno. Se asignan al registrar a cada persona.</small>
+                </span>
+                {horarios.length === 0 && (
+                  <button className="btn primary" onClick={() => { setGuiaAbierta(false); setTab('horarios'); }}>Crear horario</button>
+                )}
+              </li>
+              <li className={sedes.length > 0 ? 'hecho' : ''}>
+                <span className="paso-num">{sedes.length > 0 ? '✓' : '2'}</span>
+                <span className="paso-txt">
+                  <b>Crea tu primera sede <span className="libre">opcional</span></b>
+                  <small>Dónde queda y su radio GPS. Sin sede, tu gente marca desde cualquier lugar.</small>
+                </span>
+                {sedes.length === 0 && (
+                  <button className="btn primary" onClick={() => { setGuiaAbierta(false); setTab('cfg-sedes'); }}>Crear sede</button>
+                )}
+              </li>
+              <li className={allPeople.length > 0 ? 'hecho' : horarios.length === 0 ? 'bloqueado' : ''}>
+                <span className="paso-num">{allPeople.length > 0 ? '✓' : '3'}</span>
+                <span className="paso-txt">
+                  <b>Registra a tu gente</b>
+                  <small>Con una foto por persona y su horario asignado.</small>
+                </span>
+                {allPeople.length === 0 && horarios.length > 0 && (
+                  <button className="btn primary" onClick={() => { setGuiaAbierta(false); setTab('empleados'); setRegAbierto(true); }}>Registrar</button>
+                )}
+              </li>
+              <li className={dispositivos.length > 0 ? 'hecho' : allPeople.length === 0 ? 'bloqueado' : ''}>
+                <span className="paso-num">{dispositivos.length > 0 ? '✓' : '4'}</span>
+                <span className="paso-txt">
+                  <b>Vincula el dispositivo de marcación</b>
+                  <small>Tablet fija en una sede, o un celular que registra desde cualquier lugar.</small>
+                </span>
+                {dispositivos.length === 0 && allPeople.length > 0 && (
+                  <button className="btn primary" onClick={() => { setGuiaAbierta(false); setTab('cfg-dispositivos'); cargarDispositivos(); }}>Vincular</button>
+                )}
+              </li>
+            </ol>
+            <div className="dialog-actions">
+              <button className="btn" onClick={() => setGuiaAbierta(false)}>Cerrar</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2703,25 +3885,99 @@ const CSS = `
 .admin-root * { box-sizing: border-box; margin: 0; }
 .admin-root b, .admin-root .emp-name, .admin-root .who { font-weight: 600; }
 
-/* Barra superior: hamburguesa (móvil) + título de la sección + globo */
-.app-header { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+/* Barra superior: azul de marca (var(--btn-primary), el mismo del login y la PWA).
+   Móvil: hamburguesa + logo + título. PC: título + sede + sesión. */
+.app-header {
+  display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+  background: var(--btn-primary); color: #fff; border-radius: 12px; padding: 8px 12px;
+}
 .menu-btn {
   flex: 0 0 auto; width: 38px; height: 38px; border-radius: 9px;
-  border: 1px solid var(--grid); background: var(--surface); color: var(--ink-2);
+  border: 1px solid rgba(255,255,255,.25); background: transparent; color: #fff;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.menu-btn:active { background: var(--accent-soft); }
-.head-titles { display: flex; flex-direction: column; min-width: 0; }
-.head-tab { font-family: var(--f-display); font-size: 15px; font-weight: 700; }
-.app-header .date-note { color: var(--muted); font-size: 11.5px; font-family: var(--f-data); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-btn:active { background: rgba(255,255,255,.12); }
+/* Flecha de regresar (historial interno del panel), sobre la barra acero. */
+.head-back {
+  flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%;
+  border: 0; background: transparent; color: #fff;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.head-back:hover { background: rgba(255,255,255,.12); }
+.head-back:active { background: rgba(255,255,255,.2); }
+.head-logo {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px;
+  background: rgba(255,255,255,.14); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--f-display); font-weight: 800; font-size: 13px; letter-spacing: .04em;
+}
+/* El título puede ENCOGERSE con elipsis: sin esto su texto se pintaba por
+   encima del botón de la guía en pantallas angostas. */
+.head-titles { display: flex; flex-direction: column; min-width: 0; overflow: hidden; flex: 1 1 auto; }
+.head-tab { font-family: var(--f-display); font-size: 15px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-header .date-note { color: rgba(255,255,255,.65); font-size: 11.5px; font-family: var(--f-data); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head-right { margin-left: auto; display: flex; align-items: center; gap: 10px; position: relative; }
+/* Botón de la guía en la barra: píldora translúcida sobre el azul. */
+.head-guia {
+  flex: 0 0 auto; font: inherit; font-size: 12.5px; font-weight: 700;
+  padding: 6px 13px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.3); background: transparent; color: #fff;
+  cursor: pointer; white-space: nowrap;
+}
+.head-guia:hover { background: rgba(255,255,255,.12); }
 .head-badge {
-  margin-left: auto; flex: 0 0 auto; min-width: 22px; height: 22px; border-radius: 11px;
-  border: 0; background: var(--accent); color: #fff; font: inherit; font-size: 11.5px;
+  flex: 0 0 auto; min-width: 22px; height: 22px; border-radius: 11px;
+  border: 0; background: var(--crit); color: #fff; font: inherit; font-size: 11.5px;
   font-weight: 700; display: flex; align-items: center; justify-content: center;
   padding: 0 7px; cursor: pointer;
 }
+/* Selector de sede dentro de la barra: solo en PC (en móvil sigue en el menú). */
+.head-sede { display: none; }
+.head-user { position: relative; }
+.head-user-btn {
+  display: flex; align-items: center; gap: 8px;
+  background: transparent; border: 0; color: #fff; cursor: pointer;
+  font: inherit; padding: 3px; border-radius: 999px;
+}
+.head-user-btn:hover, .head-user-btn[aria-expanded="true"] { background: rgba(255,255,255,.12); }
+.head-user-nombre { display: none; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; padding-right: 6px; }
+.head-user-menu {
+  position: absolute; top: calc(100% + 10px); right: 0; z-index: 40;
+  min-width: 230px; padding: 12px 14px;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--elev-1);
+  display: flex; flex-direction: column; gap: 4px; font-size: 13px;
+}
+.head-user-menu b { font-weight: 600; }
+.head-user-menu > span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.head-user-menu .lock-btn { margin-top: 8px; padding: 7px 10px; font-size: 12px; gap: 7px; width: auto; }
 
 .screen { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+
+/* ── Submenú de Ajustes (estilo Configuración de Windows) ──
+   En móvil no existe: se navega lista → subpantalla con «‹ Ajustes». */
+.cfg-menu { display: none; }
+@media (min-width: 900px) {
+  .screen.con-submenu {
+    display: grid; grid-template-columns: 225px minmax(0, 1fr);
+    gap: 18px; align-items: stretch;
+  }
+  .cfg-menu { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+  .cfg-menu h4 {
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; margin: 14px 0 4px; padding: 0 12px;
+  }
+  .cfg-item {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    padding: 8px 12px; border: 0; border-radius: 9px; background: transparent;
+    font: inherit; font-size: 13px; font-weight: 500; color: var(--ink-2);
+    cursor: pointer; text-decoration: none;
+  }
+  .cfg-item:hover { background: var(--accent-soft); }
+  .cfg-item.on { background: var(--accent-soft); color: var(--btn-primary); font-weight: 600; }
+  /* Con el submenú a la vista, «‹ Ajustes» sobra. */
+  .screen.con-submenu .back-btn { display: none; }
+}
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--elev-1); }
 .card.grow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .card h2 { font-family: var(--f-display); font-size: 13.5px; font-weight: 700; letter-spacing: .02em; margin-bottom: 2px; color: var(--ink); }
@@ -2735,6 +3991,63 @@ const CSS = `
 .tile .label { font-family: var(--f-display); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .tile .value { font-family: var(--f-data); font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--ink); }
 .tile .sub { font-size: 12.5px; color: var(--ink-2); }
+
+/* ── Fila de resumen del dashboard (diseño de la maqueta) ── */
+.fila-resumen { display: grid; grid-template-columns: 1fr; gap: 12px; flex: 0 0 auto; }
+.prop-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px; background: var(--page); margin-bottom: 10px; }
+.prop-bar span { display: block; }
+.est-grupos { display: flex; flex-direction: column; gap: 7px; }
+.est-linea { display: flex; align-items: center; gap: 7px; font-size: 13.5px; flex-wrap: wrap; }
+.est-punto { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.est-linea strong { font-family: var(--f-data); font-variant-numeric: tabular-nums; }
+.est-pct { font-size: 12px; color: var(--muted); }
+.avs { display: flex; margin-left: 10px; }
+.av {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent);
+  display: inline-grid; place-items: center;
+  font-size: 10.5px; font-weight: 700; font-family: var(--f-data);
+  border: 2px solid var(--surface); margin-left: -7px;
+}
+.av:first-child { margin-left: 0; }
+.av-mas { background: var(--page); color: var(--ink-2); }
+.cifrota {
+  font-family: var(--f-data); font-size: 30px; font-weight: 800; line-height: 1.1;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+  background: none; border: none; padding: 0; text-align: left; cursor: pointer;
+}
+.cifrota:hover { color: var(--accent); }
+.anom-desglose { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--ink-2); }
+.hbarra { display: grid; grid-template-columns: 96px 1fr 56px; align-items: center; gap: 10px; font-size: 12.5px; }
+.hbarra-nombre { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hbarra-pista { height: 13px; position: relative; background: var(--page); border-radius: 4px; }
+.hbarra-valor { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 4px 3px 3px 4px; min-width: 2px; }
+.hbarra-cifra { text-align: right; font-family: var(--f-data); font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+/* Tabla de asistencia: avatar, sub-hora del chip y saldo en color. */
+.emp-cell { display: inline-flex; align-items: center; gap: 8px; }
+.av-tabla { width: 30px; height: 30px; border: none; margin: 0; }
+.chip-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.saldo { font-weight: 700; }
+.saldo.neg { color: var(--crit-text); }
+.saldo.pos { color: var(--good-text); }
+/* Legibilidad de la tabla: los datos secundarios suben del gris claro al
+   gris medio (siguen siendo secundarios, pero se leen); las horas trabajadas
+   toman peso para ser el ancla visual de cada fila. Los "—" quedan tenues
+   a propósito: son ausencia de dato. */
+.att-table .att-sede { color: #344054; }
+.att-table .emp-cedula { color: #344054; font-size: 11.5px; }
+.att-table .libre { color: #475467; }
+.att-table td.num { font-weight: 600; }
+/* El gris de "sin datos" también sube un tono en todas las tablas. */
+.att-table td { color: var(--ink); }
+
+/* Punto de estado junto al nombre: verde marcó hoy, rojo ausente. */
+.punto-estado { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-left: 7px; vertical-align: middle; }
+.punto-estado.on { background: #1fa15f; }
+.punto-estado.off { background: #dc2626; }
+/* Horas extra del día, debajo del total trabajado. */
+.extra-h { display: block; font-size: 11px; font-weight: 700; color: var(--btn-primary); }
 .tile.alerta .value { color: var(--accent); }
 
 .chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-data); font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
@@ -2799,7 +4112,7 @@ const CSS = `
 .rep-row .rep-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Reglamento laboral (Ajustes) */
-.cfg-group { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; background: var(--page); }
+.cfg-group { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; background: var(--surface-blanca); }
 .cfg-group h3 { font-size: 13.5px; font-weight: 650; margin-bottom: 10px; }
 .cfg-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 0; border-top: 1px solid var(--grid); }
 .cfg-row:first-of-type { border-top: 0; }
@@ -2811,8 +4124,159 @@ const CSS = `
 .cfg-sede:first-of-type { border-top: 0; }
 .cfg-sede small { color: var(--muted); font-variant-numeric: tabular-nums; }
 .cfg-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
-.cfg-note code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+.cfg-note code { background: var(--grid); padding: 1px 5px; border-radius: 4px; }
 .cfg-time { width: 106px !important; } /* un <input type="time"> no cabe en los 64px de .cfg-input */
+
+/* ── Ficha de empleado ──
+   Los mismos campos de antes, agrupados por tema y con el espacio libre
+   ocupado por lo DERIVADO (valor hora, jornada del día), que antes salía como
+   una frase pequeña debajo del campo. */
+/* Ningún cajón se desplaza a lo ancho, ni el de editar ni el de registrar.
+   La causa era input[type=time]: no se encoge por su cuenta bajo el ancho de
+   su contenido, así que tres en una fila desbordaban los 420 px del cajón.
+   min-width: 0 los deja encogerse; el overflow-x: hidden es el seguro.
+   (Ojo: en este bloque los comentarios NO pueden llevar acentos graves —
+   cierran el template literal del CSS y rompen el build.) */
+.drawer { overflow-x: hidden; }
+.drawer input, .drawer select, .drawer textarea { min-width: 0; max-width: 100%; }
+.drawer-body, .reg-drawer-scroll, .ficha-body { overflow-x: hidden; }
+
+.drawer.ficha { display: flex; flex-direction: column; padding: 0; }
+
+.ficha-head {
+  display: flex; align-items: center; gap: 12px;
+  /* El mismo azul que la cabecera de los demás cajones (.drawer .drawer-head),
+     para que registrar y editar se vean como la misma cosa. */
+  background: var(--btn-primary); color: #fff; padding: 15px 18px; flex: 0 0 auto;
+}
+.ficha-avatar {
+  width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto;
+  background: rgba(255,255,255,.14); display: grid; place-items: center;
+  font-weight: 650; font-size: 14px;
+}
+.ficha-quien { flex: 1; min-width: 0; }
+.ficha-quien h3 { font-size: 16.5px; font-weight: 650; letter-spacing: -.01em; color: #fff; }
+.ficha-sub {
+  display: block; font-family: var(--f-data); font-size: 11.5px;
+  color: rgba(255,255,255,.62); margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ficha-head .btn {
+  flex: 0 0 auto; border-color: rgba(255,255,255,.22);
+  background: transparent; color: #fff;
+}
+.ficha-head .btn:hover { background: rgba(255,255,255,.10); }
+
+.ficha-body { flex: 1 1 auto; overflow-y: auto; padding: 0 18px; }
+.ficha-sec { padding: 15px 0; border-top: 1px solid var(--grid); }
+.ficha-sec:first-child { border-top: 0; }
+.ficha-sec > h4 {
+  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); font-weight: 650; margin-bottom: 11px;
+}
+.ficha-fila { display: grid; gap: 10px; margin-bottom: 10px; }
+.ficha-fila:last-child { margin-bottom: 0; }
+/* minmax(0): sin él, el ancho mínimo intrínseco de los inputs desborda la
+   columna y el cajón los recorta por la derecha. */
+.ficha-fila.dos { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+.ficha-fila.tres { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .8fr); }
+.ficha-body .field { margin: 0; min-width: 0; }
+/* :not(checkbox): estirar un checkbox a todo el ancho lo saca de su fila. */
+.ficha-body .field input:not([type="checkbox"]), .ficha-body .field select { width: 100%; }
+.ficha-body .consent {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  font-size: 12.5px; font-weight: 600; color: var(--ink-2); cursor: pointer;
+}
+.ficha-body .consent input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); flex: 0 0 auto; }
+.ficha-body .field input.num { font-family: var(--f-data); }
+
+/* La unidad y el signo van DENTRO del campo: «0» y «3100000» sueltos no dicen
+   de qué son. */
+.con-sufijo, .con-prefijo { position: relative; }
+.con-sufijo input { padding-right: 44px !important; }
+.con-sufijo .sufijo {
+  position: absolute; right: 11px; bottom: 11px;
+  font-family: var(--f-data); font-size: 12px; color: var(--muted); pointer-events: none;
+}
+.con-prefijo input { padding-left: 26px !important; }
+.con-prefijo .prefijo {
+  position: absolute; left: 11px; bottom: 10px;
+  font-family: var(--f-data); font-size: 14px; color: var(--muted); pointer-events: none;
+}
+
+/* Lo derivado no se edita: por eso no parece un campo. */
+.derivado {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 9px;
+  padding: 9px 12px; background: var(--accent-soft); border-radius: var(--r-sm);
+}
+.derivado > div { display: flex; flex-direction: column; gap: 1px; }
+.derivado .k {
+  font-size: 10px; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); font-weight: 650;
+}
+.derivado .v {
+  font-family: var(--f-data); font-size: 14px; font-weight: 650; color: var(--accent-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* El estado del rostro es una LÍNEA de texto, no un campo: sin caja azul. */
+.ficha-estado {
+  display: flex; align-items: center; gap: 9px; margin-top: 10px;
+  font-size: 12.5px; color: var(--ink-2);
+}
+.ficha-punto { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
+.ficha-punto.apagado { background: var(--muted); }
+
+.ficha-check { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; font-size: 13.5px; }
+.ficha-check input { margin: 3px 0 0; accent-color: var(--accent); cursor: pointer; }
+.ficha-check small { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+
+/* Seis días en UNA fila: es una semana y se lee de corrido. */
+.semana { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 12px; }
+.semana .dia { display: flex; flex-direction: column; gap: 4px; }
+.semana .dia > span {
+  font-size: 10px; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); font-weight: 650; text-align: center;
+}
+.semana .dia input {
+  font-family: var(--f-data); font-size: 14.5px; font-weight: 600; text-align: center;
+  padding: 8px 2px; width: 100%; border-radius: var(--r-sm);
+  border: 1px solid var(--border); background: var(--page); color: var(--ink);
+}
+.semana .dia.libre input { color: var(--muted); }
+
+.ficha-total {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 10px; padding: 9px 12px; border-radius: var(--r-sm);
+  background: var(--accent-soft); font-size: 12.5px; color: var(--ink-2);
+}
+.ficha-total b { font-family: var(--f-data); font-size: 14.5px; color: var(--accent-2); }
+.ficha-total.excede { background: var(--crit-soft); }
+.ficha-total.excede b { color: var(--crit-text); }
+
+/* Pie fijo: Guardar deja de quedar bajo el pliegue. */
+.ficha-pie {
+  flex: 0 0 auto; display: flex; gap: 10px; padding: 12px 18px;
+  border-top: 1px solid var(--border); background: var(--surface);
+}
+.ficha-pie .primary { flex: 1; }
+/* La acción destructiva no grita hasta que se la busca. */
+.ficha-eliminar { border-color: transparent; background: transparent; color: var(--muted); }
+.ficha-eliminar:hover { background: var(--crit-soft); color: var(--crit-text); }
+
+@media (max-width: 460px) {
+  .ficha-fila.dos, .ficha-fila.tres { grid-template-columns: 1fr; }
+  .semana { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* Código de vinculación: se lee en una pantalla y se teclea en otra, a veces
+   con el aparato en la mano y el computador a un metro. Grande y espaciado. */
+.codigo-vinc { text-align: center; }
+.codigo-num {
+  font-family: var(--f-data); font-size: 34px; font-weight: 700;
+  letter-spacing: .16em; color: var(--accent-2);
+  padding: 6px 0 2px; font-variant-numeric: tabular-nums;
+}
 .tools-title { font-size: 13.5px; font-weight: 650; margin: 14px 0 8px; }
 
 /* ── Reporte por período (tabla única) ── */
@@ -2860,8 +4324,8 @@ const CSS = `
 .btn { border: 1px solid var(--grid); background: var(--surface); color: var(--ink-2); font-family: var(--f-data); font-size: 13.5px; font-weight: 600; padding: 7px 14px; border-radius: 6px; cursor: pointer; box-shadow: var(--elev-1); }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
 .btn:active { box-shadow: var(--press); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; box-shadow: var(--elev-1); }
-.btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); color: var(--accent-ink); }
+.btn.primary { background: var(--btn-primary); border-color: var(--btn-primary); color: var(--accent-ink); font-weight: 600; box-shadow: var(--elev-1); }
+.btn.primary:hover { background: var(--btn-primary-hover); border-color: var(--btn-primary-hover); color: var(--accent-ink); }
 .btn.primary:disabled { opacity: .5; cursor: not-allowed; }
 .btn:focus-visible, .tabbar button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -2891,10 +4355,32 @@ const CSS = `
 .log-item .action { color: var(--ink-2); flex: 1 1 220px; }
 .log-item b { color: var(--ink); }
 
-.tool { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 12px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--page); color: var(--ink); text-decoration: none; font: inherit; cursor: pointer; }
+/* Ajustes SIN tarjetas: filas planas sobre el fondo de la página, con una
+   línea fina bajo cada opción (la última del grupo no la lleva). */
+.card.ajustes-plano { background: transparent; border: 0; box-shadow: none; padding-left: 4px; padding-right: 4px; }
+.tools-grupo { margin-bottom: 22px; }
+.tools-grupo > h3 {
+  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700; margin: 0 0 4px;
+}
+.tool {
+  display: flex; gap: 14px; align-items: center; width: 100%; text-align: left;
+  padding: 13px 4px; margin: 0; border: 0; border-bottom: 1px solid var(--grid);
+  border-radius: 0; background: transparent; color: var(--ink);
+  text-decoration: none; font: inherit; cursor: pointer;
+}
+.tools-grupo .tool:last-child { border-bottom: 0; }
 .tool:hover { background: var(--accent-soft); }
-.tool .icon { font-size: 22px; }
+.tool .icon {
+  flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--btn-primary);
+}
+.tool-txt { flex: 1; min-width: 0; }
+.tool-txt b { display: block; font-size: 14px; font-weight: 600; }
+.tool-txt small { display: block; margin-top: 1px; }
 .tool small { color: var(--muted); }
+.tool-chev { flex: 0 0 auto; display: flex; color: var(--muted); }
 .tool.danger:hover { background: var(--crit-soft); }
 
 /* Menú lateral: en móvil es off-canvas (se desliza con la hamburguesa);
@@ -2944,7 +4430,7 @@ const CSS = `
 
 /* Clave de API (Mi empresa) */
 .api-key-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.api-key { font-family: var(--f-data); font-size: 13px; background: var(--page); border: 1px solid var(--grid); border-radius: 8px; padding: 8px 10px; letter-spacing: .04em; overflow-wrap: anywhere; }
+.api-key { font-family: var(--f-data); font-size: 13px; background: var(--surface-blanca); border: 1px solid var(--grid); border-radius: 8px; padding: 8px 10px; letter-spacing: .04em; overflow-wrap: anywhere; }
 
 /* Banner de suscripción vencida */
 .banner-vencida { background: var(--crit-soft); color: var(--crit-text); border: 1px solid var(--crit, #fca5a5); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; }
@@ -3048,6 +4534,7 @@ img.sesion-avatar { object-fit: cover; display: block; }
 .att-table .att-name { font-weight: 600; }
 .att-table .att-sede { color: var(--muted); }
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 10px; font-size: 12.5px; color: var(--muted); }
+.hist-fecha { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 
 /* Drawer de detalle (marcaciones del día) */
 .overlay.right { justify-content: flex-end; padding: 0; }
@@ -3097,7 +4584,7 @@ img.sesion-avatar { object-fit: cover; display: block; }
 .tl-flag { color: var(--muted); font-size: 11.5px; }
 .tl-actions { display: flex; gap: 6px; }
 .btn.small { font-size: 12px; padding: 4px 10px; }
-.ev-form { border: 1px solid var(--grid); border-radius: 8px; padding: 12px; background: var(--page); display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.ev-form { border: 1px solid var(--grid); border-radius: 8px; padding: 12px; background: var(--surface-blanca); display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
 .ev-form h4 { font-size: 13px; font-weight: 700; }
 .ev-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 .ev-form-row { display: flex; gap: 10px; }
@@ -3158,9 +4645,21 @@ img.sesion-avatar { object-fit: cover; display: block; }
     gap: 0;
     padding: 0;
   }
-  .app-header { grid-column: 2; grid-row: 1; padding: 16px 24px; background: var(--surface); border-bottom: 1px solid var(--grid); }
+  .app-header { grid-column: 2; grid-row: 1; padding: 12px 24px; background: var(--btn-primary); border-bottom: none; border-radius: 0; }
+  .head-logo { display: none; } /* en PC la marca vive en el menú lateral */
+  .head-sede {
+    display: block; max-width: 210px; font-size: 13px; padding: 7px 10px;
+    background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.25);
+  }
+  .head-sede:hover { background: rgba(255,255,255,.18); }
+  .head-sede option { background: var(--surface); color: var(--ink); }
+  .head-user-nombre { display: block; }
+  .side-sede { display: none; } /* el filtro de sede pasó a la barra */
+  .side-foot { margin-top: auto; }
   .app-header .brand { display: none; } /* la marca ya vive en el menú lateral */
-  .app-header .date-note { margin-left: auto; font-size: 13.5px; }
+  /* El subtítulo (pestaña · fecha) va DEBAJO del nombre, alineado a la
+     izquierda — con margin-left:auto quedaba flotando a la derecha. */
+  .app-header .date-note { font-size: 12.5px; }
 
   /* menú lateral: panel completo pegado al borde, unido a la vista por un
      único borde divisorio (sin esquinas redondeadas ni flotación) */
@@ -3177,6 +4676,11 @@ img.sesion-avatar { object-fit: cover; display: block; }
   .menu-btn { display: none; }
   .head-tab { font-size: 17px; }
   .side-top .collapse-btn { display: flex; }
+
+  /* PC: la fila de resumen del dashboard se abre en tres tarjetas */
+  .fila-resumen { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
+  /* PC: gráfica de horas ancha + costos angosto, lado a lado */
+  .fila-horas { grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); }
 
   /* PC: tablas visibles, acordeón oculto */
   .att-tablewrap { display: block; }
@@ -3233,18 +4737,30 @@ img.sesion-avatar { object-fit: cover; display: block; }
 
   /* contenido pegado al sidebar, sin marcos: la jerarquía la dan las sombras.
      El lienzo es gris muy suave y las piezas "flotan" en blanco (estilo 3D). */
-  .screen { grid-column: 2; grid-row: 2; padding: 22px 26px; gap: 18px; background: var(--page); }
+  /* Contenido compacto: la meta es que el dashboard quepa SIN scroll general
+     (el scroll queda de respaldo para pantallas bajas). */
+  .screen { grid-column: 2; grid-row: 2; padding: 14px 20px; gap: 12px; background: var(--page); overflow-y: auto; min-height: 0; }
   .admin-root { background: var(--page); }
   .card { border: 1px solid var(--grid); border-radius: 8px; padding: 18px 20px; background: var(--surface); box-shadow: var(--elev-1); }
   .tiles { gap: 14px; }
   .tile { border: 1px solid var(--grid); border-radius: 8px; background: var(--surface); box-shadow: var(--elev-1); }
-  .tool, .emp-card { border: 1px solid var(--grid); border-radius: 8px; background: var(--surface); box-shadow: var(--elev-1); }
-  .tool:hover { background: var(--accent-soft); }
+  .emp-card { border: 1px solid var(--grid); border-radius: 8px; background: var(--surface); box-shadow: var(--elev-1); }
   .emp-card:hover { box-shadow: var(--elev-2); }
 
   /* sidebar y encabezado separados por línea divisoria sobria */
   .tabbar { background: var(--surface); border-right: 1px solid var(--grid); box-shadow: none; }
-  .app-header { border-bottom: 1px solid var(--grid); box-shadow: none; position: relative; z-index: 2; }
+  .app-header { box-shadow: none; position: relative; z-index: 2; }
+  /* Móvil: la barra es angosta — todo se compacta y el logo CR se oculta
+     (la marca completa vive en el menú); sin esto el avatar se salía del
+     borde redondeado de la barra. */
+  .app-header { gap: 8px; padding: 8px 10px; }
+  .head-right { gap: 8px; }
+  .head-logo { display: none; }
+  .head-guia { font-size: 11px; padding: 5px 9px; }
+  /* En móvil el subtítulo (pestaña · fecha) SÍ se muestra: es la única señal
+     de en qué pantalla estás ahora que el título es la marca. */
+  .app-header .date-note { font-size: 10.5px; }
+  .head-user-btn { padding: 2px; }
   .card { padding: 18px 22px; }
   .card h2 { font-size: 16px; }
 
@@ -3269,4 +4785,305 @@ img.sesion-avatar { object-fit: cover; display: block; }
   .log-item { font-size: 13.5px; }
   .log-item time { min-width: 130px; }
 }
+
+/* ── Dashboard opción C: asistencia ancha + indicadores al lado + gráficas
+   abajo. En móvil todo apila en una columna (asistencia primero). ───── */
+.dash-grid { display: grid; grid-template-columns: 1fr; gap: 12px; flex: 0 0 auto; }
+.dash-lado { display: flex; flex-direction: column; gap: 12px; min-width: 0; height: 100%; }
+/* La última tarjeta del lado crece para que la columna cierre a la misma
+   altura que la asistencia de al lado. */
+.dash-lado > .card:last-child { flex: 1 1 auto; }
+.asistencia-card { min-width: 0; display: flex; flex-direction: column; }
+.asistencia-card .scrollable { flex: 1 1 auto; min-height: 0; max-height: 470px; overflow-y: auto; }
+/* Las tarjetas de la fila 2 (horas y costos) se estiran a la misma altura. */
+.dash-grid .card.grow { min-height: 0; }
+.dash-grid .card.grow .scrollable { flex: 1 1 auto; min-height: 0; max-height: 360px; overflow-y: auto; }
+@media (min-width: 900px) {
+  /* Dos columnas compartidas por ambas filas, con el MISMO ancho por columna.
+     Fila 1: horas + costos (compactas). Fila 2: asistencia + indicadores.
+     En móvil se conserva el orden del DOM (asistencia primero). */
+  .dash-grid { grid-template-columns: minmax(0, 2.2fr) minmax(260px, 1fr); align-items: stretch; }
+  .horas-card { order: 1; }
+  .costos-card { order: 2; }
+  .asistencia-card { order: 3; }
+  .dash-lado { order: 4; }
+  /* Fila 1 pareja: COSTOS define la altura (su contenido es fijo) y la
+     gráfica de horas se estira exactamente a esa misma altura, con scroll
+     interno para las barras que no quepan. El selector largo es a propósito:
+     le gana a la regla general de .dash-grid. */
+  .dash-grid .card.grow.horas-card .scrollable { flex: 1 1 auto; min-height: 0; max-height: 96px; }
+  .horas-card { min-height: 0; }
+}
+
+/* ── Horas del rango + costos (dashboard) ── */
+.fila-horas { display: grid; grid-template-columns: 1fr; gap: 12px; flex: 0 0 auto; }
+/* Dentro de la fila, la gráfica mide lo que mida su contenido (hasta un tope
+   con scroll propio): el patrón grow/scroll del resto del panel colapsaba a
+   cero dentro de la cuadrícula en móvil y la tarjeta salía cortada. */
+.fila-horas .card.grow { flex: none; min-height: 0; }
+.fila-horas .scrollable { flex: none; max-height: 340px; overflow-y: auto; }
+/* Desde tablet las dos tarjetas comparten fila; solo el celular apila. */
+@media (min-width: 640px) {
+  .fila-horas { grid-template-columns: minmax(0, 3fr) minmax(230px, 2fr); align-items: stretch; }
+}
+/* Barras minimalistas: finas, sin sombra interna ni línea de límite; el
+   exceso sobre las horas legales va en azul oscuro a continuación. */
+.hrow.compacta { grid-template-columns: 92px 1fr 66px; font-size: 12px; gap: 8px; }
+.hrow.compacta .track { height: 8px; border-radius: 4px; background: var(--page); box-shadow: none; }
+.hrow.compacta .fill { border-radius: 4px; background: #6e94e8; min-width: 2px; }
+.hrow.compacta .fill-extra { position: absolute; top: 0; bottom: 0; background: var(--btn-primary); border-radius: 0 4px 4px 0; }
+.hrow.compacta .val { font-size: 11.5px; }
+/* La cifra del exceso hereda el azul oscuro del tramo de la barra. */
+.hrow.compacta .val .extra { color: var(--btn-primary); }
+/* Dona de costos */
+.costo-viz { display: flex; align-items: center; gap: 14px; margin: 2px 0 4px; }
+.costo-viz > div:last-child { min-width: 0; }
+.dona { width: 88px; height: 88px; border-radius: 50%; position: relative; flex: none; }
+.dona span { position: absolute; inset: 21px; background: var(--surface); border-radius: 50%; }
+.costo-tipos { margin: 4px 0 0; gap: 3px; }
+.costo-tipo { font-size: 11.5px; }
+.costo-link {
+  border: 0; background: none; padding: 2px 0; font: inherit; font-size: 12.5px;
+  font-weight: 700; color: var(--accent); cursor: pointer; text-align: left;
+}
+.costo-link:hover { text-decoration: underline; }
+.costo-dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.card-head h2 { margin-bottom: 0; }
+.rango-sel { display: flex; gap: 6px; }
+.costo-total { font-family: var(--f-data); font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--ink); margin-top: 2px; }
+.costo-sub { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.costo-tipos { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.costo-tipo { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; }
+.costo-cod { font-family: var(--f-data); font-size: 10.5px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px; flex: none; }
+.costo-nom { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.costo-val { font-family: var(--f-data); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* ── Bandeja de anomalías (PC) ── */
+.bandeja { display: flex; flex-direction: column; }
+.caso { border-bottom: 1px solid var(--grid); }
+.caso:last-child { border-bottom: none; }
+.caso-cab {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  border: 0; background: transparent; font: inherit; color: var(--ink);
+  padding: 9px 6px; border-radius: 8px; cursor: pointer;
+}
+.caso-cab:hover { background: var(--accent-soft); }
+.caso-nom { flex: 1; min-width: 0; }
+.caso-nom b { display: block; font-weight: 600; font-size: 13.5px; }
+.caso-nom small { color: var(--muted); font-size: 11.5px; }
+.caso-chev { display: flex; color: var(--muted); transition: transform .18s ease; }
+.caso.abierto .caso-chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .caso-chev { transition: none; } }
+.caso-panel { padding: 2px 8px 14px 48px; }
+.caso-det { font-size: 13px; color: var(--ink-2); margin-bottom: 10px; }
+/* Móvil: ficha compacta — solo foto, nombre y novedad. La fecha y la sede
+   no se pierden: aparecen en el detalle al expandir el caso. */
+@media (max-width: 899px) {
+  .caso-nom small { display: none; }
+  .caso-nom b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .caso-panel { padding-left: 8px; }
+}
+.caso-fix { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.caso-fix label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.caso-fix input[type="time"] { font-family: var(--f-data); font-size: 13.5px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--ink); }
+.caso-motivo { flex: 1 1 220px; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--ink); }
+.fchip-n { margin-left: 6px; font-size: 10.5px; font-weight: 700; background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 0 5px; }
+.fchip[aria-pressed="true"] .fchip-n { background: rgba(255,255,255,.25); color: inherit; }
+
+/* ── Cajón de registro de empleado ── */
+/* TODOS los cajones flotantes con el mismo ancho (registro, marcaciones,
+   edición, nueva sede): una sola medida para que se sientan el mismo mueble. */
+.drawer { max-width: 460px; }
+.reg-drawer-scroll { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 12px 14px; overscroll-behavior: contain; }
+/* Cabecera de TODOS los cajones (registro, marcaciones, ficha) en azul de
+   marca, con el nombre en blanco y el botón translúcido. */
+.drawer .drawer-head { background: var(--btn-primary); border-bottom: none; }
+.drawer .drawer-head h3 { color: #fff; }
+.drawer .drawer-head .drawer-id { color: rgba(255,255,255,.6); }
+.drawer .drawer-head .btn { background: transparent; border-color: rgba(255,255,255,.3); color: #fff; box-shadow: none; }
+.drawer .drawer-head .btn:hover { background: rgba(255,255,255,.12); }
+
+/* ── Pestaña Horarios: formulario en el sitio ── */
+.hor-form {
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+  border: 1px solid var(--grid); border-radius: 10px; padding: 12px;
+  margin-bottom: 10px; background: var(--page);
+}
+.hor-form .regfield { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--ink-2); min-width: 0; }
+.hor-form .regfield:first-child { flex: 1 1 220px; }
+.hor-form input { font: inherit; font-size: 13.5px; font-weight: 400; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--ink); min-width: 0; }
+.hor-form-acciones { display: flex; gap: 8px; }
+
+/* Editor de jornada POR DÍAS: una fila por día, activable. */
+.hd-editor { display: flex; flex-direction: column; gap: 5px; flex: 1 1 100%; }
+.hd-dia {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border: 1px solid var(--grid); border-radius: 8px;
+  background: var(--surface);
+}
+.hd-dia.hd-off { background: var(--page); }
+.hd-nombre {
+  display: flex; align-items: center; gap: 7px; flex: 0 0 64px;
+  font-size: 12.5px; font-weight: 650; color: var(--ink-2); cursor: pointer;
+}
+.hd-dia.hd-off .hd-nombre { color: var(--muted); }
+.hd-nombre input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; flex: 0 0 auto; }
+.hd-dia input[type="time"] {
+  font: inherit; font-size: 13px; padding: 5px 7px; min-width: 0; flex: 1 1 0;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink);
+}
+.hd-sep { color: var(--muted); flex: 0 0 auto; }
+.hd-almuerzo { display: flex; align-items: center; gap: 5px; margin-left: auto; font-size: 11.5px; color: var(--muted); }
+.hd-almuerzo input {
+  font: inherit; font-size: 13px; width: 58px; padding: 5px 7px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink);
+}
+.hd-libre { font-size: 12.5px; color: var(--muted); font-style: italic; }
+.hd-resumen {
+  display: flex; align-items: center; gap: 10px; flex: 1 1 100%;
+  font-size: 12.5px; color: var(--muted); margin-top: 2px;
+}
+.hd-resumen b { font-family: var(--f-data); font-size: 13.5px; color: var(--ink); }
+.hd-resumen .btn { margin-left: auto; }
+
+/* Pantallas angostas: el almuerzo baja a su propia línea, alineado con las
+   horas, para que la fila del día nunca desborde la hoja inferior. */
+@media (max-width: 460px) {
+  .hd-dia { flex-wrap: wrap; }
+  .hd-almuerzo { flex: 1 1 100%; margin-left: 71px; justify-content: flex-start; }
+  .hd-almuerzo input { width: 64px; }
+}
+
+/* ── Tabla Empleados enriquecida ── */
+.att-search.mini { flex: 0 1 220px; min-width: 140px; padding: 7px 10px; font-size: 12.5px; }
+.att-fecha {
+  font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 9px;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--ink-2); cursor: pointer;
+}
+.att-fecha:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Embudo de filtro dentro del encabezado de columna. */
+.th-filtro { position: relative; white-space: nowrap; }
+.filtro-ico {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  padding: 2px 3px; margin-left: 4px; border-radius: 4px; vertical-align: -1px;
+}
+.filtro-ico:hover { color: var(--accent); background: var(--accent-soft); }
+.filtro-ico.on { color: var(--accent); }
+.filtro-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 25;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px; box-shadow: var(--elev-2, 0 8px 24px rgba(16,24,40,.16));
+}
+.filtro-pop select {
+  font: inherit; font-size: 12.5px; font-weight: 500; border: 0; outline: none;
+  background: var(--surface); color: var(--ink); min-width: 150px; cursor: pointer;
+}
+.filtro-pop option { padding: 4px 6px; border-radius: 5px; }
+.emp-cedula { display: block; font-size: 11px; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+
+/* ── Interruptor (switch) de las columnas Limitar/Validar ── */
+.sw {
+  position: relative; width: 36px; height: 20px; flex: 0 0 auto;
+  border: 0; border-radius: 999px; background: #cbd5e1; cursor: pointer;
+  padding: 0; transition: background .15s ease; vertical-align: middle;
+}
+.sw span {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; transition: transform .15s ease;
+  box-shadow: 0 1px 3px rgba(16,24,40,.25);
+}
+.sw.on { background: #22c55e; }
+.sw.on span { transform: translateX(16px); }
+.sw:disabled { opacity: .35; cursor: not-allowed; }
+.sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .sw, .sw span { transition: none; } }
+
+/* ── Signo de pregunta con globo de ayuda (hover o foco). ── */
+.q-ico {
+  position: relative; display: inline-grid; place-items: center;
+  width: 15px; height: 15px; border-radius: 50%; margin-left: 6px;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 10.5px; font-weight: 700; cursor: help; vertical-align: middle;
+  flex: 0 0 auto;
+}
+.q-tip {
+  display: none; position: absolute; bottom: calc(100% + 8px); left: 50%;
+  transform: translateX(-50%); z-index: 60;
+  width: 230px; padding: 9px 11px;
+  background: var(--btn-primary); color: #fff; border-radius: 8px;
+  font-size: 12px; font-weight: 400; line-height: 1.4; text-align: left;
+  text-transform: none; letter-spacing: normal;
+  box-shadow: 0 8px 24px rgba(16,24,40,.25);
+}
+.q-tip::after {
+  content: ""; position: absolute; top: 100%; left: 50%; margin-left: -6px;
+  border: 6px solid transparent; border-top-color: var(--btn-primary);
+}
+.q-ico:hover .q-tip, .q-ico:focus-visible .q-tip { display: block; }
+
+/* ── Alertas de anomalías en rojo de verdad. El sistema monocromo define
+   --crit como azul marino (#172554): sobre la barra y el menú azules el
+   globito era invisible, y el número de la tarjeta no destacaba. ────── */
+.head-badge { background: #dc2626; }
+.tabbar .badge { background: #dc2626; }
+.cifrota.alerta { color: #dc2626; }
+.cifrota.alerta:hover { color: #b91c1c; }
+.saldo.neg { color: #b3372f; }
+
+/* ── Cajón de marcaciones: colores semánticos (el sistema monocromo pintaba
+   entrada/salida/extras con azules casi iguales). Verde = entrada,
+   naranja = salida, azul marino = horas extra, amarillo suave = marcación
+   con anomalía (huérfana o señalada). ─────────────────────────────── */
+.tl-type.in { color: #1fa15f; }
+.tl-type.out { color: #d97706; }
+/* Total del día en azul claro; SOLO el exceso (+X) en azul marino. */
+.dia-horas.extra { color: var(--accent); }
+.dia-exceso { font-style: normal; color: var(--btn-primary); }
+.bloque.warn { background: #fdf3d3; border-color: #eedfa8; color: #8a6100; }
+
+/* ── Móvil: el panel crece con el contenido y la página entera hace scroll.
+   Con height fijo en 100dvh, el fondo azul se pintaba solo en la primera
+   pantalla y al bajar aparecía el blanco del body. En PC se conserva la
+   altura fija porque el layout de columnas depende de ella. ─────────── */
+.admin-root { height: auto; min-height: 100dvh; }
+@media (min-width: 900px) {
+  .admin-root { height: 100dvh; }
+}
+
+/* ── Opción B: lienzo azul suave. Redefinir --page dentro del panel tiñe
+   el fondo del contenido (y las pistas de las barras) sin tocar el token
+   global que usan las demás pantallas. ────────────────────────────── */
+.admin-root { --page: #dfe8f8; }
+
+/* ── Menú lateral azul de marca (va al final: gana sobre las reglas de
+   arriba, incluidas las de los media queries) ─────────────────────── */
+.tabbar {
+  background: var(--btn-primary);
+  border-right-color: rgba(255,255,255,.12);
+}
+.tabbar > button { color: rgba(255,255,255,.72); }
+.tabbar > button:hover { background: rgba(255,255,255,.08); }
+.tabbar > button[aria-pressed="true"] { color: #fff; background: rgba(255,255,255,.15); }
+.tabbar .badge { background: var(--crit); }
+.side-top { border-bottom-color: rgba(255,255,255,.12); }
+.logo { background: rgba(255,255,255,.14); color: #fff; }
+.side-brand { color: #fff; }
+.side-brand b { color: #8fb0f7; }
+.side-brand small { color: rgba(255,255,255,.55); }
+.side-top .collapse-btn { border-color: rgba(255,255,255,.25); color: #fff; }
+.side-top .collapse-btn:hover { background: rgba(255,255,255,.12); }
+/* La marca cede espacio (se recorta con elipsis) para que el botón de
+   esconder no quede aplastado contra el borde del menú. */
+.side-brand { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; letter-spacing: .08em; }
+.side-top .collapse-btn { flex: 0 0 auto; margin-left: 6px; }
+.side-sede { border-bottom-color: rgba(255,255,255,.12); }
+.side-sede-lbl { color: rgba(255,255,255,.55); }
+.side-sede .sede-select {
+  background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.25);
+}
+.side-sede .sede-select:hover { background: rgba(255,255,255,.18); }
+.side-sede .sede-select option { background: var(--surface); color: var(--ink); }
+.side-foot { color: rgba(255,255,255,.4); }
 `;

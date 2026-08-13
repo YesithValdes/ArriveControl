@@ -25,19 +25,59 @@ export const setSedeId = (id) => hasLS && localStorage.setItem(KEY_SEDE, id);
 export const getDeviceKey = () => (hasLS ? localStorage.getItem(KEY_DEVICE) || '' : '');
 export const setDeviceKey = (k) => hasLS && localStorage.setItem(KEY_DEVICE, k);
 
+/**
+ * Olvida la activación de este aparato. Se llama cuando el servidor rechaza la
+ * clave: el dispositivo fue revocado, o la base cambió y esa clave ya no
+ * existe. Sin esto, el kiosco se queda mostrando una pantalla que no puede
+ * marcar ni reconocer a nadie, y sin avisar de nada.
+ *
+ * NO borra la cola de marcaciones pendientes: son horas trabajadas que todavía
+ * no llegaron al servidor y se reenvían cuando el aparato se reactive.
+ */
+export function olvidarActivacion() {
+  if (!hasLS) return;
+  localStorage.removeItem(KEY_DEVICE);
+  localStorage.removeItem(KEY_SEDE);
+  localStorage.removeItem(KEY_ROSTER); // son datos biométricos de otra instalación
+}
+
+/**
+ * Error de credencial del dispositivo, distinto de un fallo de red.
+ *
+ * La diferencia es la que decide el comportamiento del kiosco: sin red hay que
+ * SEGUIR marcando contra el caché —la gente está fichando y el internet no es
+ * su problema—, pero con la clave rechazada hay que parar y pedir reactivación.
+ */
+export class ClaveRechazada extends Error {
+  constructor(mensaje = 'Este dispositivo ya no está autorizado.') {
+    super(mensaje)
+    this.name = 'ClaveRechazada'
+  }
+}
+
 const headers = () => ({
   'Content-Type': 'application/json',
   ...(getDeviceKey() ? { 'X-Device-Key': getDeviceKey() } : {}),
 });
 
-/** Sedes para el selector de configuración del kiosco. */
+/**
+ * Sedes de la empresa. Cumple dos papeles: llena el selector al activar, y
+ * sirve de SONDA para comprobar que la clave del aparato sigue valiendo —
+ * es la petición más barata que la exige, mucho más que bajar los rostros.
+ */
 export async function cargarSedes() {
+  const conClave = Boolean(getDeviceKey());
   const r = await fetch('/api/sedes', { headers: headers() });
   // Nunca asumir JSON: un cuerpo vacío (p. ej. el dev server compilando, o un
   // proxy caído) reventaba con "Unexpected end of JSON input" y el kiosco lo
   // mostraba como "Sin conexión", que era engañoso.
   let d = null;
   try { d = await r.json(); } catch { /* cuerpo vacío o no-JSON */ }
+
+  // Si se mandó clave y el servidor responde 401, la clave está muerta. Sin
+  // clave, un 401 solo significa que hace falta iniciar sesión para activar.
+  if (r.status === 401 && conClave) throw new ClaveRechazada(d?.detalle || d?.error);
+
   if (!r.ok || !d?.ok) throw new Error(d?.error || `El servidor respondió ${r.status} sin datos. Reintenta en unos segundos.`);
   return d.sedes;
 }
@@ -50,12 +90,25 @@ export async function cargarSedes() {
 export async function cargarRoster() {
   try {
     const r = await fetch('/api/empleados?rostros=1', { headers: headers() });
-    const d = await r.json();
-    if (!r.ok || !d.ok) throw new Error(d.error || `Error ${r.status}`);
-    const empleados = d.empleados.map((e) => ({ id: e.id, name: e.nombre, descriptor: e.descriptor_facial }));
+    let d = null;
+    try { d = await r.json(); } catch { /* cuerpo vacío o no-JSON */ }
+
+    // 401 aquí NO es un problema de red: el servidor contestó, y contestó que
+    // esta clave no vale. Se distingue a propósito para no caer al caché — con
+    // la clave muerta, seguir mostrando rostros cacheados sería enseñar datos
+    // biométricos de una instalación a la que este aparato ya no pertenece.
+    if (r.status === 401) throw new ClaveRechazada(d?.detalle || d?.error);
+
+    if (!r.ok || !d?.ok) throw new Error(d?.error || `Error ${r.status}`);
+    const empleados = d.empleados.map((e) => ({
+      id: e.id, name: e.nombre, descriptor: e.descriptor_facial,
+      // Para exigir (si el flag está activo) que marque en SU sede.
+      sedeId: e.sede_id || null, validarSede: e.validar_sede === true,
+    }));
     if (hasLS) localStorage.setItem(KEY_ROSTER, JSON.stringify(empleados));
     return { empleados, deCache: false };
   } catch (e) {
+    if (e instanceof ClaveRechazada) throw e; // nunca se cae al caché por esto
     if (hasLS) {
       try {
         const cache = JSON.parse(localStorage.getItem(KEY_ROSTER) || '[]');

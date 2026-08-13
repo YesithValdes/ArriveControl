@@ -19,6 +19,7 @@ import { euclideanDistance, MATCH_THRESHOLD } from '../utils/faceMath.js';
 import {
   cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
   getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
+  olvidarActivacion, ClaveRechazada,
 } from '../services/kioskoApi.js';
 
 const FACEAPI_MODEL_URL = '/models';
@@ -79,22 +80,42 @@ export default function KioskMode() {
   const [peopleCount, setPeopleCount] = useState(0);
   const [pendientes, setPendientes] = useState(0); // cola offline sin sincronizar
 
-  // ACTIVACIÓN del dispositivo (una sola vez, con sesión de admin): el
-  // servidor genera la clave propia de este aparato y aquí queda persistida.
-  // Un dispositivo sin activar no puede marcar ni descargar el roster.
+  // ACTIVACIÓN del dispositivo (una sola vez, SOLO con código): el
+  // administrador genera el código en el panel web (Dispositivos → Vincular
+  // un aparato) y aquí se teclea. No existe activación con sesión desde el
+  // kiosco: el panel es la única puerta de administración.
   const [configurado, setConfigurado] = useState(true); // se evalúa al montar
-  const [cfgSedes, setCfgSedes] = useState([]);
-  const [cfgSede, setCfgSede] = useState('');
-  const [cfgNombre, setCfgNombre] = useState('');
   const [cfgError, setCfgError] = useState(null);
+  const [cfgCodigo, setCfgCodigo] = useState('');
   const [activando, setActivando] = useState(false);
+
   useEffect(() => {
-    const listo = Boolean(getSedeId()) && Boolean(getDeviceKey());
-    setConfigurado(listo);
     setPendientes(pendientesEnCola());
-    if (!listo) {
-      cargarSedes().then(setCfgSedes).catch((e) => setCfgError(`Sin conexión con el servidor: ${e.message}`));
+
+    // Tener una clave guardada NO significa que siga sirviendo: el aparato pudo
+    // ser revocado desde el panel, o la base pudo cambiar. Antes solo se miraba
+    // si existía, y el kiosco se quedaba abierto sin poder marcar ni reconocer
+    // a nadie, sin avisar. Ahora se comprueba contra el servidor.
+    // La clave es lo único indispensable: un dispositivo SIN sede es válido
+    // (celular/kiosco móvil que registra desde cualquier lugar).
+    if (!getDeviceKey()) {
+      setConfigurado(false);
+      return;
     }
+
+    // Optimista: si ya estaba activado se muestra el kiosco de una, y solo se
+    // baja a la pantalla de activación si el servidor DICE que la clave no
+    // vale. Sin red no se toca nada — la gente sigue fichando contra el caché,
+    // que para eso existe la cola offline.
+    setConfigurado(true);
+    cargarSedes().catch((e) => {
+      if (e instanceof ClaveRechazada) {
+        olvidarActivacion();
+        setConfigurado(false);
+        setCfgError('Este dispositivo ya no está autorizado. Pide un código nuevo en el panel y vuelve a registrarlo.');
+      }
+      // Cualquier otro error es de red: se ignora y el kiosco sigue.
+    });
   }, []);
 
   // Cola offline: reintenta al reconectar y cada minuto.
@@ -108,28 +129,28 @@ export default function KioskMode() {
     return () => { window.removeEventListener('online', flush); clearInterval(id); };
   }, []);
 
-  const activarEsteDispositivo = async () => {
-    if (!cfgSede) { setCfgError('Elige la sede de este dispositivo.'); return; }
-    if (!cfgNombre.trim()) { setCfgError('Ponle un nombre.'); return; }
+  /**
+   * Canjea el código que el administrador generó en el panel. No necesita
+   * sesión: el código es toda la credencial, y por eso es de un solo uso y
+   * caduca en minutos.
+   */
+  const vincularConCodigo = async () => {
     setCfgError(null);
     setActivando(true);
     try {
-      const r = await fetch('/api/dispositivos', {
+      const r = await fetch('/api/dispositivos/canjear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nombre: cfgNombre.trim(), sede_id: cfgSede }),
+        body: JSON.stringify({ codigo: cfgCodigo.replace(/\D/g, '') }),
       });
       const d = await r.json().catch(() => null);
-      if (r.status === 401) {
-        setCfgError('Necesitas sesión de administrador.');
-        return;
-      }
       if (!r.ok || !d?.ok) { setCfgError(d?.error || `El servidor respondió ${r.status}.`); return; }
-      // La clave se recibe UNA sola vez: queda en este aparato y en ningún otro lado.
+      // La clave llega UNA sola vez: queda aquí y en ningún otro lado.
       setDeviceKey(d.dispositivo.clave);
-      setSedeId(cfgSede);
+      if (d.dispositivo.sede_id) setSedeId(d.dispositivo.sede_id);
       setConfigurado(true);
-      setStatusNote(`"${d.dispositivo.nombre}" activado.`);
+      setCfgCodigo('');
+      setStatusNote(`"${d.dispositivo.nombre}" registrado en ${d.empresa}.`);
     } catch (e) {
       setCfgError(`Sin conexión con el servidor: ${e.message}`);
     } finally {
@@ -226,6 +247,16 @@ export default function KioskMode() {
       all = empleados;
       if (deCache) setStatusNote('Sin conexión: usando la última copia.');
     } catch (e) {
+      // La clave del aparato ya no vale (fue revocado, o la base cambió). No
+      // es un fallo pasajero: hay que reactivarlo, así que se vuelve a la
+      // pantalla de activación en vez de dejar un kiosco que no puede marcar.
+      if (e instanceof ClaveRechazada) {
+        olvidarActivacion();
+        setConfigurado(false);
+        setCfgError('Este dispositivo ya no está autorizado. Vuelve a registrarlo.');
+        cargarSedes().then(setCfgSedes).catch(() => { /* sin red: se reintenta al reactivar */ });
+        return;
+      }
       setStatusNote(`No se pudo cargar el roster: ${e.message}`);
       return;
     }
@@ -338,8 +369,18 @@ export default function KioskMode() {
               if (d < best.distance) best = { distance: d, person: p };
             }
             const distance = Math.round(best.distance * 1000) / 1000;
-            const ok = distance < MATCH_THRESHOLD;
-            concludeResult(ok, ok ? best.person : null, distance, ok ? null : 'Intenta de nuevo mirando de frente.');
+            const reconocido = distance < MATCH_THRESHOLD;
+            // Sede exigida: si el empleado tiene el flag, solo puede marcar en
+            // un kiosco de SU sede. La sede asignada sin flag es informativa.
+            const sedeAjena = reconocido && best.person.validarSede
+              && best.person.sedeId && best.person.sedeId !== getSedeId();
+            const ok = reconocido && !sedeAjena;
+            concludeResult(
+              ok,
+              reconocido ? best.person : null, // con sede ajena el rechazo dice a QUIÉN
+              distance,
+              ok ? null : sedeAjena ? 'Debes marcar en el kiosco de tu sede asignada.' : 'Intenta de nuevo mirando de frente.',
+            );
           }
           break;
         }
@@ -550,30 +591,41 @@ export default function KioskMode() {
           </div>
           <div style={s.idleCta}>{running ? 'Acércate para marcar' : statusNote}</div>
 
-          {/* Activación del dispositivo (una sola vez, con sesión de admin) */}
+          {/* Activación del dispositivo (una sola vez).
+              El CÓDIGO va primero porque es el camino de la app de Android:
+              ahí no se puede iniciar sesión —Google lo bloquea dentro de una
+              app— así que el administrador genera el código en el panel, desde
+              su computador, y aquí solo se teclea. */}
           {!running && !configurado && (
             <div style={s.cfgBox}>
-              <div style={s.cfgTitle}>Activar este dispositivo</div>
+              <div style={s.cfgTitle}>Registrar este dispositivo</div>
+              <div style={s.cfgHint}>
+                Pide el código en el panel: Ajustes → Dispositivos → Vincular un aparato.
+              </div>
               <input
-                style={s.cfgInput}
+                style={{ ...s.cfgInput, ...s.cfgCodigo }}
                 type="text"
-                placeholder='Nombre (p. ej. "Tablet recepción")'
-                value={cfgNombre}
-                onChange={(e) => setCfgNombre(e.target.value)}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="0000-0000"
+                maxLength={9}
+                value={cfgCodigo}
+                onChange={(e) => {
+                  // Se teclean 8 dígitos y el guion se pone solo: en un aparato
+                  // montado en la pared, cada carácter de más es una molestia.
+                  const d = e.target.value.replace(/\D/g, '').slice(0, 8);
+                  setCfgCodigo(d.length > 4 ? `${d.slice(0, 4)}-${d.slice(4)}` : d);
+                }}
               />
-              <select style={s.cfgInput} value={cfgSede} onChange={(e) => setCfgSede(e.target.value)}>
-                <option value="">— Elegir sede —</option>
-                {cfgSedes.map((x) => <option key={x.id} value={x.id}>{x.nombre}</option>)}
-              </select>
-              <button style={s.startBtn} onClick={activarEsteDispositivo} disabled={!cfgSede || !cfgNombre.trim() || activando}>
-                {activando ? 'Activando…' : '🔑 Activar dispositivo'}
+              <button
+                style={s.startBtn}
+                onClick={vincularConCodigo}
+                disabled={cfgCodigo.replace(/\D/g, '').length !== 8 || activando}
+              >
+                {activando ? 'Registrando…' : 'Registrar dispositivo'}
               </button>
-              {cfgError && (
-                <div style={s.errNote}>
-                  {cfgError}{' '}
-                  {cfgError.includes('sesión') && <a href="/login?destino=/">Iniciar sesión →</a>}
-                </div>
-              )}
+
+              {cfgError && <div style={s.errNote}>{cfgError}</div>}
             </div>
           )}
 
@@ -758,7 +810,7 @@ const s = {
   },
   hudBarraRelleno: {
     position: 'absolute', top: 0, bottom: 0, left: 0, borderRadius: 3,
-    background: 'linear-gradient(90deg, #2563EB, #35E0FF)', transition: 'width .45s ease',
+    background: 'linear-gradient(90deg, #6e96b8, #59c2ad)', transition: 'width .45s ease',
   },
   hudInstruccion: { marginTop: 18, fontSize: 26, fontWeight: 800, letterSpacing: '-0.01em', color: '#EAF7FF', position: 'relative' },
   hudEstado: {
@@ -785,6 +837,12 @@ const s = {
   cfgBox: { marginTop: 20, display: 'flex', flexDirection: 'column', gap: 10, width: '100%', maxWidth: 300 },
   cfgTitle: { fontSize: 13, fontWeight: 700, textAlign: 'center', opacity: 0.85 },
   cfgInput: { padding: '12px 14px', fontSize: 15, borderRadius: 10, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.08)', color: 'inherit', fontFamily: 'inherit' },
+  cfgHint: { fontSize: 12, lineHeight: 1.45, textAlign: 'center', opacity: 0.6, marginBottom: 2 },
+  // El código se teclea de pie y a veces de lejos: grande, monoespaciado y
+  // separado, para no confundir un 8 con un 0 ni perder la cuenta de dígitos.
+  cfgCodigo: { fontSize: 26, letterSpacing: '0.18em', textAlign: 'center', fontFamily: 'var(--f-data)', fontWeight: 700 },
+  cfgDetalle: { marginTop: 4, display: 'flex', flexDirection: 'column', gap: 10 },
+  cfgResumen: { fontSize: 12, opacity: 0.6, cursor: 'pointer', textAlign: 'center', marginBottom: 6 },
   pendNote: { marginTop: 10, fontSize: 12, opacity: 0.8, textAlign: 'center' },
   count: { marginTop: 6, fontSize: 11, color: 'var(--muted)' },
   resultScreen: {

@@ -8,64 +8,76 @@
  * automático → registrar. La foto NUNCA se guarda: solo el vector de 128
  * floats, que es lo que usa el kiosco para la identificación 1:N.
  *
+ * El formulario vive en RegistroEmpleadoForm (con sus propios estilos) para
+ * poder abrirse también dentro del panel, en un cajón, sin cambiar de página.
  * Los pesos de face-api ya están en /public/models (los mismos del kiosco).
  */
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 // Roster y sedes desde POSTGRES vía API (mismas formas que los services locales).
-import { syncPanel, listPeople, addPerson, removePerson, getSedes } from '../services/panelStore.js';
+import {
+  syncPanel, listPeople, addPerson, removePerson, getSedes, getHorarios,
+  resumenDias, horasSemanaDias,
+} from '../services/panelStore.js';
+import { SALARIO_MINIMO } from '../lib/jornada.js';
 
 const FACEAPI_MODEL_URL = '/models';
 
-/** Muestra la jornada esperada resultante: salida − entrada − almuerzo. */
-function fmtExpected(entry, exit, breakMin) {
-  if (!/^\d{2}:\d{2}$/.test(entry) || !/^\d{2}:\d{2}$/.test(exit)) return '—';
-  const [eh, em] = entry.split(':').map(Number);
-  const [xh, xm] = exit.split(':').map(Number);
-  let mins = (xh * 60 + xm) - (eh * 60 + em);
-  if (mins <= 0) mins += 24 * 60; // cruza medianoche
-  mins -= Number(breakMin) || 0;
-  if (mins <= 0) return '—';
-  return `${(mins / 60).toFixed(1).replace('.', ',')} h`;
-}
-
-export default function EmployeeRegister() {
+/**
+ * Formulario de registro, embebible (página propia o cajón del panel).
+ * Carga face-api al montarse; llama a alRegistrar(nombre) tras cada alta.
+ */
+export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window.location.assign('/admin/horarios'); } }) {
   const faceapiRef = useRef(null);
   const fileRef = useRef(null);
 
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState('Cargando el modelo facial…');
-  // Identidad: se digita aquí. ArriveControl es un producto independiente y
+  // Identidad: se digita aquí. Este sistema es un producto independiente y
   // esta es su fuente de verdad sobre quién trabaja en la empresa.
   const [nombre, setNombre] = useState('');
   const [cedula, setCedula] = useState('');
-  // Horario OPCIONAL: vacío por defecto. Sin él, el sistema igual registra
-  // por alternancia (entrada→salida) y calcula las horas reales.
-  const [expectedEntry, setExpectedEntry] = useState('');
-  const [expectedExit, setExpectedExit] = useState('');
-  const [breakMinutes, setBreakMinutes] = useState('');
+  // Jornada POR DÍAS: la copia del horario elegido (cada día con su franja,
+  // o libre). Se copia tal cual a la ficha del empleado al registrarlo.
+  const [jornadaDias, setJornadaDias] = useState(null);
   // Opcional a propósito: dar de alta a alguien no debe exigir saber su sueldo.
-  const [salarioMensual, setSalarioMensual] = useState('');
-  const [sedes, setSedes] = useState([]);
+  const [salarioMensual, setSalarioMensual] = useState(String(SALARIO_MINIMO));
+  // Sede OPCIONAL y solo organizativa (dónde trabaja, para reportes). El
+  // checkbox aparte decide si ADEMÁS se le exige marcar en esa sede.
+  // Arrancan con lo que ya haya en memoria (dentro del panel el store viene
+  // cargado): el formulario se pinta completo de una, y la red solo refresca.
+  const [sedes, setSedes] = useState(() => getSedes());
   const [sede, setSede] = useState('');
-  const [photo, setPhoto] = useState(null);      // { previewUrl, descriptor, dataUrl } | null
+  // Limitar: con sede, solo puede marcar en ella. Validar: sin sede, se
+  // registra la ubicación GPS de cada marcación.
+  const [validarSede, setValidarSede] = useState(false);
+  const [validarUbicacion, setValidarUbicacion] = useState(false);
+  // Horarios con nombre: elegir uno copia su franja a los campos de abajo.
+  const [horarios, setHorarios] = useState(() => getHorarios());
+  const [horarioId, setHorarioId] = useState('');
+  const [datosCargados, setDatosCargados] = useState(false);
+  const [photo, setPhoto] = useState(null);      // { previewUrl, descriptor } | null
   const [analyzing, setAnalyzing] = useState(false);
-  const [people, setPeople] = useState([]);
-  const [toast, setToast] = useState(null);
 
-  // Carga inicial desde la API: sedes + roster.
-  const refresh = () => {
+  // Sedes y horarios desde la API (el roster lo maneja quien embebe el form).
+  useEffect(() => {
     syncPanel()
       .then(() => {
-        const list = getSedes();
-        setSedes(list);
-        setSede((s) => s || list[0]?.name || '');
-        setPeople(listPeople());
+        setSedes(getSedes());
+        setHorarios(getHorarios());
+        setDatosCargados(true);
       })
       .catch((e) => setStatus(`No se pudo cargar desde el servidor: ${e.message}`));
+  }, []);
+
+  // Asignar un horario COPIA su mapa de días; luego es editable desde la
+  // ficha del panel por si esta persona necesita una variación puntual.
+  const aplicarHorario = (id) => {
+    setHorarioId(id);
+    const h = getHorarios().find((x) => x.id === id);
+    setJornadaDias(h ? JSON.parse(JSON.stringify(h.dias)) : null);
   };
-  useEffect(refresh, []);
 
   // Carga de face-api (solo las 3 redes necesarias).
   useEffect(() => {
@@ -84,15 +96,13 @@ export default function EmployeeRegister() {
         if (cancelled) return;
         faceapiRef.current = faceapi;
         setReady(true);
-        setStatus('Completa los datos y sube la foto.');
+        setStatus('');
       } catch (err) {
         setStatus(`No se pudo cargar el modelo: ${err?.message || err}`);
       }
     })();
     return () => { cancelled = true; };
   }, []);
-
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2800); };
 
   // Analiza la foto apenas se selecciona: detecta el rostro y extrae el vector.
   const handlePhoto = async (e) => {
@@ -120,7 +130,7 @@ export default function EmployeeRegister() {
       // 128 floats. La previsualización vive en memoria del navegador y se
       // libera al terminar.
       setPhoto({ previewUrl: URL.createObjectURL(file), descriptor: Array.from(det.descriptor) });
-      setStatus('✅ Rostro detectado.');
+      setStatus('');
     } catch (err) {
       setStatus(`❌ Error procesando la foto: ${err?.message || err}`);
     } finally {
@@ -131,13 +141,21 @@ export default function EmployeeRegister() {
   // La cédula se guarda solo con dígitos: es la que cruza con los reportes de
   // horas, y «1.085.312» y «1085312» tienen que ser la misma persona.
   const cedulaLimpia = cedula.replace(/\D/g, '');
-  const canRegister = ready && !analyzing && nombre.trim() && cedulaLimpia.length >= 5 && photo;
+  // El horario es OBLIGATORIO: la franja del empleado sale de la plantilla.
+  const canRegister = ready && !analyzing && nombre.trim() && cedulaLimpia.length >= 5 && horarioId && photo;
+
+  // Checklist de lo que falta, para que el botón deshabilitado no sea un misterio.
+  const faltan = [
+    !nombre.trim() && 'nombre',
+    cedulaLimpia.length < 5 && 'cédula (mín. 5 dígitos)',
+    !horarioId && 'horario',
+    !photo && 'foto',
+  ].filter(Boolean);
 
   const handleRegister = async () => {
     const result = await addPerson(nombre.trim(), photo.descriptor, {
       cedula: cedulaLimpia,
-      sede, expectedEntry, expectedExit,
-      breakMinutes: breakMinutes === '' ? null : Number(breakMinutes),
+      sede, validarSede, validarUbicacion, jornadaDias,
       // Vacío o 0 = sin salario registrado, no un sueldo de cero.
       salarioMensual: Number(salarioMensual) > 0 ? Number(salarioMensual) : null,
     });
@@ -145,15 +163,403 @@ export default function EmployeeRegister() {
       setStatus(`❌ ${result.error}`);
       return;
     }
-    showToast(`${result.name} registrado correctamente`);
     setNombre('');
     setCedula('');
     setSalarioMensual('');
     if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
     setPhoto(null);
-    setStatus('Registrado. Puedes agregar otro.');
-    refresh();
+    setStatus('✅ Registrado. Puedes agregar otro.');
+    alRegistrar?.(result.name);
   };
+
+  // El salario se teclea con separadores de miles: seis ceros seguidos se
+  // cuentan con el dedo. Lo que viaja a la API son solo los dígitos.
+  const salarioNum = Number(String(salarioMensual).replace(/\D/g, '')) || 0;
+  const horasSemana = jornadaDias ? horasSemanaDias(jornadaDias) : null;
+
+  return (
+    <div className="regf">
+      <style>{FORM_CSS}</style>
+
+      <section className="regf-sec">
+        <div className="regf-fila dos">
+          <div className="regf-campo">
+            <label htmlFor="rf-nombre">Nombre completo</label>
+            <input
+              id="rf-nombre" type="text" placeholder="Ana María Gómez" value={nombre}
+              onChange={(e) => setNombre(e.target.value)} autoComplete="off"
+            />
+          </div>
+          <div className="regf-campo">
+            <label htmlFor="rf-cedula">Cédula</label>
+            <input
+              id="rf-cedula" className="num" type="text" inputMode="numeric" placeholder="1085312" value={cedula}
+              onChange={(e) => setCedula(e.target.value)} autoComplete="off"
+            />
+          </div>
+        </div>
+        {cedulaLimpia.length > 0 && cedulaLimpia.length < 5 && (
+          <small className="regf-err">La cédula debe tener al menos 5 dígitos.</small>
+        )}
+      </section>
+
+      <section className="regf-sec">
+        <div className="regf-fila dos">
+          <div className="regf-campo">
+            <label htmlFor="rf-sede">Sede</label>
+            <select
+              id="rf-sede" value={sede}
+              onChange={(e) => {
+                setSede(e.target.value);
+                // Cada pregunta aplica solo a su caso: con sede no hay
+                // "validar" (registro libre de GPS); sin sede no hay "limitar".
+                if (e.target.value) setValidarUbicacion(false);
+                else setValidarSede(false);
+              }}
+            >
+              <option value="">Sin sede</option>
+              {sedes.map((o) => (
+                <option key={o.name} value={o.name}>{o.name}</option>
+              ))}
+            </select>
+          </div>
+          {/* Dos preguntas apiladas junto al select de sede, cada una con su
+              signo de pregunta y explicación al pasar el mouse. */}
+          <div className="regf-valida-grupo">
+            <div className={`regf-valida${!sede ? '' : ' off'}`}>
+              <label htmlFor="rf-valida">
+                ¿Validar ubicación?
+                <input
+                  id="rf-valida" type="checkbox" checked={validarUbicacion} disabled={!!sede}
+                  onChange={(e) => setValidarUbicacion(e.target.checked)}
+                />
+              </label>
+              <span className="regf-q" tabIndex={0}>
+                ?
+                <span className="regf-tip">
+                  Sin sede: guarda la ubicación GPS desde donde se hace cada marcación,
+                  para saber dónde estaba la persona al marcar.
+                </span>
+              </span>
+            </div>
+            <div className={`regf-valida${sede ? '' : ' off'}`}>
+              <label htmlFor="rf-limita">
+                ¿Limitar ubicación?
+                <input
+                  id="rf-limita" type="checkbox" checked={validarSede} disabled={!sede}
+                  onChange={(e) => setValidarSede(e.target.checked)}
+                />
+              </label>
+              <span className="regf-q" tabIndex={0}>
+                ?
+                <span className="regf-tip">
+                  Con sede: marcado, solo puede marcar dentro de su sede; sin marcar,
+                  la sede es informativa y puede marcar desde cualquier parte.
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="regf-campo">
+          <label htmlFor="rf-horario">Horario</label>
+          {/* El select se pinta SIEMPRE de una: mientras carga muestra su
+              opción vacía, y solo si la carga confirma que no hay horarios
+              aparece el botón de ir a crearlos. Así el formulario no salta. */}
+          {horarios.length === 0 && datosCargados ? (
+            <button className="regf-btn regf-ir-horarios" onClick={() => irAHorarios()}>
+              No hay horarios aún — crear uno →
+            </button>
+          ) : (
+            <>
+              <select
+                id="rf-horario" value={horarioId} disabled={horarios.length === 0}
+                onChange={(e) => aplicarHorario(e.target.value)}
+              >
+                <option value="">{horarios.length === 0 ? 'Cargando horarios…' : '— Elegir horario —'}</option>
+                {horarios.map((h) => (
+                  <option key={h.id} value={h.id}>{h.nombre} ({resumenDias(h.dias)})</option>
+                ))}
+              </select>
+              <button type="button" className="regf-link" onClick={() => irAHorarios()}>
+                + Crear un horario nuevo
+              </button>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="regf-sec">
+        <div className="regf-campo con-prefijo salario">
+          <label htmlFor="rf-salario">Salario mensual <span className="regf-op">opcional</span></label>
+          <input
+            id="rf-salario" className="num" type="text" inputMode="numeric" placeholder="Sin registrar"
+            value={salarioNum > 0 ? salarioNum.toLocaleString('es-CO') : ''}
+            onChange={(e) => setSalarioMensual(e.target.value.replace(/\D/g, ''))}
+          />
+          <span className="prefijo">$</span>
+        </div>
+        <small className="regf-hint">Sin salario, sus horas se cuentan pero no se valorizan.</small>
+      </section>
+
+      <section className="regf-sec">
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={handlePhoto} />
+        {!photo ? (
+          <button className="regf-drop" onClick={() => fileRef.current?.click()} disabled={!ready || analyzing}>
+            <span className="regf-drop-ico">{analyzing ? '⏳' : '📷'}</span>
+            <span>
+              <b>{analyzing ? 'Analizando…' : ready ? 'Tomar o subir foto' : 'Cargando modelo facial…'}</b>
+              <small>Frontal, tipo carnet. La imagen no se guarda.</small>
+            </span>
+          </button>
+        ) : (
+          <div className="regf-preview">
+            {/* Vista previa local; la imagen NO se guarda en el sistema */}
+            <img src={photo.previewUrl} alt={`Foto de ${nombre.trim() || 'empleado'}`} />
+            <div>
+              <span className="regf-ok">Rostro detectado</span>
+              <button className="regf-btn" onClick={() => { URL.revokeObjectURL(photo.previewUrl); setPhoto(null); fileRef.current?.click(); }}>
+                Cambiar foto
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <div className="regf-pie">
+        {/* Resumen estructurado de lo elegido, al final de todo. */}
+        {horarioId && (
+          <div className="regf-resumen-final">
+            <div><span>Horario</span><b>{horarios.find((h) => h.id === horarioId)?.nombre}</b></div>
+            <div><span>Días</span><b>{jornadaDias ? resumenDias(jornadaDias) : '—'}</b></div>
+            <div><span>Jornada</span><b>{horasSemana != null ? `${horasSemana.toFixed(1).replace('.', ',')} h por semana` : '—'}</b></div>
+            <div><span>Sede</span><b>{sede || 'Sin sede'}</b></div>
+            <div>
+              <span>Ubicación</span>
+              <b>
+                {sede
+                  ? (validarSede ? 'Limitada a su sede' : 'Libre: cualquier lugar')
+                  : (validarUbicacion ? 'Se registra el GPS al marcar' : 'Libre, sin registro de GPS')}
+              </b>
+            </div>
+          </div>
+        )}
+        <button className="regf-btn regf-primary" disabled={!canRegister} onClick={handleRegister}>
+          Registrar empleado
+        </button>
+        {!canRegister && faltan.length > 0 && ready && !analyzing && (
+          <p className="regf-falta">Falta: {faltan.join(', ')}.</p>
+        )}
+        {/* Estado (cargando modelo, analizando, errores) al FINAL: arriba
+            empujaba todo el formulario al aparecer y desaparecer. */}
+        {status && <p className="regf-status" role="status">{status}</p>}
+      </div>
+    </div>
+  );
+}
+
+/* Estilos del formulario, con el MISMO lenguaje que la ficha de editar del
+   panel: secciones agrupadas, unidades dentro del campo y lo derivado como
+   cifra. Usa los tokens globales, así que sirve igual en /admin/registro que
+   dentro del cajón. */
+const FORM_CSS = `
+.regf { display: flex; flex-direction: column; }
+.regf * { box-sizing: border-box; margin: 0; }
+/* Nada puede desbordar a lo ancho: el cajón mide 420 px y un input[type=time]
+   no se encoge por su cuenta bajo el ancho de su contenido. */
+.regf input, .regf select { min-width: 0; max-width: 100%; }
+
+.regf-status { font-size: 13px; color: var(--ink-2); background: var(--accent-soft); border-radius: var(--r-sm); padding: 8px 12px; margin-top: 10px; }
+.regf-op { font-weight: 400; font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+.regf-ir-horarios { text-align: left; color: var(--accent); font-weight: 600; }
+
+/* Las dos preguntas de ubicación: compactas y centradas (vertical y
+   horizontalmente) frente al select de sede. */
+.regf-valida-grupo {
+  display: flex; flex-direction: column; gap: 7px;
+  justify-content: center; align-items: center; height: 100%;
+  /* Compensa la etiqueta «Sede» de la columna vecina: sin esto el par se
+     centra contra la columna completa y queda más arriba que el select. */
+  padding-top: 21px;
+}
+.regf-valida { display: flex; align-items: center; gap: 6px; }
+
+/* El salario no necesita todo el ancho del cajón: con nueve dígitos basta. */
+.regf-campo.salario { max-width: 210px; }
+.regf-valida label {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 600; color: var(--ink-2); cursor: pointer;
+  white-space: nowrap;
+}
+.regf-valida input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; flex: 0 0 auto; }
+.regf-valida.off label { color: var(--muted); cursor: not-allowed; }
+
+/* Signo de pregunta con su explicación al pasar el mouse (o al enfocarlo). */
+.regf-q {
+  position: relative; flex: 0 0 auto;
+  width: 16px; height: 16px; border-radius: 50%;
+  display: inline-grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 11px; font-weight: 700; cursor: help;
+}
+.regf-q .regf-tip {
+  display: none; position: absolute; bottom: calc(100% + 8px); right: -8px; z-index: 30;
+  width: 230px; padding: 9px 11px;
+  background: var(--btn-primary); color: #fff; border-radius: 8px;
+  font-size: 12px; font-weight: 400; line-height: 1.4; text-align: left;
+  box-shadow: 0 8px 24px rgba(16,24,40,.25);
+}
+.regf-q .regf-tip::after {
+  content: ""; position: absolute; top: 100%; right: 12px;
+  border: 6px solid transparent; border-top-color: var(--btn-primary);
+}
+.regf-q:hover .regf-tip, .regf-q:focus-visible .regf-tip { display: block; }
+
+/* Hipervínculo bajo el selector de horario. */
+.regf-link {
+  align-self: flex-start; margin-top: 5px; padding: 0; border: 0; background: none;
+  font: inherit; font-size: 12.5px; font-weight: 600; color: var(--accent); cursor: pointer;
+}
+.regf-link:hover { text-decoration: underline; }
+
+/* Resumen final estructurado: filas etiqueta → valor. */
+.regf-resumen-final {
+  display: flex; flex-direction: column; gap: 0;
+  background: var(--page); border: 1px solid var(--grid); border-radius: 10px;
+  padding: 4px 14px; margin-bottom: 12px;
+}
+.regf-resumen-final > div {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  padding: 7px 0; border-bottom: 1px dashed var(--grid); font-size: 12.5px;
+}
+.regf-resumen-final > div:last-child { border-bottom: none; }
+.regf-resumen-final span { color: var(--muted); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 650; flex: 0 0 auto; }
+.regf-resumen-final b { font-weight: 600; color: var(--ink); text-align: right; min-width: 0; }
+
+.regf-sec { padding: 15px 0; border-top: 1px solid var(--grid); }
+.regf-sec:first-of-type { border-top: 0; padding-top: 0; }
+.regf-sec > h4 {
+  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); font-weight: 650; margin-bottom: 11px;
+}
+
+.regf-fila { display: grid; gap: 10px; margin-bottom: 10px; }
+.regf-fila:last-child { margin-bottom: 0; }
+/* Columnas IGUALES: nombre/cédula y sede/checkbox comparten proporción para
+   que ningún control se vea desproporcionado. */
+.regf-fila.dos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.regf-fila.tres { grid-template-columns: 1fr 1fr .8fr; }
+
+.regf-campo { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.regf-campo > label { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.regf-campo input, .regf-campo select {
+  font: inherit; font-size: 14.5px; width: 100%;
+  padding: 10px 12px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--page); color: var(--ink);
+}
+.regf-campo input.num { font-family: var(--f-data); }
+.regf-campo input:focus-visible, .regf-campo select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.regf-campo.con-sufijo, .regf-campo.con-prefijo { position: relative; }
+.con-sufijo input { padding-right: 42px; }
+.con-sufijo .sufijo {
+  position: absolute; right: 11px; bottom: 11px;
+  font-family: var(--f-data); font-size: 12px; color: var(--muted); pointer-events: none;
+}
+.con-prefijo input { padding-left: 26px; }
+.con-prefijo .prefijo {
+  position: absolute; left: 11px; bottom: 10px;
+  font-family: var(--f-data); font-size: 14px; color: var(--muted); pointer-events: none;
+}
+
+/* Lo derivado no se edita: por eso no parece un campo. */
+.regf-derivado {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 9px;
+  padding: 9px 12px; background: var(--accent-soft); border-radius: var(--r-sm);
+}
+.regf-derivado > div { display: flex; flex-direction: column; gap: 1px; }
+.regf-derivado .k { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 650; }
+.regf-derivado .v { font-family: var(--f-data); font-size: 14px; font-weight: 650; color: var(--accent-2); }
+
+.regf-hint { display: block; font-size: 12px; color: var(--muted); margin-top: 7px; line-height: 1.45; }
+.regf-err { display: block; font-size: 12px; color: var(--crit-text); margin-top: 6px; }
+
+.regf-drop {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  font: inherit; padding: 14px; cursor: pointer;
+  border: 1px dashed var(--rule, var(--border)); border-radius: var(--r-md);
+  background: var(--page); color: var(--ink);
+}
+.regf-drop:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
+.regf-drop:disabled { opacity: .55; cursor: not-allowed; }
+.regf-drop-ico { font-size: 22px; flex: 0 0 auto; }
+.regf-drop b { display: block; font-size: 14px; font-weight: 600; }
+.regf-drop small { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+.regf-preview { display: flex; align-items: center; gap: 12px; }
+.regf-preview img { width: 60px; height: 60px; object-fit: cover; border-radius: var(--r-md); border: 2px solid var(--accent); flex: 0 0 auto; }
+.regf-preview > div { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.regf-ok { font-size: 13px; font-weight: 600; color: var(--accent-2); }
+
+.regf-btn {
+  font: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 14px;
+  border-radius: 9px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--ink); cursor: pointer;
+}
+.regf-btn:hover:not(:disabled) { background: var(--accent-soft); }
+.regf-pie { padding-top: 15px; border-top: 1px solid var(--grid); }
+.regf-primary {
+  width: 100%; font-size: 15px; padding: 12px;
+  background: var(--btn-primary); border-color: var(--btn-primary); color: var(--accent-ink);
+}
+.regf-primary:hover:not(:disabled) { background: var(--btn-primary-hover); }
+.regf-btn:disabled { opacity: .45; cursor: not-allowed; }
+.regf-falta { font-size: 12.5px; color: var(--muted); margin-top: 8px; text-align: center; }
+
+/* Resumen del horario asignado: sustituye a los tres campos. */
+.regf-resumen {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 10px; padding: 10px 12px;
+  background: var(--accent-soft); border-radius: var(--r-sm);
+}
+.regf-resumen > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.regf-resumen b { font-family: var(--f-data); font-size: 14.5px; font-weight: 650; color: var(--accent-2); }
+.regf-resumen small { font-size: 12px; color: var(--ink-2); }
+.regf-resumen .regf-btn { flex: 0 0 auto; padding: 6px 12px; font-size: 12.5px; }
+
+.regf-check {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+}
+.regf-check input { accent-color: var(--accent); cursor: pointer; flex: 0 0 auto; }
+
+/* El corte va por el ANCHO DEL FORMULARIO, no de la ventana: este formulario
+   vive dentro de un cajón de 420 px aunque la pantalla sea grande, y una
+   media query nunca se enteraría. */
+.regf { container-type: inline-size; container-name: regf; }
+@container regf (max-width: 380px) {
+  .regf-fila.dos, .regf-fila.tres { grid-template-columns: 1fr; }
+  .regf-resumen { flex-direction: column; align-items: stretch; }
+  .regf-resumen .regf-btn { width: 100%; }
+}
+/* Respaldo para navegadores sin soporte de contenedores. */
+@media (max-width: 460px) {
+  .regf-fila.dos, .regf-fila.tres { grid-template-columns: 1fr; }
+  .regf-preview { flex-wrap: wrap; }
+}
+`;
+
+/** Página /admin/registro: el mismo formulario más la lista con eliminación. */
+export default function EmployeeRegister() {
+  const [people, setPeople] = useState([]);
+  const [toast, setToast] = useState(null);
+
+  const refresh = () => {
+    syncPanel().then(() => setPeople(listPeople())).catch(() => {});
+  };
+  useEffect(refresh, []);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2800); };
 
   const handleDelete = async (p) => {
     if (!confirm(`¿Eliminar a ${p.name}? Dejará de poder marcar.`)) return;
@@ -171,108 +577,14 @@ export default function EmployeeRegister() {
       <style>{CSS}</style>
 
       <header className="app-header">
-        <Link href="/admin" className="back">‹ Panel</Link>
+        <Link href="/admin/empleados" className="back">‹ Panel</Link>
         <div>
-          <div className="brand">ArriveControl</div>
+          <div className="brand">Control Registro</div>
           <h1>Registrar empleado</h1>
         </div>
       </header>
 
-      <p className="status" role="status">{status}</p>
-
-      <section className="card">
-        <div className="field">
-          <label htmlFor="r-nombre">Nombre completo</label>
-          <input
-            id="r-nombre" type="text" placeholder="Ana María Gómez" value={nombre}
-            onChange={(e) => setNombre(e.target.value)} autoComplete="off"
-          />
-        </div>
-
-        <div className="field">
-          <label htmlFor="r-cedula">Cédula</label>
-          <input
-            id="r-cedula" type="text" inputMode="numeric" placeholder="1085312" value={cedula}
-            onChange={(e) => setCedula(e.target.value)} autoComplete="off"
-          />
-          <small className="field-hint">
-            {cedulaLimpia.length > 0 && cedulaLimpia.length < 5
-              ? 'Muy corta: deben ser al menos 5 dígitos.'
-              : 'Es la que identifica a la persona en los reportes de horas. Los puntos se ignoran.'}
-          </small>
-        </div>
-
-        <div className="field">
-          <label htmlFor="r-sede">Sede asignada</label>
-          <select id="r-sede" value={sede} onChange={(e) => setSede(e.target.value)}>
-            {sedes.map((o) => (
-              <option key={o.name} value={o.name}>{o.name}</option>
-            ))}
-          </select>
-          <small className="field-hint">Solo podrá fichar dentro del radio de su sede.</small>
-        </div>
-
-        <div className="field">
-          <label>Horario esperado <span className="opcional">opcional</span></label>
-          <div className="hours-row">
-            <label className="sub-field">Entrada
-              <input type="time" value={expectedEntry} onChange={(e) => setExpectedEntry(e.target.value)} />
-            </label>
-            <label className="sub-field">Salida
-              <input type="time" value={expectedExit} onChange={(e) => setExpectedExit(e.target.value)} />
-            </label>
-            <label className="sub-field">Almuerzo
-              <input type="number" min="0" max="240" step="15" placeholder="min" value={breakMinutes}
-                onChange={(e) => setBreakMinutes(e.target.value)} />
-            </label>
-          </div>
-          <small className="field-hint">
-            {expectedEntry && expectedExit ? (
-              <><strong>{fmtExpected(expectedEntry, expectedExit, breakMinutes)}</strong> al día.</>
-            ) : (
-              <>Déjalo vacío si su horario varía.</>
-            )}
-          </small>
-        </div>
-
-        <div className="field">
-          <label htmlFor="reg-salario">Salario mensual <span className="opcional">opcional</span></label>
-          <input
-            id="reg-salario" type="number" min="0" step="1000" inputMode="numeric"
-            placeholder="Sin registrar"
-            value={salarioMensual}
-            onChange={(e) => setSalarioMensual(e.target.value)}
-          />
-          <small className="field-hint">Sirve para valorizar sus horas extra en pesos.</small>
-        </div>
-
-        <div className="field">
-          <label>Foto del rostro</label>
-          {/* En el celular, este input ofrece cámara o galería. */}
-          <input ref={fileRef} type="file" accept="image/*" hidden onChange={handlePhoto} />
-          {!photo ? (
-            <button className="photo-drop" onClick={() => fileRef.current?.click()} disabled={!ready || analyzing}>
-              {analyzing ? '⏳ Analizando…' : <>📷<br /><b>Tomar o subir foto</b><br /><small>Frontal, tipo carnet</small></>}
-            </button>
-          ) : (
-            <div className="preview">
-              {/* Vista previa local; la imagen NO se guarda en el sistema */}
-              <img src={photo.previewUrl} alt={`Foto de ${nombre.trim() || 'empleado'}`} />
-              <div className="preview-info">
-                <span className="okmark">✅ Rostro detectado</span>
-                <small>Se guarda el código facial, no la imagen.</small>
-                <button className="btn" onClick={() => { URL.revokeObjectURL(photo.previewUrl); setPhoto(null); fileRef.current?.click(); }}>
-                  Cambiar foto
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <button className="btn primary big" disabled={!canRegister} onClick={handleRegister}>
-          🪪 Registrar empleado
-        </button>
-      </section>
+      <RegistroEmpleadoForm alRegistrar={(name) => { showToast(`${name} registrado correctamente`); refresh(); }} />
 
       <section className="card grow">
         <h2>Empleados registrados <span className="count">{people.length}</span></h2>
@@ -283,7 +595,11 @@ export default function EmployeeRegister() {
               <span className="avatar">{p.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>
               <span className="pinfo">
                 <b>{p.name}</b>
-                <small>{p.cedula ? `C.C. ${p.cedula}` : 'Sin cédula'} · {p.sede || 'sin sede'} · {p.expectedEntry && p.expectedExit ? `${p.expectedEntry}–${p.expectedExit}` : 'horario libre'}</small>
+                <small>
+                  {p.cedula || 'Sin cédula'} · {p.sede || 'sin sede'} · {p.jornadaDias
+                    ? resumenDias(p.jornadaDias)
+                    : p.expectedEntry && p.expectedExit ? `${p.expectedEntry}–${p.expectedExit}` : 'horario libre'}
+                </small>
               </span>
               <button className="del" title={`Eliminar a ${p.name}`} onClick={() => handleDelete(p)}>🗑</button>
             </div>
@@ -298,13 +614,13 @@ export default function EmployeeRegister() {
 
 const CSS = `
 /* Tokens (color, tipografía, elevación) viven en app/globals.css — el sistema
-   de diseño es único para toda la app. Aquí solo el layout de la pantalla. */
+   de diseño es único para toda la app. Aquí solo el layout de la página. */
 .reg-root {
   font-family: var(--f-body);
   font-weight: 300;
   color: var(--ink); background: var(--page);
   min-height: 100dvh; max-width: 560px; margin: 0 auto;
-  display: flex; flex-direction: column; gap: 10px;
+  display: flex; flex-direction: column; gap: 12px;
   padding: 14px 12px 16px; box-sizing: border-box;
 }
 .reg-root * { box-sizing: border-box; margin: 0; }
@@ -315,52 +631,12 @@ const CSS = `
 .app-header .brand { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
 .app-header h1 { font-size: 19px; font-weight: 650; }
 
-.status { font-size: 13.5px; color: var(--ink-2); min-height: 20px; }
-
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
 .card.grow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .card h2 { font-size: 15px; font-weight: 650; margin-bottom: 8px; }
 .card h2 .count { color: var(--muted); font-weight: 400; }
 .scrollable { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
 .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
-
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-.field label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
-.field input[type="text"], .field input[type="time"], .field select { font: inherit; font-size: 15px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
-.field-hint { color: var(--muted); font-size: 12px; }
-.opcional { font-weight: 400; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-left: 6px; }
-.hours-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-.sub-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); }
-.sub-field input { font: inherit; font-size: 15px; font-weight: 400; color: var(--ink); padding: 9px 10px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--page); }
-.field input:focus-visible, .btn:focus-visible, .photo-drop:focus-visible, .del:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-.search-results { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-top: 2px; }
-.search-item { font: inherit; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; border: none; border-top: 1px solid var(--grid); background: var(--page); color: var(--ink); cursor: pointer; }
-.search-item:first-child { border-top: 0; }
-.search-item:hover:not(:disabled) { background: var(--accent-soft); }
-.search-item:disabled { opacity: .5; cursor: not-allowed; }
-.search-item small { color: var(--muted); font-size: 12px; }
-.selected-colab { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--good-text); border-radius: 8px; background: var(--page); }
-.consent { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 12.5px; color: var(--ink-2); font-weight: 400; cursor: pointer; }
-.consent input { margin-top: 2px; }
-
-.photo-drop { font: inherit; width: 100%; padding: 22px 12px; border: 2px dashed var(--border); border-radius: 12px; background: var(--page); color: var(--ink-2); font-size: 22px; cursor: pointer; line-height: 1.5; }
-.photo-drop b { font-size: 15px; color: var(--ink); }
-.photo-drop small { font-size: 12.5px; color: var(--muted); }
-.photo-drop:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
-.photo-drop:disabled { opacity: .6; cursor: wait; }
-
-.preview { display: flex; gap: 12px; align-items: center; }
-.preview img { width: 96px; height: 96px; object-fit: cover; border-radius: 12px; border: 2px solid var(--good-text); }
-.preview-info { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-.preview-info .okmark { font-weight: 600; color: var(--good-text); font-size: 14px; }
-.preview-info small { color: var(--muted); font-size: 12px; }
-
-.btn { border: 1px solid var(--border); background: var(--surface); color: var(--ink); font: inherit; font-size: 13.5px; padding: 7px 14px; border-radius: 8px; cursor: pointer; }
-.btn:hover { background: var(--accent-soft); }
-.btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent; color: var(--accent-ink); font-weight: 600; }
-.btn.primary:disabled { opacity: .45; cursor: not-allowed; }
-.btn.big { width: 100%; padding: 13px; font-size: 15px; border-radius: 10px; }
 
 .prow { display: flex; align-items: center; gap: 12px; padding: 10px 2px; border-top: 1px solid var(--grid); }
 .prow:first-child { border-top: 0; }
@@ -369,6 +645,7 @@ const CSS = `
 .pinfo small { color: var(--muted); font-size: 12px; }
 .del { border: none; background: transparent; cursor: pointer; font-size: 16px; color: var(--muted); padding: 6px; border-radius: 8px; }
 .del:hover { background: var(--crit-soft); }
+.del:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--page); font-size: 14px; padding: 9px 18px; border-radius: 999px; z-index: 60; }
 `;

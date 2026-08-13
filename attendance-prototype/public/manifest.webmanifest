@@ -1,17 +1,17 @@
 {
-  "name": "ArriveControl — Control de Asistencia",
-  "short_name": "ArriveControl",
+  "name": "Control Registro — Control de Asistencia",
+  "short_name": "Control Registro",
   "description": "Kiosco de marcación facial y panel de asistencia",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#16224e",
-  "theme_color": "#16224e",
+  "background_color": "#3a5570",
+  "theme_color": "#3a5570",
   "lang": "es",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

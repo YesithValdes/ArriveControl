@@ -11,6 +11,7 @@ certificates/
 # Variables de entorno (nunca subir secretos)
 .env
 .env*.local
+.env.production
 
 # Sistema operativo / editor
 .DS_Store

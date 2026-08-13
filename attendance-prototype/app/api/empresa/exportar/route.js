@@ -21,7 +21,7 @@ export const runtime = 'nodejs'
 const TABLAS = {
   sedes: 'id, nombre, lat, lon, radio_m, creada_en',
   empleados: `id, nombre, cedula, sede_id, entrada_esperada, salida_esperada,
-              almuerzo_min, jornada_semanal, salario_mensual, activo, creado_en`,
+              almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo, creado_en`,
   marcaciones: 'id, empleado_id, tipo, ts, sede_id, origen, eliminada, creada_en',
   correcciones: 'id, marcacion_id, admin_email, accion, valor_anterior, valor_nuevo, motivo, ts',
   config_laboral: 'horas_semana, gracia_min, festivos, divisor_horas_mes, factores_hora, nocturno_inicio, nocturno_fin',
