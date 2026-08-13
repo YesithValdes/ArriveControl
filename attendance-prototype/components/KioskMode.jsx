@@ -26,7 +26,9 @@ const FACEAPI_MODEL_URL = '/models';
 const MEDIAPIPE_MODEL = '/models/face_landmarker.task';
 const WASM_PATH = '/wasm';
 
-const ACTIVE_INTERVAL_MS = 120;     // ~8 fps durante el reto
+// ~15 fps durante el reto: un parpadeo dura ~100-150 ms y a 8 fps caía entre
+// dos cuadros y no se veía — la gente "parpadeaba y no pasaba nada".
+const ACTIVE_INTERVAL_MS = 66;
 const IDLE_INTERVAL_MS = 330;       // ~3 fps en reposo (solo vigila presencia)
 const CHALLENGE_TIMEOUT_MS = 12000; // tiempo máx. para el parpadeo
 const RESULT_SHOW_MS = 1500;        // cuánto se muestra el resultado de éxito
@@ -435,8 +437,13 @@ export default function KioskMode() {
           // Prueba de vida SIN orden: ver ojos abiertos en algún momento y
           // cerrados en algún otro, en cualquier secuencia. El movimiento de
           // párpados es lo que demuestra vida; una foto no lo tiene.
-          if (bothOpen < 0.15) st.sawOpen = true;
-          if (bothClosed > 0.55) st.sawClosed = true;
+          // Umbrales de MOVIMIENTO de párpado, no de cierre total: ver los
+          // ojos razonablemente abiertos (< 0.25) y luego un cierre aunque
+          // sea parcial (> 0.35) ya es vida — una foto da valores planos.
+          // El 0.55 anterior exigía cerrar del todo y descartaba parpadeos
+          // suaves: por eso los OJOS tardaban segundos en el cronómetro.
+          if (bothOpen < 0.25) st.sawOpen = true;
+          if (bothClosed > 0.35) st.sawClosed = true;
           if (st.sawOpen && st.sawClosed && st.tParpadeo == null) {
             st.tParpadeo = now - st.t0;
             console.log(`[Kiosco⏱] OJOS listos a los ${Math.round(st.tParpadeo)} ms (abierto y cerrado vistos)`);
