@@ -614,7 +614,9 @@ export default function KioskMode() {
   // Veredicto DENTRO del cuadro de la cámara: velo translúcido del color
   // semántico + icono en círculo. El borde del cuadro toma el mismo color.
   const VEREDICTOS = {
-    saving:  { emoji: '⏳', anim: 'ac-float', velo: 'rgba(35,50,64,0.28)',  circulo: 'var(--accent-2)', borde: null },
+    // 'saving' NO pinta nada dentro del cuadro: el velo gris con ⏳ se veía
+    // como un "cargando" feo. Mientras responde el servidor, el cuadro queda
+    // limpio y solo el texto de arriba dice "Registrando…".
     in:      { emoji: '👍', anim: 'ac-pop',   velo: 'rgba(21,128,61,0.55)',  circulo: 'var(--k-in)',     borde: 'var(--k-in)' },
     out:     { emoji: '👋', anim: 'ac-wave',  velo: 'rgba(180,83,9,0.55)',   circulo: 'var(--k-out)',    borde: 'var(--k-out)' },
     dup:     { emoji: 'ℹ',  anim: '',         velo: 'rgba(85,125,158,0.55)', circulo: 'var(--accent-2)', borde: 'var(--accent)' },
