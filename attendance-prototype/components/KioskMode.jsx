@@ -370,7 +370,12 @@ export default function KioskMode() {
               .catch(() => {}).finally(() => { faBusy = false; });
           }
 
-          if (st.sawClosed && bothOpen < 0.20 && st.descs.length > 0) {
+          // Concluye APENAS se detecta el cierre de ojos: exigir además que
+          // volvieran a abrirse (bothOpen < 0.20) solo agregaba espera — la
+          // prueba de vida ya está demostrada con abierto → cerrado. La única
+          // condición extra es tener al menos una captura de identidad, que
+          // se toma en los cuadros previos con los ojos abiertos.
+          if (st.sawClosed && st.descs.length > 0) {
             const live = averageDescriptors(st.descs);
             let best = { distance: Infinity, person: null };
             for (const p of peopleRef.current) {
