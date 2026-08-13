@@ -505,18 +505,20 @@ export default function KioskMode() {
   return (
     <div className="kiosk-card" style={s.kiosk}>
       <EmojiKeyframes />
-      {/* Modo HUD de escaneo (láser): el video vive SIEMPRE montado dentro de
-          la ventana; el HUD solo se muestra durante el reto. El resto de los
-          estados (reposo y resultados) usan sus pantallas completas. */}
+      {/* Modo HUD de escaneo (láser): mientras el kiosco CORRE, esta pantalla
+          es la base permanente — se entra al dar "Iniciar kiosco" y solo se
+          sale con "Detener" (que vive aquí mismo). Los resultados se muestran
+          encima y al cerrarse vuelve a verse la cámara, nunca el reloj. */}
       <div style={{
         ...s.camWrap,
-        opacity: running && ui === 'challenge' ? 1 : 0,
+        opacity: running ? 1 : 0,
         // Invisible NO basta: un overlay con opacity 0 sigue capturando los
         // toques y bloqueaba el botón "Iniciar kiosco" debajo.
-        pointerEvents: running && ui === 'challenge' ? 'auto' : 'none',
+        pointerEvents: running ? 'auto' : 'none',
       }}>
         <div style={s.hudRejilla} />
         <span style={s.hudMarca}>ARRIVE<span style={{ color: '#35E0FF' }}>CONTROL</span></span>
+        <button style={s.hudDetener} onClick={stopAll}>⏹ Detener</button>
         <div style={s.hudVentana}>
           <video ref={videoRef} playsInline muted autoPlay style={s.video} />
           {ui === 'challenge' && (
@@ -534,13 +536,19 @@ export default function KioskMode() {
             </>
           )}
         </div>
-        {ui === 'challenge' && (
+        {ui === 'challenge' ? (
           <>
             <div style={s.hudBarra}><div style={{ ...s.hudBarraRelleno, width: `${scanProg}%` }} /></div>
             <div style={s.hudInstruccion}>Parpadea <span className="ac-ojo">👁</span></div>
             <div style={s.hudEstado}>
               {scanProg >= 75 ? 'Verificando…' : scanProg >= 50 ? 'Parpadea' : 'Mira de frente'}
             </div>
+          </>
+        ) : (
+          <>
+            {/* En espera (sin rostro al frente): misma pantalla, otra guía. */}
+            <div style={s.hudInstruccion}>Acércate para marcar</div>
+            <div style={s.hudEstado}>Esperando rostro…</div>
           </>
         )}
       </div>
@@ -604,8 +612,9 @@ export default function KioskMode() {
         </div>
       )}
 
-      {/* Estado 1 · Reposo */}
-      {(ui === 'idle') && (
+      {/* Estado 1 · Reposo (solo con el kiosco DETENIDO: corriendo, la base
+          es la pantalla de cámara de arriba) */}
+      {(ui === 'idle' && !running) && (
         <div className="kiosk-idle" style={s.idle}>
           <div style={s.brand}>ARRIVE<span style={{ color: 'var(--accent)' }}>CONTROL</span></div>
           <div style={s.clock}>{clock.time}</div>
@@ -658,7 +667,6 @@ export default function KioskMode() {
               {ready ? '▶️ Iniciar kiosco' : 'Cargando…'}
             </button>
           )}
-          {running && <button style={s.stopBtn} onClick={stopAll}>⏹ Detener</button>}
           {pendientes > 0 && (
             <div style={s.pendNote}>
               📶 {pendientes === 1 ? '1 marcación guardada' : `${pendientes} marcaciones guardadas`} por enviar; se envían solas al volver el internet.
@@ -785,6 +793,13 @@ const s = {
     background: 'transparent', border: '1px solid #1e3a5c', color: '#4d6a94',
     borderRadius: 8, fontSize: 13, padding: '4px 10px', cursor: 'pointer',
   },
+  // Detener vive DENTRO de la pantalla de cámara: es la única salida del modo
+  // kiosco. Anclado arriba a la derecha, espejo de la marca.
+  hudDetener: {
+    position: 'absolute', top: 'calc(12px + env(safe-area-inset-top, 0px))', right: 16,
+    background: 'transparent', border: '1px solid #1e3a5c', color: '#4d6a94',
+    borderRadius: 8, fontSize: 13, padding: '6px 12px', cursor: 'pointer', fontFamily: 'inherit',
+  },
   hudReloj: {
     position: 'relative', fontSize: 'clamp(28px, 9vw, 40px)', fontWeight: 800,
     letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums',
@@ -880,6 +895,7 @@ const s = {
     position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
     alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 8,
     padding: 'calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px))',
+    zIndex: 3, // encima del HUD de cámara (zIndex 2), que ahora vive siempre visible mientras corre
   },
   okBg: { background: 'var(--k-in-soft)' },
   outBg: { background: 'var(--k-out-soft)' },
