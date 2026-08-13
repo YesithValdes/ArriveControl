@@ -222,6 +222,21 @@ export default function KioskMode() {
         })();
         const [landmarker, faceapi] = await Promise.all([loadMp, loadFa]);
         if (cancelled) return;
+        // CALENTAMIENTO: la primera inferencia real compila los kernels del
+        // backend (~2-3 s en teléfono) y la pagaba el PRIMER empleado — por
+        // eso el cronómetro daba ROSTRO ~2950 ms la primera vez y ~600 ms
+        // después. Se paga aquí, contra lienzos vacíos, mientras la pantalla
+        // todavía dice "Cargando…". Mejor esfuerzo: si falla, no bloquea.
+        try {
+          const c = document.createElement('canvas');
+          c.width = 224; c.height = 224;
+          await faceapi.detectSingleFace(c, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }));
+          const c2 = document.createElement('canvas');
+          c2.width = 150; c2.height = 150;
+          await faceapi.nets.faceLandmark68Net.detectLandmarks(c2);
+          await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(c2);
+        } catch { /* sin calentamiento se paga en la primera marcación, como antes */ }
+        if (cancelled) return;
         landmarkerRef.current = landmarker;
         faceapiRef.current = faceapi;
         setReady(true);
