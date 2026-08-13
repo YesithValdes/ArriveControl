@@ -419,20 +419,22 @@ export default function KioskMode() {
             if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
             if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
           }
+          // Solo los EXTREMOS de distancia frenan (muy lejos no hay píxeles
+          // para reconocer; muy cerca la cara se sale del cuadro). Nada de
+          // exigir centrado: con que MediaPipe vea la cara, alcanza — el
+          // requisito de acomodarse en el óvalo hacía lento el flujo.
           const caraAlto = maxY - minY;
-          const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-          const encuadre =
-            caraAlto < 0.32 ? 'lejos'
-            : caraAlto > 0.75 ? 'cerca'
-            : (Math.abs(cx - 0.5) > 0.18 || Math.abs(cy - 0.5) > 0.20) ? 'centro'
-            : 'ok';
+          const encuadre = caraAlto < 0.22 ? 'lejos' : caraAlto > 0.85 ? 'cerca' : 'ok';
           ponerEncuadre(encuadre);
           if (encuadre !== 'ok') { ponerProgreso(25); break; }
 
+          // Prueba de vida SIN orden: ver ojos abiertos en algún momento y
+          // cerrados en algún otro, en cualquier secuencia. El movimiento de
+          // párpados es lo que demuestra vida; una foto no lo tiene.
           if (bothOpen < 0.15) st.sawOpen = true;
-          if (st.sawOpen && bothClosed > 0.55) st.sawClosed = true;
+          if (bothClosed > 0.55) st.sawClosed = true;
           // Barra HUD atada a las fases reales del reto.
-          ponerProgreso(st.sawClosed ? 75 : st.sawOpen ? 50 : 25);
+          ponerProgreso(st.sawOpen && st.sawClosed ? 75 : (st.sawOpen || st.sawClosed) ? 50 : 25);
 
           const frontal = Math.abs(yaw) < 12;
           if (frontal && !faBusy && st.captures < FACE_CAPTURES && now - st.lastCapture >= CAPTURE_GAP_MS) {
@@ -448,7 +450,7 @@ export default function KioskMode() {
           // prueba de vida ya está demostrada con abierto → cerrado. La única
           // condición extra es tener al menos una captura de identidad, que
           // se toma en los cuadros previos con los ojos abiertos.
-          if (st.sawClosed && st.descs.length > 0) {
+          if (st.sawOpen && st.sawClosed && st.descs.length > 0) {
             const live = averageDescriptors(st.descs);
             let best = { distance: Infinity, person: null };
             for (const p of peopleRef.current) {
@@ -650,7 +652,6 @@ export default function KioskMode() {
               <div style={s.hudDetalle}>
                 {encuadre === 'lejos' ? 'Acércate un poco'
                   : encuadre === 'cerca' ? 'Aléjate un poco'
-                  : encuadre === 'centro' ? 'Centra tu cara en el óvalo'
                   : scanProg >= 50 ? 'Parpadea' : 'Mira de frente'}
               </div>
             </>
