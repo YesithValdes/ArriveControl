@@ -76,6 +76,14 @@ export default function KioskMode() {
     scanProgRef.current = p;
     setScanProg(p);
   };
+  // Guía de encuadre en vivo: 'ok' | 'lejos' | 'cerca' | 'centro'.
+  const [encuadre, setEncuadre] = useState('ok');
+  const encuadreRef = useRef('ok');
+  const ponerEncuadre = (e) => {
+    if (encuadreRef.current === e) return; // evita re-render por cuadro
+    encuadreRef.current = e;
+    setEncuadre(e);
+  };
   const [result, setResult] = useState(null); // { ok, name, time, distance, reason }
   const [peopleCount, setPeopleCount] = useState(0);
   const [pendientes, setPendientes] = useState(0); // cola offline sin sincronizar
@@ -351,11 +359,34 @@ export default function KioskMode() {
           break;
         }
         case 'challenge': {
-          if (!lm) { st.phase = 'idle'; setUi('idle'); break; }
+          if (!lm) { st.phase = 'idle'; setUi('idle'); ponerEncuadre('ok'); break; }
           if (now > st.deadline) {
             concludeResult(false, null, null, 'No se detectó el parpadeo.');
             break;
           }
+
+          // ── Encuadre automático ─────────────────────────────────────────
+          // Con los mismos landmarks se mide la cara: qué tan grande se ve
+          // (cerca/lejos) y si está centrada. Mientras el encuadre no sirva,
+          // el reto NO avanza y la pantalla guía a la persona; así las
+          // capturas de identidad salen siempre a una distancia comparable a
+          // la del registro. El deadline sigue corriendo: el kiosco no se
+          // queda pegado con alguien que nunca se acomoda.
+          let minX = 1, maxX = 0, minY = 1, maxY = 0;
+          for (const p of lm) {
+            if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+          }
+          const caraAlto = maxY - minY;
+          const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+          const encuadre =
+            caraAlto < 0.32 ? 'lejos'
+            : caraAlto > 0.75 ? 'cerca'
+            : (Math.abs(cx - 0.5) > 0.18 || Math.abs(cy - 0.5) > 0.20) ? 'centro'
+            : 'ok';
+          ponerEncuadre(encuadre);
+          if (encuadre !== 'ok') { ponerProgreso(25); break; }
+
           if (bothOpen < 0.15) st.sawOpen = true;
           if (st.sawOpen && bothClosed > 0.55) st.sawClosed = true;
           // Barra HUD atada a las fases reales del reto.
@@ -430,6 +461,7 @@ export default function KioskMode() {
   };
 
   function concludeResult(ok, person, distance, failReason) {
+    ponerEncuadre('ok'); // que la guía no se quede pegada en el resultado
     ponerProgreso(100); // fase final: coincidencia resuelta
     const st = stateRef.current;
     st.lastOk = ok; // el cooldown decide con esto si exige que la cara se retire
@@ -565,12 +597,19 @@ export default function KioskMode() {
             </>
           ) : ui === 'challenge' ? (
             <>
-              <div style={s.hudTitulo}>Parpadea <span className="ac-ojo">👁</span></div>
+              {/* Con mal encuadre, la instrucción es acomodarse; solo con la
+                  cara bien puesta se pide el parpadeo. */}
+              <div style={s.hudTitulo}>
+                {encuadre === 'ok' ? <>Parpadea <span className="ac-ojo">👁</span></> : 'Acomoda tu cara'}
+              </div>
               {/* Sin estado "Verificando…": el avance ya lo cuenta la barra
                   de progreso, y con el cierre instantáneo solo alcanzaba a
                   parpadear en pantalla. */}
               <div style={s.hudDetalle}>
-                {scanProg >= 50 ? 'Parpadea' : 'Mira de frente'}
+                {encuadre === 'lejos' ? 'Acércate un poco'
+                  : encuadre === 'cerca' ? 'Aléjate un poco'
+                  : encuadre === 'centro' ? 'Centra tu cara en el óvalo'
+                  : scanProg >= 50 ? 'Parpadea' : 'Mira de frente'}
               </div>
             </>
           ) : (
@@ -586,8 +625,15 @@ export default function KioskMode() {
           <video ref={videoRef} playsInline muted autoPlay style={s.video} />
           {ui === 'challenge' && (
             <>
-              {/* Óvalo guía: dónde cuadrar la cara dentro de la ventana */}
-              <div className="ac-guia" style={s.guiaOval} />
+              {/* Óvalo guía: dónde cuadrar la cara. Se pone VERDE y sólido
+                  cuando el encuadre es correcto — confirmación sin leer. */}
+              <div
+                className="ac-guia"
+                style={{
+                  ...s.guiaOval,
+                  ...(encuadre === 'ok' ? { border: '2.5px solid var(--k-in)' } : {}),
+                }}
+              />
               <div className="ac-laser" style={s.laserGrupo}>
                 <div style={s.laserEstela} />
                 <div style={s.laserHaz} />
