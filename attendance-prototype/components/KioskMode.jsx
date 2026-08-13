@@ -502,13 +502,26 @@ export default function KioskMode() {
     });
   }
 
+  // Veredicto DENTRO del cuadro de la cámara: velo translúcido del color
+  // semántico + icono en círculo. El borde del cuadro toma el mismo color.
+  const VEREDICTOS = {
+    saving:  { emoji: '⏳', anim: 'ac-float', velo: 'rgba(35,50,64,0.28)',  circulo: 'var(--accent-2)', borde: null },
+    in:      { emoji: '👍', anim: 'ac-pop',   velo: 'rgba(21,128,61,0.55)',  circulo: 'var(--k-in)',     borde: 'var(--k-in)' },
+    out:     { emoji: '👋', anim: 'ac-wave',  velo: 'rgba(180,83,9,0.55)',   circulo: 'var(--k-out)',    borde: 'var(--k-out)' },
+    dup:     { emoji: 'ℹ',  anim: '',         velo: 'rgba(85,125,158,0.55)', circulo: 'var(--accent-2)', borde: 'var(--accent)' },
+    pending: { emoji: '📶', anim: 'ac-float', velo: 'rgba(85,125,158,0.55)', circulo: 'var(--accent-2)', borde: 'var(--accent)' },
+    no:      { emoji: '✕',  anim: 'ac-shake', velo: 'rgba(179,64,58,0.55)',  circulo: 'var(--k-no)',     borde: 'var(--k-no)' },
+  };
+  const conResultado = (ui === 'ok' || ui === 'no') && result;
+  const ver = conResultado ? VEREDICTOS[result.kind] : null;
+
   return (
     <div className="kiosk-card" style={s.kiosk}>
       <EmojiKeyframes />
-      {/* Modo HUD de escaneo (láser): mientras el kiosco CORRE, esta pantalla
-          es la base permanente — se entra al dar "Iniciar kiosco" y solo se
-          sale con "Detener" (que vive aquí mismo). Los resultados se muestran
-          encima y al cerrarse vuelve a verse la cámara, nunca el reloj. */}
+      {/* Pantalla de DETECCIÓN (blanca, permanente mientras corre): se entra
+          con "Iniciar kiosco" y solo se sale con "Detener". Todo mensaje va
+          ARRIBA del cuadro (zona de altura fija: el cuadro nunca salta) y el
+          veredicto va DENTRO del cuadro (velo de color + icono). */}
       <div style={{
         ...s.camWrap,
         opacity: running ? 1 : 0,
@@ -516,10 +529,52 @@ export default function KioskMode() {
         // toques y bloqueaba el botón "Iniciar kiosco" debajo.
         pointerEvents: running ? 'auto' : 'none',
       }}>
-        <div style={s.hudRejilla} />
-        <span style={s.hudMarca}>ARRIVE<span style={{ color: 'var(--accent)' }}>CONTROL</span></span>
+        <span style={s.hudMarca}>CONTROL <span style={{ color: 'var(--accent)' }}>REGISTRO</span></span>
         <button style={s.hudDetener} onClick={stopAll}>⏹ Detener</button>
-        <div style={s.hudVentana}>
+
+        {/* Zona de mensaje, SIEMPRE arriba del cuadro */}
+        <div style={s.hudMensaje}>
+          {conResultado ? (
+            <>
+              {result.kind === 'in' && <div style={{ ...s.hudTag, color: 'var(--k-in)' }}>🟢 ENTRADA</div>}
+              {result.kind === 'out' && <div style={{ ...s.hudTag, color: 'var(--k-out)' }}>🟠 SALIDA</div>}
+              {result.kind === 'dup' && <div style={{ ...s.hudTag, color: 'var(--accent-2)' }}>ℹ YA REGISTRADA</div>}
+              {result.kind === 'pending' && <div style={{ ...s.hudTag, color: 'var(--accent-2)' }}>📶 SIN CONEXIÓN</div>}
+              {result.kind === 'no' && <div style={{ ...s.hudTag, color: 'var(--k-no)' }}>✕ NO RECONOCIDO</div>}
+
+              <div style={s.hudTitulo}>
+                {result.kind === 'in' && <>¡Bienvenido/a, {result.name}!</>}
+                {result.kind === 'out' && <>¡Hasta pronto, {result.name}!</>}
+                {result.kind === 'dup' && result.name}
+                {result.kind === 'pending' && result.name}
+                {result.kind === 'saving' && 'Registrando…'}
+                {result.kind === 'no' && 'Intenta de nuevo'}
+              </div>
+
+              {result.kind === 'in' && <div style={{ ...s.hudHora, color: 'var(--k-in)' }}>{result.time}</div>}
+              {result.kind === 'out' && <div style={{ ...s.hudHora, color: 'var(--k-out)' }}>{result.time}</div>}
+              {result.kind === 'dup' && <div style={s.hudDetalle}>{result.lastLabel} registrada: {result.lastTime}</div>}
+              {result.kind === 'pending' && <div style={s.hudDetalle}>Guardada; se enviará sola</div>}
+              {result.kind === 'saving' && <div style={s.hudDetalle}>{result.name}</div>}
+              {result.kind === 'no' && <div style={s.hudDetalle}>{result.reason}</div>}
+            </>
+          ) : ui === 'challenge' ? (
+            <>
+              <div style={s.hudTitulo}>Parpadea <span className="ac-ojo">👁</span></div>
+              <div style={s.hudDetalle}>
+                {scanProg >= 75 ? 'Verificando…' : scanProg >= 50 ? 'Parpadea' : 'Mira de frente'}
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={s.hudTitulo}>Acércate para marcar</div>
+              <div style={s.hudDetalle}>Esperando rostro…</div>
+            </>
+          )}
+        </div>
+
+        {/* Cuadro de la cámara: con veredicto, su borde toma el color */}
+        <div style={{ ...s.hudVentana, ...(ver?.borde ? { boxShadow: `0 0 0 3px ${ver.borde}` } : {}) }}>
           <video ref={videoRef} playsInline muted autoPlay style={s.video} />
           {ui === 'challenge' && (
             <>
@@ -535,88 +590,24 @@ export default function KioskMode() {
               <div className="ac-esq" style={{ ...s.esquina, right: 8, bottom: 8, borderLeft: 'none', borderTop: 'none', borderRadius: '0 0 6px 0' }} />
             </>
           )}
-        </div>
-        {ui === 'challenge' ? (
-          <>
-            <div style={s.hudBarra}><div style={{ ...s.hudBarraRelleno, width: `${scanProg}%` }} /></div>
-            <div style={s.hudInstruccion}>Parpadea <span className="ac-ojo">👁</span></div>
-            <div style={s.hudEstado}>
-              {scanProg >= 75 ? 'Verificando…' : scanProg >= 50 ? 'Parpadea' : 'Mira de frente'}
+          {ver && (
+            <div style={{ ...s.velo, background: ver.velo }}>
+              <div style={{ ...s.veloIcono, background: ver.circulo }}>
+                <span className={`ac-emoji ${ver.anim}`} role="img">{ver.emoji}</span>
+              </div>
             </div>
-          </>
-        ) : (
-          <>
-            {/* En espera (sin rostro al frente): misma pantalla, otra guía. */}
-            <div style={s.hudInstruccion}>Acércate para marcar</div>
-            <div style={s.hudEstado}>Esperando rostro…</div>
-          </>
-        )}
-      </div>
-
-      {/* Resultados a pantalla completa (sin datos técnicos) */}
-      {ui === 'ok' && result && result.kind === 'in' && (
-        <div style={{ ...s.resultScreen, ...s.okBg }}>
-          <div style={{ ...s.badge, ...s.badgeOk }}>
-            <span className="ac-emoji ac-pop" role="img" aria-label="registrado">👍</span>
-          </div>
-          <div style={s.typeTag}>🟢 ENTRADA</div>
-          <div style={s.rName}>¡Bienvenido/a,<br />{result.name}!</div>
-          <div style={{ ...s.rTime, color: 'var(--k-in)' }}>{result.time}</div>
-          {result.flag === 'late-entry' && (
-            <div style={s.warnNote}>⚠️ Entrada en la tarde. Avisa a RRHH si olvidaste marcar.</div>
           )}
         </div>
-      )}
-      {ui === 'ok' && result && result.kind === 'out' && (
-        <div style={{ ...s.resultScreen, ...s.outBg }}>
-          <div style={{ ...s.badge, ...s.badgeOut }}>
-            <span className="ac-emoji ac-wave" role="img" aria-label="hasta pronto">👋</span>
-          </div>
-          <div style={{ ...s.typeTag, color: 'var(--k-out)' }}>🟠 SALIDA</div>
-          <div style={s.rName}>¡Hasta pronto,<br />{result.name}!</div>
-          <div style={{ ...s.rTime, color: 'var(--k-out)' }}>{result.time}</div>
-        </div>
-      )}
-      {ui === 'ok' && result && result.kind === 'dup' && (
-        <div style={{ ...s.resultScreen, ...s.dupBg }}>
-          <div style={{ ...s.badge, ...s.badgeDup }}>ℹ</div>
-          <div style={s.rName}>{result.name}</div>
-          <div style={s.rSub}>{result.lastLabel} ya registrada: {result.lastTime}</div>
-        </div>
-      )}
-      {ui === 'ok' && result && result.kind === 'saving' && (
-        <div style={{ ...s.resultScreen, ...s.dupBg }}>
-          <div style={{ ...s.badge, ...s.badgeDup }}>
-            <span className="ac-emoji ac-float" role="img" aria-label="registrando">⏳</span>
-          </div>
-          <div style={s.rName}>{result.name}</div>
-          <div style={s.rSub}>Registrando…</div>
-        </div>
-      )}
-      {ui === 'ok' && result && result.kind === 'pending' && (
-        <div style={{ ...s.resultScreen, ...s.dupBg }}>
-          <div style={{ ...s.badge, ...s.badgeDup }}>
-            <span className="ac-emoji ac-float" role="img" aria-label="pendiente">📶</span>
-          </div>
-          <div style={s.rName}>{result.name}</div>
-          <div style={s.rSub}>Sin conexión. Guardada; se enviará sola.</div>
-        </div>
-      )}
-      {ui === 'no' && result && (
-        <div style={{ ...s.resultScreen, ...s.noBg }}>
-          <div style={{ ...s.badge, ...s.badgeNo }}>
-            <span className="ac-emoji ac-shake" role="img" aria-label="no reconocido">🤔</span>
-          </div>
-          <div style={s.rName}>No reconocido</div>
-          <div style={s.rSub}>{result.reason}</div>
-        </div>
-      )}
+
+        <div style={s.hudBarra}><div style={{ ...s.hudBarraRelleno, width: `${scanProg}%` }} /></div>
+        <div style={s.hudPrivacidad}>🔐 No se guardan fotos</div>
+      </div>
 
       {/* Estado 1 · Reposo (solo con el kiosco DETENIDO: corriendo, la base
           es la pantalla de cámara de arriba) */}
       {(ui === 'idle' && !running) && (
         <div className="kiosk-idle" style={s.idle}>
-          <div style={s.brand}>ARRIVE<span style={{ color: 'var(--accent)' }}>CONTROL</span></div>
+          <div style={s.brand}>CONTROL <span style={{ color: 'var(--accent)' }}>REGISTRO</span></div>
           <div style={s.clock}>{clock.time}</div>
           <div style={s.date}>{clock.date}</div>
           <div style={s.idleOval}>
@@ -771,18 +762,37 @@ const s = {
   // ── Modo HUD de escaneo (láser, F3) ─────────────────────────────────
   camWrap: {
     position: 'absolute', inset: 0, transition: 'opacity .3s',
-    // Tema CLARO, el mismo de la pantalla de inicio: nada de HUD oscuro.
-    background: 'var(--surface)', color: 'var(--ink)',
+    // BLANCO puro y sin rejilla: decisión de diseño del cliente.
+    background: 'var(--surface-blanca)', color: 'var(--ink)',
     // justifyContent center: el bloque (ventana + barra + textos) queda
     // centrado verticalmente en vez de pegado arriba.
     display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
     padding: 'calc(clamp(24px, 5dvh, 48px) + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px))',
     zIndex: 2,
   },
-  hudRejilla: {
-    position: 'absolute', inset: 0, opacity: 0.45, pointerEvents: 'none',
-    background: 'linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px)',
-    backgroundSize: '26px 26px',
+  // Zona de mensaje sobre el cuadro: altura mínima FIJA para que el cuadro de
+  // la cámara no salte de posición cuando cambia el estado.
+  hudMensaje: {
+    minHeight: 96, width: '100%', display: 'flex', flexDirection: 'column',
+    alignItems: 'center', justifyContent: 'flex-end', gap: 3,
+    textAlign: 'center', padding: '6px 8px 14px', position: 'relative',
+  },
+  hudTag: { fontSize: 12, fontWeight: 800, letterSpacing: '0.14em' },
+  hudTitulo: { fontSize: 24, fontWeight: 800, letterSpacing: '-0.01em', lineHeight: 1.15, color: 'var(--ink)', textWrap: 'balance' },
+  hudDetalle: {
+    fontSize: 12, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
+    color: 'var(--muted)', maxWidth: 300, lineHeight: 1.4,
+  },
+  hudHora: { fontSize: 19, fontWeight: 700, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--f-data)' },
+  // Veredicto dentro del cuadro: velo de color sobre el video + icono en círculo.
+  velo: {
+    position: 'absolute', inset: 0, display: 'flex',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  veloIcono: {
+    width: 84, height: 84, borderRadius: '50%', display: 'flex',
+    alignItems: 'center', justifyContent: 'center', fontSize: 42,
+    color: '#ffffff', fontWeight: 800,
   },
   // Marca anclada arriba: fuera del flujo, para no descentrar la ventana.
   hudMarca: {
@@ -858,11 +868,6 @@ const s = {
     position: 'absolute', top: 0, bottom: 0, left: 0, borderRadius: 3,
     background: 'linear-gradient(90deg, #6e96b8, #59c2ad)', transition: 'width .45s ease',
   },
-  hudInstruccion: { marginTop: 18, fontSize: 26, fontWeight: 800, letterSpacing: '-0.01em', color: 'var(--ink)', position: 'relative' },
-  hudEstado: {
-    marginTop: 6, fontSize: 11, fontWeight: 700, letterSpacing: '0.13em', textTransform: 'uppercase',
-    color: 'var(--accent-2)', fontFamily: 'var(--f-data)', position: 'relative', textAlign: 'center',
-  },
   // Padding con safe-area y alto flexible: clase .kiosk-idle (globals.css).
   idle: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' },
   brand: { position: 'absolute', top: 'calc(18px + env(safe-area-inset-top, 0px))', left: 20, fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--muted)' },
@@ -892,26 +897,4 @@ const s = {
   cfgResumen: { fontSize: 12, opacity: 0.6, cursor: 'pointer', textAlign: 'center', marginBottom: 6 },
   pendNote: { marginTop: 10, fontSize: 12, opacity: 0.8, textAlign: 'center' },
   count: { marginTop: 6, fontSize: 11, color: 'var(--muted)' },
-  resultScreen: {
-    position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-    alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 8,
-    padding: 'calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px))',
-    zIndex: 3, // encima del HUD de cámara (zIndex 2), que ahora vive siempre visible mientras corre
-  },
-  okBg: { background: 'var(--k-in-soft)' },
-  outBg: { background: 'var(--k-out-soft)' },
-  dupBg: { background: 'var(--accent-soft)' },
-  noBg: { background: 'var(--k-no-soft)' },
-  badge: { width: 92, height: 92, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 46, fontWeight: 800, marginBottom: 10, color: '#ffffff' },
-  badgeOk: { background: 'var(--k-in)' },
-  badgeOut: { background: 'var(--k-out)' },
-  badgeDup: { background: 'var(--accent)' },
-  badgeNo: { background: 'var(--k-no)' },
-  typeTag: { fontSize: 15, fontWeight: 800, letterSpacing: '0.14em', color: 'var(--k-in)' },
-  warnNote: { marginTop: 10, fontSize: 13, color: 'var(--k-out)', background: 'var(--k-out-soft)', border: '1px solid var(--k-out)', borderRadius: 'var(--r-md)', padding: '8px 12px', maxWidth: 300, lineHeight: 1.4 },
-  rName: { fontSize: 30, fontWeight: 800, letterSpacing: '-0.02em', textWrap: 'balance', lineHeight: 1.2 },
-  rSub: { color: 'var(--ink-2)', fontSize: 15, maxWidth: 300, lineHeight: 1.5 },
-  rTime: { fontSize: 22, fontWeight: 700, fontVariantNumeric: 'tabular-nums', marginTop: 2, fontFamily: 'var(--f-data)' },
-  countdown: { marginTop: 22, fontSize: 11, color: 'var(--muted)', letterSpacing: '0.1em', textTransform: 'uppercase', fontFamily: 'var(--f-data)' },
-  retryBtn: { marginTop: 22, background: 'var(--k-no)', color: '#ffffff', border: 'none', fontSize: 16, fontFamily: 'inherit', fontWeight: 700, padding: '14px 44px', borderRadius: 'var(--r-md)', cursor: 'pointer' },
 };

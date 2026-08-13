@@ -1,6 +1,6 @@
 {
   "appId": "com.kupocell.arrivecontrol",
-  "appName": "ArriveControl",
+  "appName": "Control Registro",
   "webDir": "cascaron-webview",
   "server": {
     "url": "https://arrivecontrol.vercel.app",

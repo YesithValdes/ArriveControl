@@ -137,7 +137,7 @@ export default function PlataformaPanel({ sesion }) {
 
       <header className="plat-head">
         <div className="plat-id">
-          <span className="brand">ARRIVE<span>CONTROL</span></span>
+          <span className="brand">CONTROL <span>REGISTRO</span></span>
           <h1>Consola de plataforma</h1>
         </div>
         <div className="quien">
