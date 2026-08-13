@@ -517,7 +517,7 @@ export default function KioskMode() {
         pointerEvents: running ? 'auto' : 'none',
       }}>
         <div style={s.hudRejilla} />
-        <span style={s.hudMarca}>ARRIVE<span style={{ color: '#35E0FF' }}>CONTROL</span></span>
+        <span style={s.hudMarca}>ARRIVE<span style={{ color: 'var(--accent)' }}>CONTROL</span></span>
         <button style={s.hudDetener} onClick={stopAll}>⏹ Detener</button>
         <div style={s.hudVentana}>
           <video ref={videoRef} playsInline muted autoPlay style={s.video} />
@@ -771,7 +771,8 @@ const s = {
   // ── Modo HUD de escaneo (láser, F3) ─────────────────────────────────
   camWrap: {
     position: 'absolute', inset: 0, transition: 'opacity .3s',
-    background: '#061024', color: '#D7EDFF',
+    // Tema CLARO, el mismo de la pantalla de inicio: nada de HUD oscuro.
+    background: 'var(--surface)', color: 'var(--ink)',
     // justifyContent center: el bloque (ventana + barra + textos) queda
     // centrado verticalmente en vez de pegado arriba.
     display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -779,14 +780,14 @@ const s = {
     zIndex: 2,
   },
   hudRejilla: {
-    position: 'absolute', inset: 0, opacity: 0.1, pointerEvents: 'none',
-    background: 'linear-gradient(rgba(53,224,255,0.13) 1px, transparent 1px), linear-gradient(90deg, rgba(53,224,255,0.13) 1px, transparent 1px)',
+    position: 'absolute', inset: 0, opacity: 0.45, pointerEvents: 'none',
+    background: 'linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px)',
     backgroundSize: '26px 26px',
   },
   // Marca anclada arriba: fuera del flujo, para no descentrar la ventana.
   hudMarca: {
     position: 'absolute', top: 'calc(18px + env(safe-area-inset-top, 0px))', left: 20,
-    fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', color: '#4d6a94',
+    fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', color: 'var(--muted)',
   },
   hudTop: { position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   hudStop: {
@@ -797,7 +798,7 @@ const s = {
   // kiosco. Anclado arriba a la derecha, espejo de la marca.
   hudDetener: {
     position: 'absolute', top: 'calc(12px + env(safe-area-inset-top, 0px))', right: 16,
-    background: 'transparent', border: '1px solid #1e3a5c', color: '#4d6a94',
+    background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)',
     borderRadius: 8, fontSize: 13, padding: '6px 12px', cursor: 'pointer', fontFamily: 'inherit',
   },
   hudReloj: {
@@ -830,37 +831,37 @@ const s = {
     // romper la proporción: en pantallas cortas encoge entera, no se deforma.
     position: 'relative', width: 'min(80vw, 310px, 43dvh)', aspectRatio: '5 / 6',
     borderRadius: 16, overflow: 'hidden',
-    boxShadow: '0 0 0 1.5px #1e3a5c, 0 0 34px rgba(53,224,255,0.16)',
+    boxShadow: '0 0 0 1.5px var(--border), 0 0 34px rgba(110,150,184,0.25)',
   },
   video: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' },
   // El "carro" del láser ocupa TODA la ventana y se mueve con transform
   // (composición en GPU): animar top/bottom producía lag en el celular
   // porque compite por CPU con MediaPipe.
   laserGrupo: { position: 'absolute', inset: 0, pointerEvents: 'none', willChange: 'transform' },
-  laserEstela: { position: 'absolute', left: 0, right: 0, bottom: 3, height: 90, background: 'linear-gradient(180deg, transparent, rgba(53,224,255,0.19))' },
+  laserEstela: { position: 'absolute', left: 0, right: 0, bottom: 3, height: 90, background: 'linear-gradient(180deg, transparent, rgba(110,150,184,0.28))' },
   laserHaz: {
     position: 'absolute', left: '-4%', right: '-4%', bottom: 0, height: 3,
-    background: 'linear-gradient(90deg, transparent, #67E8FF, #FFFFFF, #67E8FF, transparent)',
-    boxShadow: '0 0 18px 4px rgba(53,224,255,0.55)',
+    background: 'linear-gradient(90deg, transparent, #6e96b8, #FFFFFF, #6e96b8, transparent)',
+    boxShadow: '0 0 18px 4px rgba(110,150,184,0.55)',
   },
   guiaOval: {
     position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
     width: '64%', aspectRatio: '3 / 4', borderRadius: '50%',
     border: '2px dashed rgba(255,255,255,0.65)', pointerEvents: 'none',
   },
-  esquina: { position: 'absolute', width: 24, height: 24, border: '2.5px solid #35E0FF', pointerEvents: 'none' },
+  esquina: { position: 'absolute', width: 24, height: 24, border: '2.5px solid var(--accent)', pointerEvents: 'none' },
   hudBarra: {
     position: 'relative', width: 'min(64vw, 250px)', height: 5, borderRadius: 3,
-    background: '#14283f', marginTop: 16, overflow: 'hidden',
+    background: 'var(--grid)', marginTop: 16, overflow: 'hidden',
   },
   hudBarraRelleno: {
     position: 'absolute', top: 0, bottom: 0, left: 0, borderRadius: 3,
     background: 'linear-gradient(90deg, #6e96b8, #59c2ad)', transition: 'width .45s ease',
   },
-  hudInstruccion: { marginTop: 18, fontSize: 26, fontWeight: 800, letterSpacing: '-0.01em', color: '#EAF7FF', position: 'relative' },
+  hudInstruccion: { marginTop: 18, fontSize: 26, fontWeight: 800, letterSpacing: '-0.01em', color: 'var(--ink)', position: 'relative' },
   hudEstado: {
     marginTop: 6, fontSize: 11, fontWeight: 700, letterSpacing: '0.13em', textTransform: 'uppercase',
-    color: '#35E0FF', fontFamily: 'var(--f-data)', position: 'relative', textAlign: 'center',
+    color: 'var(--accent-2)', fontFamily: 'var(--f-data)', position: 'relative', textAlign: 'center',
   },
   // Padding con safe-area y alto flexible: clase .kiosk-idle (globals.css).
   idle: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' },
