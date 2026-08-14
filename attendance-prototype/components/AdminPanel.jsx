@@ -2213,7 +2213,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <button className="btn primary" onClick={exportCSV} disabled={report.length === 0}>Exportar CSV</button>
             </div>
             <div className="scrollable">
-              {repDatos.estado === 'cargando' && <p className="empty">Calculando el período…</p>}
+              {/* «Calculando…» solo cuando NO hay nada que mostrar: si ya hay
+                  tabla, se deja quieta (apenas atenuada) mientras se refresca —
+                  el aviso arriba empujaba todo y distorsionaba la pantalla. */}
+              {repDatos.estado === 'cargando' && report.length === 0 && <p className="empty">Calculando el período…</p>}
               {repDatos.estado === 'error' && (
                 <p className="empty">⚠ No se pudo cargar el reporte: {repDatos.error}</p>
               )}
@@ -2222,7 +2225,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               )}
 
               {report.length > 0 && (
-                <>
+                <div style={repDatos.estado === 'cargando' ? { opacity: 0.55, pointerEvents: 'none' } : undefined}>
                   {totalValorizado > 0 && (
                     <div className="val-total">
                       <span className="label">Horas extra del período</span>
@@ -2345,7 +2348,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     }))}
                   />
 
-                </>
+                </div>
               )}
             </div>
           </section>
