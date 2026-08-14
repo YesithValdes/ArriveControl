@@ -1247,8 +1247,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   }, [roster, empSearch, empFiltros]);
 
   // En el dashboard la tarjeta comparte pantalla (5 filas); en la sección
-  // Asistencia va sola y a lo alto, así que caben más (8).
-  const tamPagina = tab === 'asistencia' ? 8 : PAGE_SIZE;
+  // Asistencia va sola y a lo alto, así que caben más (9).
+  const tamPagina = tab === 'asistencia' ? 9 : PAGE_SIZE;
   const pageCount = Math.max(1, Math.ceil(attRows.length / tamPagina));
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = attRows.slice(safePage * tamPagina, (safePage + 1) * tamPagina);
