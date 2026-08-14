@@ -2216,7 +2216,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   >
                     <div className="rep-row head" role="row">
                       <span>Empleado</span>
-                      {TIPOS_HORA.map((t) => <span key={t.codigo} title={t.nombre}>{t.codigo}</span>)}
+                      {/* La explicación de cada sigla vive en su «?», no en un
+                          párrafo kilométrico al pie que nadie leía. */}
+                      {TIPOS_HORA.map((t) => (
+                        <span key={t.codigo}>
+                          {t.codigo} <Q texto={`${t.nombre}. Su porcentaje se ajusta en Ajustes → Valorización de horas extra.`} />
+                        </span>
+                      ))}
                       <span>Total</span>
                       <span className="val-money">Valor</span>
                       {repColsAsistencia && (
@@ -2224,7 +2230,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           <span>Sede</span><span>Días</span><span>Horas</span><span>Tardías</span>
                         </>
                       )}
-                      {permisos.liquidar && <span className="col-pago">Pagado</span>}
+                      {permisos.liquidar && (
+                        <span className="col-pago">
+                          Pagado <Q texto="Anotación de que esas horas ya se liquidaron en nómina — Control Registro no paga. Si después se corrige una marcación ya pagada, ese tramo vuelve a quedar pendiente y la fila se muestra como parcial." />
+                        </span>
+                      )}
                     </div>
                     {report.map((r) => (
                       <div className="rep-row" role="row" key={r.cedula}>
@@ -2315,17 +2325,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     }))}
                   />
 
-                  <p className="cfg-note">
-                    {TIPOS_HORA.map((t) => `${t.codigo} = ${t.nombre.toLowerCase()}`).join(' · ')}.
-                    Los porcentajes se ajustan en <b>Ajustes → Valorización de horas extra</b>.
-                  </p>
-                  {permisos.liquidar && (
-                    <p className="cfg-note">
-                      «Pagado» es una anotación de que esas horas ya se liquidaron en nómina —
-                      Control Registro no paga. Si después se corrige una marcación ya pagada, ese
-                      tramo vuelve a quedar pendiente y la fila se muestra como parcial.
-                    </p>
-                  )}
                 </>
               )}
             </div>
