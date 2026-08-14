@@ -3673,10 +3673,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <input id="e-cedula" className="num" type="text" inputMode="numeric" value={editEmp.cedula}
                       onChange={(e) => setEditEmp({ ...editEmp, cedula: e.target.value.replace(/\D/g, '') })} />
                   </div>
-                  <div className="campo">
-                    <label htmlFor="e-correo">Correo (comprobantes de marcación)</label>
+                </div>
+                {/* Fila propia: el correo es más largo que nombre/cédula y en
+                    media columna se cortaba. */}
+                <div className="ficha-fila">
+                  <div className="field">
+                    <label htmlFor="e-correo">Correo</label>
                     <input id="e-correo" type="email" placeholder="ana@correo.com" value={editEmp.correo}
                       onChange={(e) => setEditEmp({ ...editEmp, correo: e.target.value })} />
+                    <small className="field-hint">Recibirá el comprobante de cada entrada y salida. Vacío = no se envía.</small>
                   </div>
                 </div>
                 {/* El rostro es un ESTADO, no una instrucción suelta: lo primero
@@ -4217,6 +4222,7 @@ const CSS = `
   color: var(--muted); font-weight: 650; margin-bottom: 11px;
 }
 .ficha-fila { display: grid; gap: 10px; margin-bottom: 10px; }
+.field-hint { display: block; font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
 .ficha-fila:last-child { margin-bottom: 0; }
 /* minmax(0): sin él, el ancho mínimo intrínseco de los inputs desborda la
    columna y el cajón los recorta por la derecha. */
