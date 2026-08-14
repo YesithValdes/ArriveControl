@@ -1230,8 +1230,22 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = attRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
+  // Día anterior/siguiente con flechas: moverse entre días cercanos sin
+  // abrir el calendario. El «siguiente» nunca pasa de hoy.
+  const cambiarDia = (delta) => {
+    const d = new Date(`${diaAsistencia}T12:00:00-05:00`);
+    d.setDate(d.getDate() + delta);
+    const nueva = d.toISOString().slice(0, 10);
+    if (nueva > todayKey()) return;
+    setDiaAsistencia(nueva);
+    setPage(0);
+  };
+
   const tabs = [
     { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
+    // La asistencia vive en el dashboard Y como sección propia: la tarjeta
+    // es la misma (tarjetaAsistencia), solo cambia dónde se muestra.
+    { id: 'asistencia', icon: 'users', label: 'Asistencia' },
     { id: 'anomalias', icon: 'alert', label: 'Anomalías', badge: data.anomalies.length },
     { id: 'empleados', icon: 'user', label: 'Empleados' },
     { id: 'horarios', icon: 'clock', label: 'Horarios' },
@@ -1488,11 +1502,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           </aside>
         )}
 
-        {tab === 'dashboard' && (
+        {/* La MISMA tarjeta de asistencia sirve al dashboard y a la sección
+            propia «Asistencia» del menú: solo cambia qué la acompaña. */}
+        {(tab === 'dashboard' || tab === 'asistencia') && (
           <>
-            <div className="dash-grid">
-              {/* Columna ancha: la asistencia de hoy (antes era pestaña propia;
-                  ahora vive en el dashboard, que es donde se consulta). */}
+            <div className={`dash-grid${tab === 'asistencia' ? ' solo-asistencia' : ''}`}>
               <section className="card asistencia-card">
                 <h2>
                   {esHoy ? 'Asistencia de hoy' : `Asistencia — ${new Date(`${diaAsistencia}T12:00:00-05:00`).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}`}
@@ -1504,11 +1518,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     className="att-search mini" type="search" placeholder="Buscar…"
                     value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
                   />
-                  <input
-                    className="att-fecha" type="date" aria-label="Día"
-                    value={diaAsistencia} max={todayKey()}
-                    onChange={(e) => { setDiaAsistencia(e.target.value || todayKey()); setPage(0); }}
-                  />
+                  <div className="dia-nav" role="group" aria-label="Cambiar de día">
+                    <button className="btn dia-flecha" title="Día anterior" onClick={() => cambiarDia(-1)}>‹</button>
+                    <input
+                      className="att-fecha" type="date" aria-label="Día"
+                      value={diaAsistencia} max={todayKey()}
+                      onChange={(e) => { setDiaAsistencia(e.target.value || todayKey()); setPage(0); }}
+                    />
+                    <button className="btn dia-flecha" title="Día siguiente" disabled={esHoy} onClick={() => cambiarDia(1)}>›</button>
+                  </div>
                   {[['all', 'Todos'], ['present', esHoy ? 'Trabajando' : 'Asistieron'], ['absent', 'Ausentes']].map(([id, lbl]) => (
                     <button
                       key={id} className="fchip" aria-pressed={statusFilter === id}
@@ -1618,6 +1636,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 )}
               </section>
 
+              {tab === 'dashboard' && (<>
               {/* Columna lateral: indicadores de un vistazo */}
               <div className="dash-lado">
               {/* Equipo ahora mismo: proporción de estados + avatares. */}
@@ -1786,6 +1805,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </>
                 )}
               </section>
+              </>)}
             </div>
           </>
         )}
@@ -4625,6 +4645,16 @@ img.sesion-avatar { object-fit: cover; display: block; }
 .att-table .att-name { font-weight: 600; }
 .att-table .att-sede { color: var(--muted); }
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 10px; font-size: 12.5px; color: var(--muted); }
+
+/* Sección «Asistencia» sola: la tarjeta ocupa todo el ancho, sin la
+   columna lateral del dashboard. */
+.dash-grid.solo-asistencia { display: flex; }
+.dash-grid.solo-asistencia .asistencia-card { flex: 1; }
+
+/* Flechas de día anterior/siguiente junto al calendario */
+.dia-nav { display: flex; align-items: center; gap: 4px; }
+.dia-flecha { padding: 6px 11px; font-size: 16px; line-height: 1; }
+.dia-flecha:disabled { opacity: 0.4; cursor: default; }
 
 /* Inputs numéricos sin flechas: en coordenadas y demás cifras del panel las
    flechitas no ayudan y la rueda del mouse cambiaba el número sin querer. */

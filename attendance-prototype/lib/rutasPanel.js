@@ -16,6 +16,8 @@
 /** Pantalla → segmentos de la URL (sin `/admin`). El dashboard no lleva. */
 export const RUTAS_PANEL = {
   dashboard: '',
+  // La asistencia vive en el dashboard Y como sección propia del menú.
+  asistencia: 'asistencia',
   anomalias: 'anomalias',
   empleados: 'empleados',
   horarios: 'horarios',
