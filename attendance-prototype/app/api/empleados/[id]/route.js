@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../../lib/db.js'
 import { estadoAcceso } from '../../../../lib/sesion'
 import { validarDias } from '../../../../lib/horariosDias.js'
+import { cabeOtroEmpleado } from '../../../../lib/empresas.js'
 
 export const runtime = 'nodejs'
 
@@ -43,12 +44,23 @@ const jornadaValida = (v) =>
 const salarioValido = (v) => v === null || (typeof v === 'number' && Number.isFinite(v) && v > 0)
 
 export async function PATCH(req, { params }) {
-  const { estado, esquema } = await estadoAcceso('empleados')
+  const { estado, esquema, empresa } = await estadoAcceso('empleados')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params
   let c
   try { c = await req.json() } catch { return NextResponse.json({ ok: false, error: 'JSON inválido.' }, { status: 400 }) }
+
+  // REACTIVAR a alguien archivado ocupa cupo otra vez: mismo tope que un alta.
+  if (c?.activo === true && empresa) {
+    const cupo = await cabeOtroEmpleado(empresa)
+    if (!cupo.cabe) {
+      return NextResponse.json({
+        ok: false,
+        error: `No hay cupo para reactivarlo: el plan llega hasta ${cupo.limite} empleados activos y ya tienes ${cupo.actuales}. Desactiva a otro o pasa a plan de pago.`,
+      }, { status: 402 })
+    }
+  }
 
   const sets = []
   const args = []

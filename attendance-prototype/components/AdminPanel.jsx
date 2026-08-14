@@ -19,7 +19,7 @@ import {
   updateEventType,
   deleteEvent,
   NIGHT_WINDOW_MS,
-  listPeople, removePerson, updatePerson, expectedDailyHours, jornadaDelDia,
+  listPeople, listArchivados, removePerson, updatePerson, expectedDailyHours, jornadaDelDia,
   franjaEsperada, horasFranja, horasSemanaDias, resumenDias, DIAS_CORTOS, ORDEN_SEMANA,
   getLaborConfig, saveLaborConfig, getHorasValorizadas, getEventosRango, marcarHorasPagadas,
   getSedes, addSede, updateSede, removeSede,
@@ -2011,6 +2011,42 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </>
                 );
               })()}
+
+              {/* ARCHIVADOS: desactivados con historial intacto. No ocupan
+                  cupo; reactivar vuelve a ocuparlo (el servidor lo verifica). */}
+              {listArchivados().length > 0 && (
+                <details className="archivados">
+                  <summary>
+                    Archivados <span className="muted-count">{listArchivados().length}</span>
+                    <span className="arch-hint"> — desactivados; su historial se conserva</span>
+                  </summary>
+                  {listArchivados().map((p) => (
+                    <div key={p.id} className="arch-fila">
+                      <span className="emp-cell">
+                        <span className="av av-tabla">{iniciales(p.name)}</span>
+                        <span>
+                          <span className="att-name">{p.name}</span>
+                          <span className="emp-cedula">{p.cedula || 'sin cédula'}</span>
+                        </span>
+                      </span>
+                      <button
+                        className="btn small"
+                        onClick={async () => {
+                          try {
+                            const r = await updatePerson(p.id, { activo: true });
+                            refresh();
+                            showToast(`${r.name} reactivado`);
+                          } catch (e) {
+                            showToast(e.message);
+                          }
+                        }}
+                      >
+                        Reactivar
+                      </button>
+                    </div>
+                  ))}
+                </details>
+              )}
             </div>
           </section>
         )}
@@ -3777,19 +3813,19 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <button
                 className="btn ficha-eliminar"
                 onClick={async () => {
-                  if (confirm(`¿Eliminar a ${editEmp.name}? Ya no podrá marcar asistencia.`)) {
+                  if (confirm(`¿Desactivar a ${editEmp.name}? No podrá marcar asistencia, pero sus datos y su historial se conservan y podrás reactivarlo desde «Archivados». Deja de ocupar cupo del plan.`)) {
                     try {
                       await removePerson(editEmp.id);
                       setEditEmp(null);
                       refresh();
-                      showToast(`${editEmp.name} eliminado`);
+                      showToast(`${editEmp.name} desactivado (queda en Archivados)`);
                     } catch (e) {
-                      showToast(`No se pudo eliminar: ${e.message}`);
+                      showToast(`No se pudo desactivar: ${e.message}`);
                     }
                   }
                 }}
               >
-                Eliminar
+                Desactivar
               </button>
             </div>
           </aside>
@@ -4540,6 +4576,13 @@ img.sesion-avatar { object-fit: cover; display: block; }
 .att-table .att-name { font-weight: 600; }
 .att-table .att-sede { color: var(--muted); }
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 10px; font-size: 12.5px; color: var(--muted); }
+
+/* Empleados ARCHIVADOS (desactivados, historial intacto) */
+.archivados { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+.archivados summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--ink-2); }
+.arch-hint { font-weight: 400; color: var(--muted); font-size: 12px; }
+.arch-fila { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 4px; border-bottom: 1px dashed var(--border); opacity: 0.85; }
+.arch-fila:last-child { border-bottom: none; }
 .hist-fecha { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 
 /* Drawer de detalle (marcaciones del día) */

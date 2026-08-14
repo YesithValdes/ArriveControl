@@ -188,7 +188,10 @@ export async function syncPanel() {
   const desde = bogotaDay(new Date(Date.now() - 60 * 24 * 3600000).toISOString());
   const [marc, emp, sed, cfg, corr, hor] = await Promise.all([
     api(`/api/marcaciones?desde=${desde}`),
-    api('/api/empleados'),
+    // Con inactivos: los ARCHIVADOS también viajan al panel (para verlos y
+    // reactivarlos). listPeople() sigue filtrando solo activos, así que el
+    // resto del panel no cambia.
+    api('/api/empleados?inactivos=1'),
     api('/api/sedes'),
     api('/api/config'),
     api('/api/correcciones'),
@@ -286,9 +289,17 @@ export function listPeople() {
   return store.people.filter((p) => p.activo);
 }
 
+/** Empleados ARCHIVADOS (desactivados): conservan historial y no ocupan cupo. */
+export function listArchivados() {
+  return store.people.filter((p) => !p.activo);
+}
+
 export async function removePerson(id) {
+  // Baja LÓGICA: el empleado queda ARCHIVADO (activo=false), con su historial
+  // completo, y deja de ocupar cupo. No se borra de la memoria del panel:
+  // pasa a la lista de archivados, desde donde se puede reactivar.
   await api(`/api/empleados/${id}`, { method: 'DELETE' });
-  store.people = store.people.filter((p) => p.id !== id);
+  store.people = store.people.map((p) => (p.id === id ? { ...p, activo: false } : p));
 }
 
 export async function updatePerson(id, partial) {
@@ -296,6 +307,7 @@ export async function updatePerson(id, partial) {
   if ('name' in partial) body.nombre = partial.name;
   if ('cedula' in partial) body.cedula = partial.cedula;
   if ('correo' in partial) body.correo = partial.correo || null;
+  if ('activo' in partial) body.activo = partial.activo === true; // reactivar/archivar
   if ('sede' in partial) {
     const sede = store.sedes.find((s) => s.name === partial.sede);
     body.sede_id = sede?.id ?? null;
