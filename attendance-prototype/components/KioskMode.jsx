@@ -254,8 +254,11 @@ export default function KioskMode() {
   // decide: guardarlo (validar_ubicacion) o exigir el rango de la sede
   // (validar_sede). Si el permiso está negado, simplemente no viaja nada.
   const gpsRef = useRef(null);
+  const gpsLogRef = useRef(0);
   useEffect(() => {
-    if (!running || !('geolocation' in navigator)) return;
+    if (!running) return;
+    if (!('geolocation' in navigator)) { console.log('[KioscoGPS] este WebView no tiene geolocalización'); return; }
+    console.log('[KioscoGPS] vigilancia de ubicación iniciada');
     const id = navigator.geolocation.watchPosition(
       (pos) => {
         gpsRef.current = {
@@ -264,8 +267,13 @@ export default function KioskMode() {
           precision_m: pos.coords.accuracy,
           ts: Date.now(),
         };
+        // Un log cada ~10 s basta para ver la señal sin inundar la consola.
+        if (Date.now() - gpsLogRef.current > 10000) {
+          gpsLogRef.current = Date.now();
+          console.log(`[KioscoGPS] fix: ${pos.coords.latitude.toFixed(7)}, ${pos.coords.longitude.toFixed(7)} (±${Math.round(pos.coords.accuracy)} m)`);
+        }
       },
-      () => { /* sin permiso o sin señal: se marca sin ubicación */ },
+      (err) => { console.log(`[KioscoGPS] sin ubicación: ${err?.message || err?.code} (permiso negado o sin señal)`); },
       { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 },
     );
     return () => navigator.geolocation.clearWatch(id);
@@ -620,7 +628,11 @@ export default function KioskMode() {
     setUi('ok');
     st.until = performance.now() + ESPERA_RED_MS; // margen fijo para la red
 
-    registrarPaso(person.id, gpsFresco()).then((paso) => {
+    const gpsEnvio = gpsFresco();
+    console.log(gpsEnvio
+      ? `[KioscoGPS] marcación de ${person.name} con ubicación ${gpsEnvio.lat.toFixed(7)}, ${gpsEnvio.lon.toFixed(7)} (±${Math.round(gpsEnvio.precision_m)} m, de hace ${Math.round((Date.now() - gpsEnvio.ts) / 1000)} s)`
+      : `[KioscoGPS] marcación de ${person.name} SIN ubicación (sin permiso, sin señal, o fix de más de 2 min)`);
+    registrarPaso(person.id, gpsEnvio).then((paso) => {
       const stNow = stateRef.current;
       stNow.until = performance.now() + RESULT_SHOW_MS;
 
