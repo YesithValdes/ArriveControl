@@ -126,6 +126,16 @@ export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo
 }
 
 /**
+ * Guarda la dirección legible de una marcación (geocodificación inversa).
+ * Se llama DESPUÉS de responder al kiosco; si falla, quedan las coordenadas.
+ */
+export async function guardarDireccion(esquema, marcacionId, direccion) {
+  if (!direccion) return
+  await conEmpresa(esquema, (db) =>
+    db.query(`update marcaciones set direccion = $1 where id = $2`, [direccion, marcacionId]))
+}
+
+/**
  * Lista marcaciones para el panel, con nombre del empleado.
  * @param {string} esquema  el de la empresa que consulta
  * @param {{desde?:string, hasta?:string, empleadoId?:string}} f  fechas YYYY-MM-DD (día Bogotá)
@@ -141,7 +151,7 @@ export async function listarMarcaciones(esquema, f = {}) {
     const { rows } = await db.query(
       `select m.id, m.empleado_id, e.nombre as empleado_nombre, e.cedula,
               m.tipo, m.ts, m.ts_dispositivo, m.sede_id, s.nombre as sede_nombre, m.origen,
-              m.lat, m.lon, m.precision_m
+              m.lat, m.lon, m.precision_m, m.direccion
          from marcaciones m
          join empleados e on e.id = m.empleado_id
          left join sedes s on s.id = m.sede_id

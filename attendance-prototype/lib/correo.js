@@ -52,10 +52,11 @@ const FECHA_CO = { timeZone: 'America/Bogota', weekday: 'long', day: 'numeric', 
  * @param {string|Date} p.ts     hora OFICIAL guardada en la base
  * @param {string=} p.sede       nombre de la sede donde marcó
  * @param {number=} p.lat @param {number=} p.lon  ubicación exacta, si se guardó
+ * @param {string=} p.direccion  dirección legible (geocodificación inversa)
  * @param {boolean=} p.diferido  marcación de la cola offline (hora del aparato)
  * @param {string=} p.empresa    nombre de la empresa
  */
-export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede, lat, lon, diferido, empresa }) {
+export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede, lat, lon, direccion, diferido, empresa }) {
   const t = transporte()
   if (!t || !para) return false
 
@@ -79,7 +80,7 @@ export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede,
       <div style="font-size:13px;color:#7b8ca0;text-transform:capitalize">${dia}</div>
       <table style="margin-top:16px;font-size:13px;color:#46586a;border-collapse:collapse">
         ${sede ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Sede</td><td>${sede}</td></tr>` : ''}
-        ${mapa ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Ubicación</td><td><a href="${mapa}" style="color:#557d9e">${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}</a></td></tr>` : ''}
+        ${mapa ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Ubicación</td><td><a href="${mapa}" style="color:#557d9e">${direccion || `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`}</a></td></tr>` : ''}
         ${empresa ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Empresa</td><td>${empresa}</td></tr>` : ''}
       </table>
       ${diferido ? `<div style="margin-top:14px;font-size:12px;color:#7a6432;background:#f3ecd9;border-radius:10px;padding:9px 12px">Marcación registrada sin internet y sincronizada después: la hora es la del dispositivo en el momento de marcar.</div>` : ''}
@@ -93,7 +94,7 @@ export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede,
       to: para,
       subject: `${esEntrada ? 'Entrada' : 'Salida'} registrada — ${hora}`,
       html,
-      text: `${titulo}\n${nombre}\n${hora} — ${dia}${sede ? `\nSede: ${sede}` : ''}${mapa ? `\nUbicación: ${mapa}` : ''}`,
+      text: `${titulo}\n${nombre}\n${hora} — ${dia}${sede ? `\nSede: ${sede}` : ''}${mapa ? `\nUbicación: ${direccion ? `${direccion} — ` : ''}${mapa}` : ''}`,
     })
     return true
   } catch (e) {

@@ -9,8 +9,9 @@
  *        permiso VER.
  */
 import { NextResponse, after } from 'next/server'
-import { registrarPaso, listarMarcaciones } from '../../../lib/marcaciones'
+import { registrarPaso, listarMarcaciones, guardarDireccion } from '../../../lib/marcaciones'
 import { enviarComprobanteMarcacion } from '../../../lib/correo.js'
+import { direccionDesdeCoordenadas } from '../../../lib/geocodificar.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
 import { puedeEscribir } from '../../../lib/empresas.js'
 
@@ -75,21 +76,30 @@ export async function POST(req) {
   if (r.rechazo) return NextResponse.json({ ok: false, error: r.rechazo }, { status: 400 })
   if (r.duplicado) return NextResponse.json({ ok: true, duplicado: true, ultima: r.ultima })
 
-  // Comprobante por correo: DESPUÉS de responder (after), mejor esfuerzo.
-  // La marcación ya está guardada; un fallo de SMTP no toca al kiosco.
-  if (r.empleado?.correo) {
-    after(() => enviarComprobanteMarcacion({
-      para: r.empleado.correo,
-      nombre: r.empleado.nombre,
-      tipo: r.tipo,
-      ts: r.marcacion.ts,
-      sede: r.sedeNombre,
-      lat: r.marcacion.lat,
-      lon: r.marcacion.lon,
-      diferido: !!diferido,
-      empresa: ctx.empresa?.nombre,
-    }))
-  }
+  // DESPUÉS de responder (after), mejor esfuerzo: resolver la dirección
+  // legible del punto GPS (queda guardada para el panel) y enviar el
+  // comprobante. La marcación ya está guardada; nada de esto toca al kiosco.
+  after(async () => {
+    let direccion = null
+    if (r.marcacion.lat != null && r.marcacion.lon != null) {
+      direccion = await direccionDesdeCoordenadas(r.marcacion.lat, r.marcacion.lon)
+      await guardarDireccion(ctx.esquema, r.marcacion.id, direccion).catch(() => {})
+    }
+    if (r.empleado?.correo) {
+      await enviarComprobanteMarcacion({
+        para: r.empleado.correo,
+        nombre: r.empleado.nombre,
+        tipo: r.tipo,
+        ts: r.marcacion.ts,
+        sede: r.sedeNombre,
+        lat: r.marcacion.lat,
+        lon: r.marcacion.lon,
+        direccion,
+        diferido: !!diferido,
+        empresa: ctx.empresa?.nombre,
+      })
+    }
+  })
   return NextResponse.json({ ok: true, tipo: r.tipo, marcacion: r.marcacion })
 }
 
