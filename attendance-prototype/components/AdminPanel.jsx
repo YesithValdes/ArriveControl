@@ -557,6 +557,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const openEdit = (p) => setEditEmp({
     id: p.id, name: p.name, cedula: p.cedula || '', correo: p.correo || '', sede: p.sede || '',
     validarSede: p.validarSede === true,
+    validarUbicacion: p.validarUbicacion === true,
     expectedEntry: p.expectedEntry || '',
     expectedExit: p.expectedExit || '',
     breakMinutes: p.breakMinutes == null ? '' : String(p.breakMinutes),
@@ -3714,6 +3715,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       ¿Limitar ubicación?
                       <Q texto="Solo puede marcar dentro del radio de su sede asignada (el GPS comprueba el rango, sin guardar el punto). Sin sede no tiene efecto." />
                     </label>
+                    <label className="consent">
+                      <input
+                        type="checkbox" checked={editEmp.validarUbicacion}
+                        onChange={(e) => setEditEmp({ ...editEmp, validarUbicacion: e.target.checked })}
+                      />{' '}
+                      ¿Validar ubicación?
+                      <Q texto="Guarda el punto GPS exacto (y su dirección) de cada marcación, para saber desde dónde marcó. Aplica con o sin sede." />
+                    </label>
                   </div>
                   {horarios.length > 0 && (
                     <div className="field">
@@ -3797,6 +3806,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     correo: editEmp.correo.trim().toLowerCase() || null,
                     sede: editEmp.sede,
                     validarSede: editEmp.validarSede,
+                    validarUbicacion: editEmp.validarUbicacion,
                     expectedEntry: editEmp.expectedEntry,
                     expectedExit: editEmp.expectedExit,
                     breakMinutes: editEmp.breakMinutes === '' ? null : Number(editEmp.breakMinutes),
