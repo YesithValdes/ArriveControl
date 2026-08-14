@@ -555,7 +555,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
    * el nombre para llegar a los datos de esa persona.
    */
   const openEdit = (p) => setEditEmp({
-    id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '',
+    id: p.id, name: p.name, cedula: p.cedula || '', correo: p.correo || '', sede: p.sede || '',
     validarSede: p.validarSede === true,
     expectedEntry: p.expectedEntry || '',
     expectedExit: p.expectedExit || '',
@@ -3637,6 +3637,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <input id="e-cedula" className="num" type="text" inputMode="numeric" value={editEmp.cedula}
                       onChange={(e) => setEditEmp({ ...editEmp, cedula: e.target.value.replace(/\D/g, '') })} />
                   </div>
+                  <div className="campo">
+                    <label htmlFor="e-correo">Correo (comprobantes de marcación)</label>
+                    <input id="e-correo" type="email" placeholder="ana@correo.com" value={editEmp.correo}
+                      onChange={(e) => setEditEmp({ ...editEmp, correo: e.target.value })} />
+                  </div>
                 </div>
                 {/* El rostro es un ESTADO, no una instrucción suelta: lo primero
                     que se quiere saber es si esta persona puede marcar. */}
@@ -3750,6 +3755,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   const r = await updatePerson(editEmp.id, {
                     name: editEmp.name,
                     cedula: editEmp.cedula,
+                    correo: editEmp.correo.trim().toLowerCase() || null,
                     sede: editEmp.sede,
                     validarSede: editEmp.validarSede,
                     expectedEntry: editEmp.expectedEntry,
