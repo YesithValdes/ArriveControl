@@ -73,10 +73,10 @@ export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo
       }
     }
 
-    // La ubicación exacta se guarda cuando el empleado tiene alguno de los
-    // dos candados de ubicación; sin ellos no se retiene el dato (es la
-    // preferencia que el administrador marcó al registrarlo).
-    const guardaGps = (persona.validar_ubicacion || persona.validar_sede) && lat != null && lon != null
+    // La ubicación exacta se guarda SOLO con `validar_ubicacion`: es la
+    // preferencia explícita del administrador. `validar_sede` (limitar) usa
+    // las coordenadas para comprobar el rango y no retiene el punto.
+    const guardaGps = persona.validar_ubicacion && lat != null && lon != null
 
     // Hora oficial y última marcación, ambas de la base de datos.
     // El lock por empleado evita la carrera de dos pasadas simultáneas.

@@ -1967,8 +1967,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               {/* Limitar solo aplica CON sede; Validar solo SIN sede. */}
                               <td>
                                 <Toggle
-                                  on={p.validarSede} disabled={!p.sede}
-                                  label={p.sede ? '¿Limitar a su sede?' : 'Requiere una sede'}
+                                  on={p.validarSede}
+                                  label={p.sede ? '¿Limitar a su sede?' : 'Sin sede no tiene efecto'}
                                   onClick={() => alternarFlag(p, 'validarSede')}
                                 />
                               </td>
@@ -1994,7 +1994,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           ['Cédula', p.cedula || 'sin cédula'],
                           ['Horario', horario(p)],
                           ['Configuración', <span className="novs" key="c">{configChips(p)}</span>],
-                          ['Limitar ubicación', <Toggle key="l" on={p.validarSede} disabled={!p.sede} label="Limitar a su sede" onClick={() => alternarFlag(p, 'validarSede')} />],
+                          ['Limitar ubicación', <Toggle key="l" on={p.validarSede} label="Limitar a su sede" onClick={() => alternarFlag(p, 'validarSede')} />],
                           ['Validar ubicación', <Toggle key="v" on={p.validarUbicacion} label="Registrar GPS al marcar" onClick={() => alternarFlag(p, 'validarUbicacion')} />],
                           ['Última marcación', fmtUltima(ultimaMarca.get(p.id))],
                         ],
@@ -3701,21 +3701,19 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <label htmlFor="e-sede">Sede asignada</label>
                     <select
                       id="e-sede" value={editEmp.sede}
-                      onChange={(e) => setEditEmp({ ...editEmp, sede: e.target.value, validarSede: e.target.value ? editEmp.validarSede : false })}
+                      onChange={(e) => setEditEmp({ ...editEmp, sede: e.target.value })}
                     >
                       <option value="">Sin sede</option>
                       {sedes.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}
                     </select>
-                    {editEmp.sede && (
-                      <label className="consent">
-                        <input
-                          type="checkbox" checked={editEmp.validarSede}
-                          onChange={(e) => setEditEmp({ ...editEmp, validarSede: e.target.checked })}
-                        />{' '}
-                        ¿Limitar ubicación?
-                        <Q texto="Marcado, solo puede marcar dentro de su sede; sin marcar, la sede es informativa y puede marcar desde cualquier parte." />
-                      </label>
-                    )}
+                    <label className="consent">
+                      <input
+                        type="checkbox" checked={editEmp.validarSede}
+                        onChange={(e) => setEditEmp({ ...editEmp, validarSede: e.target.checked })}
+                      />{' '}
+                      ¿Limitar ubicación?
+                      <Q texto="Solo puede marcar dentro del radio de su sede asignada (el GPS comprueba el rango, sin guardar el punto). Sin sede no tiene efecto." />
+                    </label>
                   </div>
                   {horarios.length > 0 && (
                     <div className="field">

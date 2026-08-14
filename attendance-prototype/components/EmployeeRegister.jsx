@@ -221,12 +221,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
             <label htmlFor="rf-sede">Sede</label>
             <select
               id="rf-sede" value={sede}
-              onChange={(e) => {
-                setSede(e.target.value);
-                // Limitar exige sede; validar (registrar GPS) aplica SIEMPRE:
-                // con sede sin limitar también se quiere saber desde dónde marcó.
-                if (!e.target.value) setValidarSede(false);
-              }}
+              onChange={(e) => setSede(e.target.value)}
             >
               <option value="">Sin sede</option>
               {sedes.map((o) => (
@@ -254,19 +249,20 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
                 </span>
               </span>
             </div>
-            <div className={`regf-valida${sede ? '' : ' off'}`}>
+            <div className="regf-valida">
               <label htmlFor="rf-limita">
                 ¿Limitar ubicación?
                 <input
-                  id="rf-limita" type="checkbox" checked={validarSede} disabled={!sede}
+                  id="rf-limita" type="checkbox" checked={validarSede}
                   onChange={(e) => setValidarSede(e.target.checked)}
                 />
               </label>
               <span className="regf-q" tabIndex={0}>
                 ?
                 <span className="regf-tip">
-                  Con sede: marcado, solo puede marcar dentro de su sede; sin marcar,
-                  la sede es informativa y puede marcar desde cualquier parte.
+                  Solo puede marcar dentro del radio de su sede asignada (usa el
+                  GPS para comprobarlo, sin guardar el punto). Necesita tener
+                  sede; sin sede no tiene efecto.
                 </span>
               </span>
             </div>
@@ -351,7 +347,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
               <b>
                 {[
                   sede && validarSede ? 'Limitada a su sede' : 'Libre: cualquier lugar',
-                  validarUbicacion || validarSede ? 'se registra el GPS' : 'sin registro de GPS',
+                  validarUbicacion ? 'se registra el GPS' : 'sin registro de GPS',
                 ].join(', ')}
               </b>
             </div>
