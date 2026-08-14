@@ -204,6 +204,7 @@ export async function syncPanel() {
     id: e.id,
     name: e.nombre,
     cedula: e.cedula || '',
+    correo: e.correo || '',
     sede: e.sede_nombre || '',
     sedeId: e.sede_id || '',
     validarSede: e.validar_sede === true,
@@ -294,6 +295,7 @@ export async function updatePerson(id, partial) {
   const body = {};
   if ('name' in partial) body.nombre = partial.name;
   if ('cedula' in partial) body.cedula = partial.cedula;
+  if ('correo' in partial) body.correo = partial.correo || null;
   if ('sede' in partial) {
     const sede = store.sedes.find((s) => s.name === partial.sede);
     body.sede_id = sede?.id ?? null;
@@ -322,6 +324,7 @@ export async function addPerson(name, descriptor, extra = {}) {
       body: JSON.stringify({
         nombre: name,
         cedula: extra.cedula || null,
+        correo: extra.correo || null,
         sede_id: sede?.id ?? extra.sedeId ?? null,
         validar_sede: extra.validarSede === true,
         validar_ubicacion: extra.validarUbicacion === true,

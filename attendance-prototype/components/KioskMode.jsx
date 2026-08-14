@@ -248,6 +248,31 @@ export default function KioskMode() {
     return () => { cancelled = true; };
   }, []);
 
+  // ── Ubicación GPS ─────────────────────────────────────────────────────
+  // Mientras el kiosco corre se mantiene el último fix en memoria (watch,
+  // sin esperar nada al marcar). Se envía con cada marcación y el SERVIDOR
+  // decide: guardarlo (validar_ubicacion) o exigir el rango de la sede
+  // (validar_sede). Si el permiso está negado, simplemente no viaja nada.
+  const gpsRef = useRef(null);
+  useEffect(() => {
+    if (!running || !('geolocation' in navigator)) return;
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        gpsRef.current = {
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          precision_m: pos.coords.accuracy,
+          ts: Date.now(),
+        };
+      },
+      () => { /* sin permiso o sin señal: se marca sin ubicación */ },
+      { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 },
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, [running]);
+  // Solo un fix reciente vale: uno viejo diría dónde ESTUVO el aparato.
+  const gpsFresco = () => (gpsRef.current && Date.now() - gpsRef.current.ts < 120000 ? gpsRef.current : null);
+
   // ── Wake Lock ─────────────────────────────────────────────────────────
   const acquireWakeLock = useCallback(async () => {
     try { if ('wakeLock' in navigator) wakeLockRef.current = await navigator.wakeLock.request('screen'); } catch {}
@@ -595,7 +620,7 @@ export default function KioskMode() {
     setUi('ok');
     st.until = performance.now() + ESPERA_RED_MS; // margen fijo para la red
 
-    registrarPaso(person.id).then((paso) => {
+    registrarPaso(person.id, gpsFresco()).then((paso) => {
       const stNow = stateRef.current;
       stNow.until = performance.now() + RESULT_SHOW_MS;
 

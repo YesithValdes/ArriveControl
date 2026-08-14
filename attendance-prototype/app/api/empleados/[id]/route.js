@@ -14,6 +14,8 @@ export const runtime = 'nodejs'
 const CAMPOS = {
   nombre: 'nombre',
   cedula: 'cedula',
+  // A dónde llega el comprobante de cada marcación; null = no se envía.
+  correo: 'correo',
   sede_id: 'sede_id',
   entrada_esperada: 'entrada_esperada',
   salida_esperada: 'salida_esperada',
@@ -55,6 +57,12 @@ export async function PATCH(req, { params }) {
       let v = c[k]
       if (k === 'cedula' && v != null) v = String(v).replace(/\D/g, '') || null
       if (k === 'nombre') { v = String(v).trim(); if (!v) return NextResponse.json({ ok: false, error: 'El nombre no puede quedar vacío.' }, { status: 400 }) }
+      if (k === 'correo') {
+        v = String(v ?? '').trim().toLowerCase() || null
+        if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+          return NextResponse.json({ ok: false, error: 'El correo no parece válido. Corrígelo o déjalo vacío.' }, { status: 400 })
+        }
+      }
       if (k === 'jornada_dias') {
         if (v === null) {
           // null borra la jornada por días: vuelve a mandar la uniforme.
@@ -80,7 +88,7 @@ export async function PATCH(req, { params }) {
   try {
     const { rows } = await conEmpresa(esquema, (db) => db.query(
       `update empleados set ${sets.join(', ')} where id = $${args.length}
-       returning id, nombre, cedula, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo`,
+       returning id, nombre, cedula, correo, sede_id, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo`,
       args,
     ))
     if (rows.length === 0) return NextResponse.json({ ok: false, error: 'Empleado no encontrado.' }, { status: 404 })

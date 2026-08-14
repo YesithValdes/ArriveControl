@@ -130,10 +130,18 @@ export const pendientesEnCola = () => leerCola().length;
  * Sin red: encola y devuelve { pendiente: true } — la persona debe saber que
  * su marcación quedó guardada pero aún no sincronizada.
  */
-export async function registrarPaso(empleadoId) {
+export async function registrarPaso(empleadoId, ubicacion = null) {
   // sede_id nulo (no ""): un dispositivo sin sede mandaba cadena vacía y el
   // insert reventaba en Postgres (la columna es uuid) — 500 en cada intento.
   const cuerpo = { empleado_id: empleadoId, sede_id: getSedeId() || null };
+  // Ubicación GPS del dispositivo, si el kiosco la tiene fresca. El SERVIDOR
+  // decide qué hacer con ella: guardarla (validar_ubicacion) o exigir que
+  // caiga dentro del radio de la sede del empleado (validar_sede).
+  if (ubicacion && Number.isFinite(ubicacion.lat) && Number.isFinite(ubicacion.lon)) {
+    cuerpo.lat = ubicacion.lat;
+    cuerpo.lon = ubicacion.lon;
+    if (Number.isFinite(ubicacion.precision_m)) cuerpo.precision_m = Math.round(ubicacion.precision_m);
+  }
   let r;
   try {
     r = await fetch('/api/marcaciones', { method: 'POST', headers: headers(), body: JSON.stringify(cuerpo) });

@@ -48,7 +48,7 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url)
   const incluirInactivos = searchParams.get('inactivos') === '1'
   const { rows: empleados } = await conEmpresa(esquema, (db) => db.query(
-    `select e.id, e.nombre, e.cedula, e.sede_id, s.nombre as sede_nombre, e.validar_sede, e.validar_ubicacion,
+    `select e.id, e.nombre, e.cedula, e.correo, e.sede_id, s.nombre as sede_nombre, e.validar_sede, e.validar_ubicacion,
             e.entrada_esperada, e.salida_esperada, e.almuerzo_min, e.jornada_dias, e.jornada_semanal,
             e.salario_mensual, e.activo, e.creado_en,
             (e.descriptor_facial is not null) as tiene_rostro
@@ -89,6 +89,13 @@ export async function POST(req) {
 
   const descriptor = Array.isArray(c?.descriptor_facial) && c.descriptor_facial.length === 128 ? c.descriptor_facial : null
 
+  // Correo del comprobante de marcación. OPCIONAL: sin correo no se envía
+  // nada. Validación mínima: si viene algo, que al menos parezca un correo.
+  const correo = String(c?.correo ?? '').trim().toLowerCase() || null
+  if (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
+    return NextResponse.json({ ok: false, error: 'El correo no parece válido. Corrígelo o déjalo vacío.' }, { status: 400 })
+  }
+
   // Jornada distribuida (opcional): [lun..sáb], 6 horas-por-día entre 0 y 12.
   const jornada = Array.isArray(c?.jornada_semanal)
     && c.jornada_semanal.length === 6
@@ -113,10 +120,10 @@ export async function POST(req) {
   try {
     const { rows } = await conEmpresa(esquema, (db) => db.query(
       `insert into empleados
-         (nombre, cedula, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, descriptor_facial)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-       returning id, nombre, cedula, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo, creado_en`,
-      [nombre, cedula, c.sede_id ?? null, c.validar_sede === true, c.validar_ubicacion === true, c.entrada_esperada ?? null, c.salida_esperada ?? null,
+         (nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, descriptor_facial)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       returning id, nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo, creado_en`,
+      [nombre, cedula, correo, c.sede_id ?? null, c.validar_sede === true, c.validar_ubicacion === true, c.entrada_esperada ?? null, c.salida_esperada ?? null,
        c.almuerzo_min ?? 60, jornadaDias == null ? null : JSON.stringify(jornadaDias), jornada, salario, descriptor],
     ))
     return NextResponse.json({ ok: true, empleado: rows[0] })

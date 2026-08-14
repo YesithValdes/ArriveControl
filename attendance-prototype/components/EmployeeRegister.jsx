@@ -38,6 +38,8 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
   // esta es su fuente de verdad sobre quién trabaja en la empresa.
   const [nombre, setNombre] = useState('');
   const [cedula, setCedula] = useState('');
+  // Correo OPCIONAL: a dónde llega el comprobante de cada marcación.
+  const [correo, setCorreo] = useState('');
   // Jornada POR DÍAS: la copia del horario elegido (cada día con su franja,
   // o libre). Se copia tal cual a la ficha del empleado al registrarlo.
   const [jornadaDias, setJornadaDias] = useState(null);
@@ -155,6 +157,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
   const handleRegister = async () => {
     const result = await addPerson(nombre.trim(), photo.descriptor, {
       cedula: cedulaLimpia,
+      correo: correo.trim().toLowerCase() || null,
       sede, validarSede, validarUbicacion, jornadaDias,
       // Vacío o 0 = sin salario registrado, no un sueldo de cero.
       salarioMensual: Number(salarioMensual) > 0 ? Number(salarioMensual) : null,
@@ -165,6 +168,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
     }
     setNombre('');
     setCedula('');
+    setCorreo('');
     setSalarioMensual('');
     if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
     setPhoto(null);
@@ -201,6 +205,14 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
         {cedulaLimpia.length > 0 && cedulaLimpia.length < 5 && (
           <small className="regf-err">La cédula debe tener al menos 5 dígitos.</small>
         )}
+        <div className="regf-campo">
+          <label htmlFor="rf-correo">Correo (opcional)</label>
+          <input
+            id="rf-correo" type="email" placeholder="ana@correo.com" value={correo}
+            onChange={(e) => setCorreo(e.target.value)} autoComplete="off"
+          />
+          <small className="regf-hint">Si lo pones, recibirá el comprobante de cada entrada y salida.</small>
+        </div>
       </section>
 
       <section className="regf-sec">

@@ -8,8 +8,9 @@
  * GET  — el PANEL lista marcaciones por rango/empleado. Requiere sesión con
  *        permiso VER.
  */
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { registrarPaso, listarMarcaciones } from '../../../lib/marcaciones'
+import { enviarComprobanteMarcacion } from '../../../lib/correo.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
 import { puedeEscribir } from '../../../lib/empresas.js'
 
@@ -54,6 +55,10 @@ export async function POST(req) {
   }
   // sede_id es OPCIONAL: un dispositivo móvil (sin sede) marca con sede nula.
   const { empleado_id: empleadoId, sede_id: sedeId, ts_dispositivo: tsDispositivo, diferido } = cuerpo ?? {}
+  // Ubicación GPS del dispositivo (opcional): números o nada.
+  const lat = Number.isFinite(cuerpo?.lat) ? cuerpo.lat : null
+  const lon = Number.isFinite(cuerpo?.lon) ? cuerpo.lon : null
+  const precisionM = Number.isFinite(cuerpo?.precision_m) ? cuerpo.precision_m : null
   if (!empleadoId) {
     return NextResponse.json({ ok: false, error: 'Falta empleado_id.' }, { status: 400 })
   }
@@ -63,9 +68,28 @@ export async function POST(req) {
 
   // sede_id "" (dispositivo sin sede, o colas viejas del kiosco) se vuelve
   // null: la columna es uuid y la cadena vacía revienta el insert con 500.
-  const r = await registrarPaso({ esquema: ctx.esquema, empleadoId, sedeId: sedeId || null, tsDispositivo: tsDispositivo ?? null, diferido: !!diferido })
+  const r = await registrarPaso({ esquema: ctx.esquema, empleadoId, sedeId: sedeId || null, tsDispositivo: tsDispositivo ?? null, diferido: !!diferido, lat, lon, precisionM })
   if (r.error) return NextResponse.json({ ok: false, error: r.error }, { status: 404 })
+  // Fuera del rango de su sede (limitar ubicación): 400 con la causa — el
+  // kiosco lo muestra tal cual y NO lo encola (reintentar daría lo mismo).
+  if (r.rechazo) return NextResponse.json({ ok: false, error: r.rechazo }, { status: 400 })
   if (r.duplicado) return NextResponse.json({ ok: true, duplicado: true, ultima: r.ultima })
+
+  // Comprobante por correo: DESPUÉS de responder (after), mejor esfuerzo.
+  // La marcación ya está guardada; un fallo de SMTP no toca al kiosco.
+  if (r.empleado?.correo) {
+    after(() => enviarComprobanteMarcacion({
+      para: r.empleado.correo,
+      nombre: r.empleado.nombre,
+      tipo: r.tipo,
+      ts: r.marcacion.ts,
+      sede: r.sedeNombre,
+      lat: r.marcacion.lat,
+      lon: r.marcacion.lon,
+      diferido: !!diferido,
+      empresa: ctx.empresa?.nombre,
+    }))
+  }
   return NextResponse.json({ ok: true, tipo: r.tipo, marcacion: r.marcacion })
 }
 
