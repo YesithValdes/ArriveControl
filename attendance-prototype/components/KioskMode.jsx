@@ -411,6 +411,7 @@ export default function KioskMode() {
             st.deadline = now + CHALLENGE_TIMEOUT_MS;
             st.sawOpen = false; st.sawClosed = false;
             st.descs = []; st.captures = 0; st.lastCapture = 0;
+            st.reintento = false; st.mejor = null; // reintento silencioso por distancia
             // Cronómetro del reto: cuánto tarda cada validación (se lee en el
             // logcat de Android como mensajes de consola del WebView).
             st.t0 = now; st.tParpadeo = null; st.tCaptura = null;
@@ -491,15 +492,33 @@ export default function KioskMode() {
           // condición extra es tener al menos una captura de identidad, que
           // se toma en los cuadros previos con los ojos abiertos.
           if (st.sawOpen && st.sawClosed && st.descs.length > 0) {
-            const total = Math.round(now - st.t0);
-            const primero = (st.tParpadeo ?? Infinity) <= (st.tCaptura ?? Infinity) ? 'OJOS' : 'ROSTRO';
-            console.log(`[Kiosco⏱] CONCLUYE a los ${total} ms — primero terminó: ${primero} (ojos: ${Math.round(st.tParpadeo ?? -1)} ms, rostro: ${Math.round(st.tCaptura ?? -1)} ms)`);
             const live = averageDescriptors(st.descs);
             let best = { distance: Infinity, person: null };
             for (const p of peopleRef.current) {
               const d = euclideanDistance(p.descriptor, live);
               if (d < best.distance) best = { distance: d, person: p };
             }
+
+            // REINTENTO SILENCIOSO: si la identidad no alcanzó el umbral la
+            // primera vez, no se muestra el rechazo — se descartan las
+            // capturas (pudieron salir movidas o en mal ángulo) y se toman
+            // frescas para medir de nuevo. Solo aplica al fallo por
+            // DISTANCIA: la prueba de vida ya está hecha y no se repite, y
+            // un reconocido con sede ajena no reintenta (daría lo mismo).
+            if (best.distance >= MATCH_THRESHOLD && !st.reintento) {
+              st.reintento = true;
+              st.mejor = best; // por si el segundo intento sale peor
+              st.descs = []; st.captures = 0; st.lastCapture = 0;
+              st.deadline = Math.max(st.deadline, now + 4000); // aire para las capturas nuevas
+              console.log(`[Kiosco⏱] identidad no coincidió (distancia ${Math.round(best.distance * 1000) / 1000}); reintento silencioso con capturas frescas`);
+              break;
+            }
+            // Tras un reintento, vale el MEJOR de los dos intentos.
+            if (st.mejor && st.mejor.distance < best.distance) best = st.mejor;
+
+            const total = Math.round(now - st.t0);
+            const primero = (st.tParpadeo ?? Infinity) <= (st.tCaptura ?? Infinity) ? 'OJOS' : 'ROSTRO';
+            console.log(`[Kiosco⏱] CONCLUYE a los ${total} ms — primero terminó: ${primero} (ojos: ${Math.round(st.tParpadeo ?? -1)} ms, rostro: ${Math.round(st.tCaptura ?? -1)} ms${st.reintento ? ', con reintento' : ''})`);
             const distance = Math.round(best.distance * 1000) / 1000;
             const reconocido = distance < MATCH_THRESHOLD;
             // Sede exigida: si el empleado tiene el flag, solo puede marcar en
