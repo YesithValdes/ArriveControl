@@ -76,12 +76,23 @@ const generarCodigo = () => String(randomInt(0, 100_000_000)).padStart(8, '0')
 export const formatearCodigo = (c) => `${c.slice(0, 4)}-${c.slice(4)}`
 
 /**
- * Crea un código para vincular un aparato nuevo.
+ * Crea un código para vincular un aparato nuevo, o para RECONECTAR uno que ya
+ * existe (dispositivoId): mismo dispositivo, clave nueva al canjear.
  * El nombre y la sede se deciden AQUÍ, no en el aparato: así un kiosco no
  * puede asignarse a una sede que no le corresponde.
  */
-export async function crearVinculacion({ empresa, nombre, sedeId = null, creadaPor = null }) {
-  if (sedeId) {
+export async function crearVinculacion({ empresa, nombre, sedeId = null, creadaPor = null, dispositivoId = null }) {
+  // Reconexión: el nombre y la sede salen del dispositivo ya registrado, no
+  // del cuerpo de la petición — y el dispositivo debe ser de ESTA empresa.
+  if (dispositivoId) {
+    const { rows } = await control(
+      `select nombre, sede_id from control.dispositivos where id = $1 and empresa_id = $2`,
+      [dispositivoId, empresa.id],
+    )
+    if (rows.length === 0) return { error: 'DISPOSITIVO_NO_ENCONTRADO' }
+    nombre = rows[0].nombre
+    sedeId = rows[0].sede_id
+  } else if (sedeId) {
     const existe = await conEmpresa(empresa.esquema, async (db) =>
       (await db.query(`select 1 from sedes where id = $1`, [sedeId])).rowCount > 0,
     )
@@ -93,12 +104,12 @@ export async function crearVinculacion({ empresa, nombre, sedeId = null, creadaP
   for (let intento = 0; intento < 5; intento++) {
     try {
       const { rows } = await control(
-        `insert into control.vinculaciones (codigo, empresa_id, nombre, sede_id, creada_por)
-         values ($1,$2,$3,$4,$5)
+        `insert into control.vinculaciones (codigo, empresa_id, nombre, sede_id, creada_por, dispositivo_id)
+         values ($1,$2,$3,$4,$5,$6)
          returning codigo, expira_en`,
-        [generarCodigo(), empresa.id, nombre, sedeId, creadaPor],
+        [generarCodigo(), empresa.id, nombre, sedeId, creadaPor, dispositivoId],
       )
-      return rows[0]
+      return { ...rows[0], nombre }
     } catch (e) {
       if (e.code !== '23505') throw e
     }
@@ -124,7 +135,7 @@ export async function canjearVinculacion(codigoCrudo) {
     // `for update` serializa dos canjes del mismo código: el segundo espera y
     // encuentra `usada_en` ya puesto.
     const { rows } = await db.query(
-      `select v.codigo, v.empresa_id, v.nombre, v.sede_id, v.expira_en, v.usada_en,
+      `select v.codigo, v.empresa_id, v.nombre, v.sede_id, v.expira_en, v.usada_en, v.dispositivo_id,
               e.esquema, e.nombre as empresa_nombre
          from control.vinculaciones v
          join control.empresas e on e.id = v.empresa_id
@@ -138,11 +149,23 @@ export async function canjearVinculacion(codigoCrudo) {
     if (new Date(v.expira_en) < new Date()) return { error: 'CODIGO_VENCIDO' }
 
     const clave = randomBytes(24).toString('base64url')
-    await db.query(
-      `insert into control.dispositivos (empresa_id, nombre, sede_id, clave_hash, activado_por)
-       values ($1,$2,$3,$4,$5)`,
-      [v.empresa_id, v.nombre, v.sede_id, sha256(clave), `vinculación ${codigo}`],
-    )
+    if (v.dispositivo_id) {
+      // RECONEXIÓN: el dispositivo ya existe — clave nueva (la anterior muere
+      // aquí mismo) y vuelve activo, conservando nombre, sede e historial.
+      const { rowCount } = await db.query(
+        `update control.dispositivos
+            set clave_hash = $1, activo = true, activado_por = $2
+          where id = $3 and empresa_id = $4`,
+        [sha256(clave), `reconexión ${codigo}`, v.dispositivo_id, v.empresa_id],
+      )
+      if (rowCount === 0) return { error: 'CODIGO_INVALIDO' } // el aparato ya no existe
+    } else {
+      await db.query(
+        `insert into control.dispositivos (empresa_id, nombre, sede_id, clave_hash, activado_por)
+         values ($1,$2,$3,$4,$5)`,
+        [v.empresa_id, v.nombre, v.sede_id, sha256(clave), `vinculación ${codigo}`],
+      )
+    }
     await db.query(
       `update control.vinculaciones set usada_en = now() where codigo = $1`, [codigo],
     )

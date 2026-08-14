@@ -30,8 +30,13 @@ export async function POST(req) {
   let c
   try { c = await req.json() } catch { return NextResponse.json({ ok: false, error: 'JSON inválido.' }, { status: 400 }) }
 
+  // RECONEXIÓN: con dispositivo_id el código apunta a un aparato ya
+  // registrado (nombre y sede salen de su ficha); al canjearlo recibe una
+  // clave nueva en vez de crear un dispositivo duplicado.
+  const dispositivoId = String(c?.dispositivo_id ?? '').trim() || null
+
   const nombre = String(c?.nombre ?? '').trim()
-  if (!nombre) {
+  if (!nombre && !dispositivoId) {
     return NextResponse.json({ ok: false, error: 'Ponle un nombre al dispositivo (p. ej. «Celular recepción»).' }, { status: 400 })
   }
   // La sede es OPCIONAL: un kiosco fijo lleva la suya (sus marcaciones se
@@ -44,9 +49,13 @@ export async function POST(req) {
     nombre,
     sedeId,
     creadaPor: usuario.email,
+    dispositivoId,
   })
   if (r.error === 'SEDE_NO_ENCONTRADA') {
     return NextResponse.json({ ok: false, error: 'Esa sede no existe en tu empresa.' }, { status: 400 })
+  }
+  if (r.error === 'DISPOSITIVO_NO_ENCONTRADO') {
+    return NextResponse.json({ ok: false, error: 'Ese dispositivo no existe en tu empresa.' }, { status: 404 })
   }
   if (r.error) {
     return NextResponse.json({ ok: false, error: 'No se pudo generar el código. Reintenta.' }, { status: 500 })

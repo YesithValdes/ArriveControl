@@ -196,12 +196,16 @@ function EditorDias({ dias, onChange }) {
   );
 }
 
-/** Signo de pregunta con explicación al pasar el mouse (o al enfocarlo). */
-function Q({ texto }) {
+/**
+ * Signo de pregunta con explicación al pasar el mouse (o al enfocarlo).
+ * `abajo`: el globo se abre hacia abajo — para los que viven pegados al borde
+ * superior de un contenedor con scroll, donde hacia arriba quedan recortados.
+ */
+function Q({ texto, abajo = false }) {
   return (
     <span className="q-ico" tabIndex={0}>
       ?
-      <span className="q-tip">{texto}</span>
+      <span className={`q-tip${abajo ? ' abajo' : ''}`}>{texto}</span>
     </span>
   );
 }
@@ -556,6 +560,22 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
     setCodigoVinc(d);
     setVinculando(null);
+  };
+
+  /**
+   * Reconectar: código para el MISMO dispositivo (se borraron los datos de la
+   * app, se cambió la tablet…). Al canjearlo recibe clave nueva y vuelve
+   * activo, sin crear un aparato duplicado.
+   */
+  const reconectarDispositivo = async (d) => {
+    const r = await fetch('/api/dispositivos/vincular', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dispositivo_id: d.id }),
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j?.ok) { showToast(j?.error ?? `Error ${r.status}`); return; }
+    setCodigoVinc({ ...j, reconectando: d.nombre });
   };
 
   const revocarDispositivo = async (d) => {
@@ -2220,7 +2240,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           párrafo kilométrico al pie que nadie leía. */}
                       {TIPOS_HORA.map((t) => (
                         <span key={t.codigo}>
-                          {t.codigo} <Q texto={`${t.nombre}. Su porcentaje se ajusta en Ajustes → Valorización de horas extra.`} />
+                          {t.codigo} <Q abajo texto={`${t.nombre}. Su porcentaje se ajusta en Ajustes → Valorización de horas extra.`} />
                         </span>
                       ))}
                       <span>Total</span>
@@ -2232,7 +2252,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       )}
                       {permisos.liquidar && (
                         <span className="col-pago">
-                          Pagado <Q texto="Anotación de que esas horas ya se liquidaron en nómina — Control Registro no paga. Si después se corrige una marcación ya pagada, ese tramo vuelve a quedar pendiente y la fila se muestra como parcial." />
+                          Pagado <Q abajo texto="Anotación de que esas horas ya se liquidaron en nómina — Control Registro no paga. Si después se corrige una marcación ya pagada, ese tramo vuelve a quedar pendiente y la fila se muestra como parcial." />
                         </span>
                       )}
                     </div>
@@ -2700,7 +2720,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               >
                 <aside className="drawer" role="dialog" aria-modal="true" aria-label="Vincular un aparato">
                   <div className="drawer-head">
-                    <div><h3>Vincular un aparato</h3></div>
+                    <div><h3>{codigoVinc?.reconectando ? `Reconectar «${codigoVinc.reconectando}»` : 'Vincular un aparato'}</h3></div>
                     <button
                       className="btn"
                       onClick={() => { setVinculando(null); if (codigoVinc) { setCodigoVinc(null); cargarDispositivos(); } }}
@@ -2715,6 +2735,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         <p className="cfg-note">
                           Escríbelo en el aparato, en la pantalla del kiosco. Vale una sola vez y
                           vence {new Date(codigoVinc.expira_en).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}.
+                          {codigoVinc.reconectando && ' Al usarlo, la clave anterior de este aparato deja de servir.'}
                         </p>
                         <button className="btn primary block" onClick={() => { setCodigoVinc(null); cargarDispositivos(); }}>
                           Listo
@@ -2775,9 +2796,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           <td>{d.ultimo_uso ? fmtTs(d.ultimo_uso) : 'nunca'}</td>
                           <td>{d.activado_por ?? '—'}</td>
                           <td>
-                            {d.activo && (
-                              <button className="btn small danger-btn" onClick={() => revocarDispositivo(d)}>Revocar</button>
-                            )}
+                            <span className="tl-actions">
+                              {/* Reconectar sirve activo o revocado: mismo aparato,
+                                  clave nueva (p. ej. se borraron los datos de la app). */}
+                              <button className="btn small" onClick={() => reconectarDispositivo(d)}>Reconectar</button>
+                              {d.activo && (
+                                <button className="btn small danger-btn" onClick={() => revocarDispositivo(d)}>Revocar</button>
+                              )}
+                            </span>
                           </td>
                         </tr>
                       ))}
@@ -5158,6 +5184,10 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   border: 6px solid transparent; border-top-color: var(--btn-primary);
 }
 .q-ico:hover .q-tip, .q-ico:focus-visible .q-tip { display: block; }
+/* Variante hacia ABAJO: para encabezados pegados al borde superior de un
+   contenedor con scroll (hacia arriba el globo quedaba recortado/tapado). */
+.q-tip.abajo { bottom: auto; top: calc(100% + 8px); }
+.q-tip.abajo::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: var(--btn-primary); }
 
 /* ── Alertas de anomalías en rojo de verdad. El sistema monocromo define
    --crit como azul marino (#172554): sobre la barra y el menú azules el
