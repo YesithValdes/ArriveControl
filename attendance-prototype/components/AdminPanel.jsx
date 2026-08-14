@@ -1974,8 +1974,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               </td>
                               <td>
                                 <Toggle
-                                  on={p.validarUbicacion} disabled={!!p.sede}
-                                  label={p.sede ? 'Solo aplica sin sede' : '¿Registrar GPS al marcar?'}
+                                  on={p.validarUbicacion}
+                                  label="¿Registrar GPS al marcar?"
                                   onClick={() => alternarFlag(p, 'validarUbicacion')}
                                 />
                               </td>
@@ -1995,7 +1995,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           ['Horario', horario(p)],
                           ['Configuración', <span className="novs" key="c">{configChips(p)}</span>],
                           ['Limitar ubicación', <Toggle key="l" on={p.validarSede} disabled={!p.sede} label="Limitar a su sede" onClick={() => alternarFlag(p, 'validarSede')} />],
-                          ['Validar ubicación', <Toggle key="v" on={p.validarUbicacion} disabled={!!p.sede} label="Registrar GPS al marcar" onClick={() => alternarFlag(p, 'validarUbicacion')} />],
+                          ['Validar ubicación', <Toggle key="v" on={p.validarUbicacion} label="Registrar GPS al marcar" onClick={() => alternarFlag(p, 'validarUbicacion')} />],
                           ['Última marcación', fmtUltima(ultimaMarca.get(p.id))],
                         ],
                         actions: <button className="btn primary block" onClick={() => openEdit(p)}>Editar</button>,

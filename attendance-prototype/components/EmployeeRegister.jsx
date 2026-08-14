@@ -223,10 +223,9 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
               id="rf-sede" value={sede}
               onChange={(e) => {
                 setSede(e.target.value);
-                // Cada pregunta aplica solo a su caso: con sede no hay
-                // "validar" (registro libre de GPS); sin sede no hay "limitar".
-                if (e.target.value) setValidarUbicacion(false);
-                else setValidarSede(false);
+                // Limitar exige sede; validar (registrar GPS) aplica SIEMPRE:
+                // con sede sin limitar también se quiere saber desde dónde marcó.
+                if (!e.target.value) setValidarSede(false);
               }}
             >
               <option value="">Sin sede</option>
@@ -238,19 +237,20 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
           {/* Dos preguntas apiladas junto al select de sede, cada una con su
               signo de pregunta y explicación al pasar el mouse. */}
           <div className="regf-valida-grupo">
-            <div className={`regf-valida${!sede ? '' : ' off'}`}>
+            <div className="regf-valida">
               <label htmlFor="rf-valida">
                 ¿Validar ubicación?
                 <input
-                  id="rf-valida" type="checkbox" checked={validarUbicacion} disabled={!!sede}
+                  id="rf-valida" type="checkbox" checked={validarUbicacion}
                   onChange={(e) => setValidarUbicacion(e.target.checked)}
                 />
               </label>
               <span className="regf-q" tabIndex={0}>
                 ?
                 <span className="regf-tip">
-                  Sin sede: guarda la ubicación GPS desde donde se hace cada marcación,
-                  para saber dónde estaba la persona al marcar.
+                  Guarda la ubicación GPS desde donde se hace cada marcación,
+                  para saber dónde estaba la persona al marcar. Aplica con o
+                  sin sede.
                 </span>
               </span>
             </div>
@@ -349,9 +349,10 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
             <div>
               <span>Ubicación</span>
               <b>
-                {sede
-                  ? (validarSede ? 'Limitada a su sede' : 'Libre: cualquier lugar')
-                  : (validarUbicacion ? 'Se registra el GPS al marcar' : 'Libre, sin registro de GPS')}
+                {[
+                  sede && validarSede ? 'Limitada a su sede' : 'Libre: cualquier lugar',
+                  validarUbicacion || validarSede ? 'se registra el GPS' : 'sin registro de GPS',
+                ].join(', ')}
               </b>
             </div>
           </div>
