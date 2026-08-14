@@ -402,18 +402,20 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [editSede, setEditSede] = useState(null); // { original, name, lat, lon, radius }
 
   /**
-   * Coordenada pegada por una persona, no tecleada por un robot.
-   * - Si pega el PAR completo de Google Maps («1.221088, -77.281136») en
-   *   cualquiera de los dos campos, se reparte solo entre latitud y longitud.
-   * - La coma decimal («-77,28») se vuelve punto.
-   * (Los campos son type=text a propósito: un input number descarta EN
-   * SILENCIO lo que no parsea — así se comía el punto y quedaban
-   * coordenadas gigantes «inválidas».)
+   * PEGAR en los campos de coordenadas. Los inputs siguen siendo numéricos
+   * para teclear, pero el pegado se intercepta ANTES de que el navegador lo
+   * mutile (un input number descarta en silencio lo que no parsea — así se
+   * comía el punto y quedaban longitudes gigantes «inválidas»):
+   * - Par completo de Google Maps («1.221088, -77.281136») en cualquiera de
+   *   los dos campos → se reparte solo entre latitud y longitud.
+   * - Un solo valor → se limpia (coma decimal → punto) y va a su campo.
    */
-  const coordPegada = (valor) => {
-    const par = valor.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s+(-?\d+(?:\.\d+)?)\s*$/);
-    if (par) return { par: true, lat: par[1], lon: par[2] };
-    return { par: false, valor: valor.replace(',', '.').replace(/[^0-9.\-]/g, '') };
+  const pegarCoord = (e, campo, obj, set) => {
+    const texto = (e.clipboardData?.getData('text') || '').trim();
+    e.preventDefault();
+    const par = texto.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+    if (par) set({ ...obj, lat: par[1], lon: par[2] });
+    else set({ ...obj, [campo]: texto.replace(',', '.').replace(/[^0-9.\-]/g, '') });
   };
   const [newSedeOpen, setNewSedeOpen] = useState(false); // drawer de "Nueva sede"
   const [newHoliday, setNewHoliday] = useState('');
@@ -3534,17 +3536,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               </div>
               <div className="field">
                 <label htmlFor="n-lat">Latitud</label>
-                <input id="n-lat" type="text" inputMode="decimal" placeholder="1.212981" value={newSede.lat} onChange={(e) => {
-                  const c = coordPegada(e.target.value);
-                  setNewSede(c.par ? { ...newSede, lat: c.lat, lon: c.lon } : { ...newSede, lat: c.valor });
-                }} />
+                <input id="n-lat" type="number" step="0.000001" placeholder="1.212981" value={newSede.lat}
+                  onChange={(e) => setNewSede({ ...newSede, lat: e.target.value })}
+                  onPaste={(e) => pegarCoord(e, 'lat', newSede, setNewSede)} />
               </div>
               <div className="field">
                 <label htmlFor="n-lon">Longitud</label>
-                <input id="n-lon" type="text" inputMode="decimal" placeholder="-77.280157" value={newSede.lon} onChange={(e) => {
-                  const c = coordPegada(e.target.value);
-                  setNewSede(c.par ? { ...newSede, lat: c.lat, lon: c.lon } : { ...newSede, lon: c.valor });
-                }} />
+                <input id="n-lon" type="number" step="0.000001" placeholder="-77.280157" value={newSede.lon}
+                  onChange={(e) => setNewSede({ ...newSede, lon: e.target.value })}
+                  onPaste={(e) => pegarCoord(e, 'lon', newSede, setNewSede)} />
               </div>
               <div className="field">
                 <label htmlFor="n-radio">Radio GPS (metros)</label>
@@ -3597,17 +3597,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             </div>
             <div className="field">
               <label htmlFor="s-lat">Latitud</label>
-              <input id="s-lat" type="text" inputMode="decimal" value={editSede.lat} onChange={(e) => {
-                const c = coordPegada(e.target.value);
-                setEditSede(c.par ? { ...editSede, lat: c.lat, lon: c.lon } : { ...editSede, lat: c.valor });
-              }} />
+              <input id="s-lat" type="number" step="0.000001" value={editSede.lat}
+                onChange={(e) => setEditSede({ ...editSede, lat: e.target.value })}
+                onPaste={(e) => pegarCoord(e, 'lat', editSede, setEditSede)} />
             </div>
             <div className="field">
               <label htmlFor="s-lon">Longitud</label>
-              <input id="s-lon" type="text" inputMode="decimal" value={editSede.lon} onChange={(e) => {
-                const c = coordPegada(e.target.value);
-                setEditSede(c.par ? { ...editSede, lat: c.lat, lon: c.lon } : { ...editSede, lon: c.valor });
-              }} />
+              <input id="s-lon" type="number" step="0.000001" value={editSede.lon}
+                onChange={(e) => setEditSede({ ...editSede, lon: e.target.value })}
+                onPaste={(e) => pegarCoord(e, 'lon', editSede, setEditSede)} />
             </div>
             <div className="field">
               <label htmlFor="s-radio">Radio GPS (metros)</label>
