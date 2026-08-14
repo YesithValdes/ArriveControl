@@ -410,6 +410,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
    *   los dos campos → se reparte solo entre latitud y longitud.
    * - Un solo valor → se limpia (coma decimal → punto) y va a su campo.
    */
+  // La rueda del mouse sobre un input numérico enfocado cambia el valor sin
+  // querer; soltar el foco al rodar lo evita sin tocar el scroll de la página.
+  const soltarRueda = (e) => e.currentTarget.blur();
+
   const pegarCoord = (e, campo, obj, set) => {
     const texto = (e.clipboardData?.getData('text') || '').trim();
     e.preventDefault();
@@ -3538,17 +3542,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <label htmlFor="n-lat">Latitud</label>
                 <input id="n-lat" type="number" step="0.000001" placeholder="1.212981" value={newSede.lat}
                   onChange={(e) => setNewSede({ ...newSede, lat: e.target.value })}
-                  onPaste={(e) => pegarCoord(e, 'lat', newSede, setNewSede)} />
+                  onPaste={(e) => pegarCoord(e, 'lat', newSede, setNewSede)} onWheel={soltarRueda} />
               </div>
               <div className="field">
                 <label htmlFor="n-lon">Longitud</label>
                 <input id="n-lon" type="number" step="0.000001" placeholder="-77.280157" value={newSede.lon}
                   onChange={(e) => setNewSede({ ...newSede, lon: e.target.value })}
-                  onPaste={(e) => pegarCoord(e, 'lon', newSede, setNewSede)} />
+                  onPaste={(e) => pegarCoord(e, 'lon', newSede, setNewSede)} onWheel={soltarRueda} />
               </div>
               <div className="field">
                 <label htmlFor="n-radio">Radio GPS (metros)</label>
-                <input id="n-radio" type="number" min="10" max="1000" value={newSede.radius} onChange={(e) => setNewSede({ ...newSede, radius: e.target.value })} />
+                <input id="n-radio" type="number" min="10" max="1000" value={newSede.radius} onChange={(e) => setNewSede({ ...newSede, radius: e.target.value })} onWheel={soltarRueda} />
               </div>
               <div className="dialog-actions">
                 <button className="btn" onClick={() => setNewSedeOpen(false)}>Cancelar</button>
@@ -3599,17 +3603,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <label htmlFor="s-lat">Latitud</label>
               <input id="s-lat" type="number" step="0.000001" value={editSede.lat}
                 onChange={(e) => setEditSede({ ...editSede, lat: e.target.value })}
-                onPaste={(e) => pegarCoord(e, 'lat', editSede, setEditSede)} />
+                onPaste={(e) => pegarCoord(e, 'lat', editSede, setEditSede)} onWheel={soltarRueda} />
             </div>
             <div className="field">
               <label htmlFor="s-lon">Longitud</label>
               <input id="s-lon" type="number" step="0.000001" value={editSede.lon}
                 onChange={(e) => setEditSede({ ...editSede, lon: e.target.value })}
-                onPaste={(e) => pegarCoord(e, 'lon', editSede, setEditSede)} />
+                onPaste={(e) => pegarCoord(e, 'lon', editSede, setEditSede)} onWheel={soltarRueda} />
             </div>
             <div className="field">
               <label htmlFor="s-radio">Radio GPS (metros)</label>
-              <input id="s-radio" type="number" min="10" max="1000" value={editSede.radius} onChange={(e) => setEditSede({ ...editSede, radius: e.target.value })} />
+              <input id="s-radio" type="number" min="10" max="1000" value={editSede.radius} onChange={(e) => setEditSede({ ...editSede, radius: e.target.value })} onWheel={soltarRueda} />
             </div>
             <div className="dialog-actions">
               <button className="btn" onClick={() => setEditSede(null)}>Cancelar</button>
@@ -4621,6 +4625,12 @@ img.sesion-avatar { object-fit: cover; display: block; }
 .att-table .att-name { font-weight: 600; }
 .att-table .att-sede { color: var(--muted); }
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 10px; font-size: 12.5px; color: var(--muted); }
+
+/* Inputs numéricos sin flechas: en coordenadas y demás cifras del panel las
+   flechitas no ayudan y la rueda del mouse cambiaba el número sin querer. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 
 /* Empleados ARCHIVADOS (desactivados, historial intacto) */
 .archivados { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
