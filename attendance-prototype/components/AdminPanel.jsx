@@ -917,6 +917,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         valor: 0,
         sinSalario: false,
         conExtras: false,
+        desglose: [],          // fórmula exacta de cada tramo, para el tooltip
         referencias: [],       // tramos de esta fila, para marcarlos pagados
         refsSinPagar: [],
       });
@@ -935,7 +936,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           days: 0, hours: 0, lateCount: 0,
           horasPorTipo: Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0])),
           extras: 0, valor: 0, sinSalario: false, conExtras: false,
-          referencias: [], refsSinPagar: [],
+          desglose: [], referencias: [], refsSinPagar: [],
         });
       }
       const f = filas.get(t.documento);
@@ -947,7 +948,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       // `valor: null` = el servidor no pudo valorizar porque falta el salario.
       // Se marca la fila en vez de sumar cero, que se leería como "no generó".
       if (t.valor == null) f.sinSalario = true;
-      else f.valor += t.valor;
+      else {
+        f.valor += t.valor;
+        // Fórmula EXACTA del tramo, visible en el tooltip de la columna
+        // Valor: el sistema calcula sin redondear y solo aproxima al final.
+        f.desglose.push(`${t.fecha} ${t.tipoHora}: ${t.horas} h × $${Number(t.valorHora).toLocaleString('es-CO', { maximumFractionDigits: 2 })} × ${t.factor} = $${Number(t.valor).toLocaleString('es-CO', { maximumFractionDigits: 2 })}`);
+      }
     }
 
     // Estado de pago de la FILA, a partir de sus tramos. `parcial` aparece
@@ -2394,7 +2400,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           </span>
                         ))}
                         <span>{r.extras > 0 ? fmtHoras(r.extras) : '—'}</span>
-                        <span className="val-money">
+                        <span className="val-money" title={r.desglose?.length ? r.desglose.join('\n') : undefined}>
                           {!r.conExtras
                             ? <span className="muted-cell">—</span>
                             : r.sinSalario

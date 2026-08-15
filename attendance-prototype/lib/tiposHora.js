@@ -158,10 +158,12 @@ export function valorizarRegistro(registro, { salarioMensual, factores = FACTORE
   return {
     ...registro,
     factor,
-    // Redondeado al peso: el peso colombiano no tiene centavos y una cifra
-    // con decimales en un reporte de nómina solo genera desconfianza.
-    valorHora: Math.round(valorHora),
-    valor: Math.round(valorHora * factor * registro.horas),
+    // EXACTOS, con decimales: el redondeo al peso es tarea de la
+    // presentación y se hace UNA sola vez, sobre el total. Redondear cada
+    // tramo aquí acumulaba el error (tramos de un mes sumaban pesos
+    // fantasma) y el reporte no cuadraba con el cálculo a mano.
+    valorHora,
+    valor: valorHora * factor * registro.horas,
   }
 }
 
