@@ -26,7 +26,11 @@
 import { horasDiaEn } from './jornada.js'
 import { codigoDeTramo, partirPorNocturno, NOCTURNO_DEFECTO } from './tiposHora.js'
 
-const round1 = (n) => Math.round(n * 10) / 10
+// Horas de un tramo con precisión de SEGUNDO (4 decimales: 1 s = 0.0003 h).
+// Antes se redondeaba a 1 decimal (1.6456 → «1.7») y el reporte no cuadraba
+// con el hh:mm:ss de asistencia; los segundos son acumulativos y se conservan
+// de punta a punta — redondear es tarea de la presentación, no del cálculo.
+const horasExactas = (n) => Math.round(n * 10000) / 10000
 
 /** Minutos → HH:MM, normalizando cruces de medianoche (1560 → "02:00"). */
 const hhmm = (min) => {
@@ -65,7 +69,8 @@ export function calcularRegistros(porEmpleado, { festivos, vigencias, nocturno =
           // Fin en minutos ABSOLUTOS desde las 0:00 del día de entrada: un
           // turno 22:00→02:00 termina en el minuto 1560, no en el 120. Sin
           // esto, restar la extra daba horas negativas (bug de medianoche).
-          hasta: abierta.minutos + Math.round(horas * 60),
+          // Fraccionario: los segundos viajan (843.3, no 843).
+          hasta: abierta.minutos + horas * 60,
           horas,
           dow: abierta.dow,
           dominical: abierta.dow === 0 || festivos.has(abierta.fecha),
@@ -93,7 +98,7 @@ export function calcularRegistros(porEmpleado, { festivos, vigencias, nocturno =
           fecha,
           horaInicio: hhmm(p.desde),
           horaFin: hhmm(p.hasta),
-          horas: round1((p.hasta - p.desde) / 60),
+          horas: horasExactas((p.hasta - p.desde) / 60),
           tipoHora: codigoDeTramo({ nocturna: p.nocturna, dominical }),
         })
       }
@@ -137,8 +142,7 @@ export function calcularRegistros(porEmpleado, { festivos, vigencias, nocturno =
         // quien liquida lo rechazaría de todos modos. (Pendiente con KUPOCELL:
         // definir si estos residuos se acumulan de otra forma.)
         if (toma < 0.5) continue
-        const tomaMin = Math.round(toma * 60)
-        agregarExtra(fecha, p.hasta - tomaMin, p.hasta, false)
+        agregarExtra(fecha, p.hasta - toma * 60, p.hasta, false)
       }
     }
     tramos.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.horaInicio.localeCompare(b.horaInicio))

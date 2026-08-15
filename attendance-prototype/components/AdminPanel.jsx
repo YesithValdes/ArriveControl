@@ -7,7 +7,7 @@
  *
  * Datos reales: journeyService (eventos/correcciones) + rosterService (personas).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 // Todos los datos vienen de POSTGRES vía API (services/panelStore.js), con
 // las mismas formas que los services locales que reemplaza.
@@ -61,6 +61,7 @@ function Icon({ name, size = 17 }) {
     users: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>,
     chevronLeft: <polyline points="15 18 9 12 15 6" />,
     chevronRight: <polyline points="9 18 15 12 9 6" />,
+    check: <polyline points="20 6 9 17 4 12" />,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -288,10 +289,11 @@ const ETIQUETA_PAGO = { pagado: 'Pagado', parcial: 'Parcial', pendiente: 'Pendie
 const fmtCOP = (n) =>
   n == null ? '—' : n.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
 
-// Horas con un decimal y coma (7.5 → "7,5 h"). En la valorización se prefiere
-// esto al hh:mm:ss del resto del panel: al lado de un valor en pesos, lo que
-// se quiere leer es "3,5 h × factor", no un cronómetro.
-const fmtHoras = (n) => `${(Math.round(n * 10) / 10).toLocaleString('es-CO')} h`;
+// Horas decimales con coma (1.6456 → "1,65 h"). En la valorización se
+// prefiere esto al hh:mm:ss del resto del panel: al lado de pesos se lee
+// "1,65 h × factor". DOS decimales: con uno, 1:38:44 aparecía como "1,7 h"
+// y el reporte no cuadraba con el cronómetro de asistencia.
+const fmtHoras = (n) => `${(Math.round(n * 100) / 100).toLocaleString('es-CO')} h`;
 
 /** Suma horas de pares entrada→salida; una entrada abierta cuenta hasta ahora (máx. 12 h). */
 function pairedHours(events, nowMs) {
@@ -309,6 +311,37 @@ function pairedHours(events, nowMs) {
     if (span < NIGHT_WINDOW_MS) total += span / 3600000;
   }
   return total;
+}
+
+/**
+ * Transición FLIP para listas que se REORDENAN en vivo (asistencia): mide
+ * dónde estaba cada hijo antes del render y lo desliza desde ahí hasta su
+ * posición nueva, en vez de teletransportarlo. Los hijos se identifican con
+ * data-flip-id. Respeta prefers-reduced-motion.
+ */
+function useFlip(ref, deps) {
+  const previas = useRef(new Map());
+  useLayoutEffect(() => {
+    const cont = ref.current;
+    if (!cont) { previas.current = new Map(); return; }
+    const reducido = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const nuevas = new Map();
+    for (const el of cont.children) {
+      const id = el.dataset?.flipId;
+      if (!id) continue;
+      const top = el.getBoundingClientRect().top;
+      nuevas.set(id, top);
+      const antes = previas.current.get(id);
+      if (!reducido && antes != null && Math.abs(antes - top) > 1 && el.animate) {
+        el.animate(
+          [{ transform: `translateY(${antes - top}px)` }, { transform: 'none' }],
+          { duration: 380, easing: 'cubic-bezier(.22,.9,.35,1)' },
+        );
+      }
+    }
+    previas.current = nuevas;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
 }
 
 /** Iniciales para el avatar de la sesión: "Ana María Ruiz" → "AR". */
@@ -617,12 +650,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
    * Un empleado dado de baja ya no está en el roster; en ese caso se avisa en
    * vez de abrir un cajón vacío que no guardaría nada.
    */
-  const irAFichaEmpleado = (cedula) => {
-    const persona = listPeople().find((p) => p.cedula === cedula);
-    if (!persona) { showToast('Ese empleado ya no está activo.'); return; }
-    setTab('empleados');
-    openEdit(persona);
-  };
   const [toast, setToast] = useState(null);
 
   // Tabla de asistencia: búsqueda + filtro por estado + paginación.
@@ -633,6 +660,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [page, setPage] = useState(0);
   const [empSearch, setEmpSearch] = useState(''); // búsqueda de la tabla Empleados
   const [empPage, setEmpPage] = useState(0); // paginación de la tabla Empleados
+  // Vista de ARCHIVADOS: alterna la tabla (activos ↔ archivados) desde un
+  // botón junto a «Registrar empleado», cada lista con su propia página.
+  const [verArchivados, setVerArchivados] = useState(false);
+  const [archPage, setArchPage] = useState(0);
   // Cajón de registro de empleado (pestaña Empleados, sin cambiar de página).
   const [regAbierto, setRegAbierto] = useState(false);
   // Guía "¿Cómo empezar?" (los 3 pasos que antes ocupaban el dashboard).
@@ -738,8 +769,22 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         if (e.type === 'in') {
           const next = mine[i + 1];
           const closed = next && next.type === 'out';
-          if (!closed && nowMs - new Date(e.ts).getTime() > NIGHT_WINDOW_MS) {
-            anomalies.push({ kind: 'missing-exit', person: p, event: e });
+          if (!closed) {
+            // Salida faltante: con FRANJA del día, la entrada abierta se marca
+            // 3 h después de la salida esperada (quedarse un rato más es hora
+            // extra normal, no incidencia). Sin franja, respaldo de 12 h desde
+            // la entrada — que era la única regla antes y llegaba tardísimo.
+            const entradaMs = new Date(e.ts).getTime();
+            let topeMs = entradaMs + NIGHT_WINDOW_MS;
+            const franja = franjaEsperada(p, dayKey(e.ts));
+            if (franja) {
+              const [sh, sm] = franja.salida.split(':').map(Number);
+              const sal = new Date(e.ts);
+              sal.setHours(sh, sm, 0, 0);
+              if (sal.getTime() <= entradaMs) sal.setDate(sal.getDate() + 1); // turno que cruza medianoche
+              topeMs = Math.min(topeMs, sal.getTime() + 3 * 3600000);
+            }
+            if (nowMs > topeMs) anomalies.push({ kind: 'missing-exit', person: p, event: e });
           }
         }
         if (e.flag === 'late-entry') anomalies.push({ kind: 'late-entry', person: p, event: e });
@@ -771,6 +816,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         corrected,
       };
     });
+
+    // La bandeja se lee de lo MÁS RECIENTE a lo más viejo (antes quedaba
+    // agrupada por persona, en orden alfabético).
+    anomalies.sort((a, b) => b.event.ts.localeCompare(a.event.ts));
 
     // Comparativa por sede (siempre sobre TODAS las filas, sin filtro).
     const sedeNames = getSedes().map((o) => o.name);
@@ -1018,6 +1067,19 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     setDrawer({ personId, personName, desde, hasta });
   };
 
+  /**
+   * Desde Reportes: abre la ASISTENCIA de esa persona (sus marcaciones) sobre
+   * el mismo período del reporte — lo que se quiere ver al hacer clic en un
+   * nombre es de dónde salieron esas horas, no su ficha de datos.
+   */
+  const irAAsistenciaEmpleado = (cedula) => {
+    const persona = listPeople().find((p) => p.cedula === cedula);
+    if (!persona) { showToast('Ese empleado ya no está activo.'); return; }
+    setEvForm(null);
+    setOpenDia(null);
+    setDrawer({ personId: persona.id, personName: persona.name, desde: repFrom, hasta: repTo });
+  };
+
   // Anomalías: abren el drawer en el día del evento, con el formulario
   // preconfigurado según el tipo de anomalía.
   const openFix = (a) => {
@@ -1125,6 +1187,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // cualquier día pasado.
   const [diaAsistencia, setDiaAsistencia] = useState(todayKey());
   const esHoy = diaAsistencia === todayKey();
+  // Reordenamiento suave de la tabla de asistencia (quien marca sube arriba).
+  const attFlipRef = useRef(null);
 
   const attRows = useMemo(() => {
     // Hoy sale de view.rows (en vivo). Otro día se reconstruye con los
@@ -1149,7 +1213,21 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     if (q) rs = rs.filter((r) => r.person.name.toLowerCase().includes(q) || r.person.id.toLowerCase().includes(q));
     if (statusFilter === 'present') rs = rs.filter((r) => (esHoy ? r.present : !!r.firstIn));
     if (statusFilter === 'absent') rs = rs.filter((r) => !r.firstIn);
-    return rs;
+
+    // Orden: la ÚLTIMA marcación del día primero (lo que acaba de pasar se ve
+    // arriba, sin buscar); quien no ha marcado ese día va al final, por nombre.
+    const ultimaTs = new Map();
+    for (const e of listJourneyEvents()) {
+      if (dayKey(e.ts) !== diaAsistencia) continue;
+      const prev = ultimaTs.get(e.personId);
+      if (!prev || e.ts > prev) ultimaTs.set(e.personId, e.ts);
+    }
+    return [...rs].sort((a, b) => {
+      const ta = ultimaTs.get(a.person.id) ?? '';
+      const tb = ultimaTs.get(b.person.id) ?? '';
+      if (ta !== tb) return tb.localeCompare(ta);
+      return a.person.name.localeCompare(b.person.name);
+    });
   }, [view, search, statusFilter, diaAsistencia, esHoy, tick]);
 
   // Tramos valorizados de un día pasado. OJO: se pide la SEMANA completa del
@@ -1252,6 +1330,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const pageCount = Math.max(1, Math.ceil(attRows.length / tamPagina));
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = attRows.slice(safePage * tamPagina, (safePage + 1) * tamPagina);
+  // Desliza las filas a su nueva posición cuando el orden cambia (FLIP).
+  useFlip(attFlipRef, [pageRows]);
 
   // Día anterior/siguiente con flechas: moverse entre días cercanos sin
   // abrir el calendario. El «siguiente» nunca pasa de hoy.
@@ -1597,6 +1677,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       if (e.sinSalario) return <span className="libre">sin salario</span>;
                       return <span className="saldo pos">{fmtCOP(e.valor)}</span>;
                     };
+                    // Novedad: ¿esta persona tiene alguna anomalía DEL DÍA que
+                    // se está viendo? Se señala resaltando la FILA con un lavado
+                    // suave (sin columna aparte); el detalle va en el tooltip.
+                    const NOMBRE_NOVEDAD = { 'missing-exit': 'Salida faltante', 'late-entry': 'Entrada tardía', 'early-exit': 'Salida temprana' };
+                    const novedadDe = (r) => {
+                      const novs = data.anomalies.filter((a) => a.person.id === r.person.id && dayKey(a.event.ts) === diaAsistencia);
+                      if (novs.length === 0) return null;
+                      return [...new Set(novs.map((n) => NOMBRE_NOVEDAD[n.kind] ?? n.kind))].join(' · ');
+                    };
                     return (
                     <>
                       <div className="att-tablewrap">
@@ -1604,11 +1693,16 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           <thead>
                             <tr><th>Empleado</th><th>Jornada prevista</th><th className="num">Trabajado</th><th className="num">Extras (COP)</th><th>Sede / Ubicación</th></tr>
                           </thead>
-                          <tbody>
+                          <tbody ref={attFlipRef}>
                             {pageRows.map((r) => {
                               const e = extrasHoy.get(r.person.cedula);
+                              const novedad = novedadDe(r);
                               return (
-                                <tr key={r.person.id} onClick={() => openDrawer(r.person.id, r.person.name, esHoy ? null : diaAsistencia)} tabIndex={0}
+                                <tr
+                                  key={r.person.id} data-flip-id={r.person.id}
+                                  className={novedad ? 'con-novedad' : undefined}
+                                  title={novedad ? `Novedad: ${novedad}` : undefined}
+                                  onClick={() => openDrawer(r.person.id, r.person.name, esHoy ? null : diaAsistencia)} tabIndex={0}
                                   onKeyDown={(ev) => ev.key === 'Enter' && openDrawer(r.person.id, r.person.name, esHoy ? null : diaAsistencia)}>
                                   <td>{celdaEmpleado(r)}</td>
                                   <td>{jornadaPrevista(r) === 'libre' ? <span className="libre">libre</span> : jornadaPrevista(r)}</td>
@@ -1636,6 +1730,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               ['Jornada prevista', jornadaPrevista(r)],
                               ['Trabajado', `${fmtH(r.hoursToday)}${e && e.horas > 0 ? ` (+${fmtHM(e.horas)} extra)` : ''}`],
                               ['Extras (COP)', celdaExtras(r)],
+                              ...(novedadDe(r) ? [['Novedad', novedadDe(r)]] : []),
                               ['Sede', r.sede || '—'],
                             ],
                             actions: (
@@ -1948,9 +2043,21 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 value={empSearch} onChange={(e) => { setEmpSearch(e.target.value); setEmpPage(0); }}
               />
               <button className="btn primary" onClick={() => setRegAbierto(true)}>Registrar empleado</button>
+              {/* Con la vista abierta el botón se queda aunque la lista quede
+                  en cero (al reactivar al último hay que poder volver). */}
+              {(listArchivados().length > 0 || verArchivados) && (
+                <button
+                  className="btn"
+                  aria-pressed={verArchivados}
+                  title="Desactivados; su historial se conserva y no ocupan cupo"
+                  onClick={() => { setVerArchivados(!verArchivados); setArchPage(0); }}
+                >
+                  {verArchivados ? '‹ Volver a activos' : `Archivados (${listArchivados().length})`}
+                </button>
+              )}
             </div>
             <div className="scrollable">
-              {(() => {
+              {!verArchivados && (() => {
                 const horario = (p) => (p.jornadaDias
                   ? resumenDias(p.jornadaDias)
                   : p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : 'horario libre');
@@ -2078,40 +2185,53 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               })()}
 
               {/* ARCHIVADOS: desactivados con historial intacto. No ocupan
-                  cupo; reactivar vuelve a ocuparlo (el servidor lo verifica). */}
-              {listArchivados().length > 0 && (
-                <details className="archivados">
-                  <summary>
-                    Archivados <span className="muted-count">{listArchivados().length}</span>
-                    <span className="arch-hint"> — desactivados; su historial se conserva</span>
-                  </summary>
-                  {listArchivados().map((p) => (
-                    <div key={p.id} className="arch-fila">
-                      <span className="emp-cell">
-                        <span className="av av-tabla">{iniciales(p.name)}</span>
-                        <span>
-                          <span className="att-name">{p.name}</span>
-                          <span className="emp-cedula">{p.cedula || 'sin cédula'}</span>
+                  cupo; reactivar vuelve a ocuparlo (el servidor lo verifica).
+                  Misma paginación de 9 que la lista de activos. */}
+              {verArchivados && (() => {
+                const archivados = listArchivados();
+                const ARCH_PAGE = 9;
+                const archPages = Math.max(1, Math.ceil(archivados.length / ARCH_PAGE));
+                const archSafe = Math.min(archPage, archPages - 1);
+                const archPagina = archivados.slice(archSafe * ARCH_PAGE, (archSafe + 1) * ARCH_PAGE);
+                return (
+                  <>
+                    <p className="hint">Desactivados: no pueden marcar ni ocupan cupo, y su historial se conserva.</p>
+                    {archivados.length === 0 && <p className="empty">No hay empleados archivados.</p>}
+                    {archPagina.map((p) => (
+                      <div key={p.id} className="arch-fila">
+                        <span className="emp-cell">
+                          <span className="av av-tabla">{iniciales(p.name)}</span>
+                          <span>
+                            <span className="att-name">{p.name}</span>
+                            <span className="emp-cedula">{p.cedula || 'sin cédula'}</span>
+                          </span>
                         </span>
-                      </span>
-                      <button
-                        className="btn small"
-                        onClick={async () => {
-                          try {
-                            const r = await updatePerson(p.id, { activo: true });
-                            refresh();
-                            showToast(`${r.name} reactivado`);
-                          } catch (e) {
-                            showToast(e.message);
-                          }
-                        }}
-                      >
-                        Reactivar
-                      </button>
-                    </div>
-                  ))}
-                </details>
-              )}
+                        <button
+                          className="btn small"
+                          onClick={async () => {
+                            try {
+                              const r = await updatePerson(p.id, { activo: true });
+                              refresh();
+                              showToast(`${r.name} reactivado`);
+                            } catch (e) {
+                              showToast(e.message);
+                            }
+                          }}
+                        >
+                          Reactivar
+                        </button>
+                      </div>
+                    ))}
+                    {archPages > 1 && (
+                      <div className="pager">
+                        <button className="btn" disabled={archSafe === 0} onClick={() => setArchPage(archSafe - 1)}>Anterior</button>
+                        <span>Página {archSafe + 1} de {archPages}</span>
+                        <button className="btn" disabled={archSafe >= archPages - 1} onClick={() => setArchPage(archSafe + 1)}>Siguiente</button>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </section>
         )}
@@ -2263,8 +2383,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       <div className="rep-row" role="row" key={r.cedula}>
                         <button
                           className="rep-name rep-link"
-                          onClick={() => irAFichaEmpleado(r.cedula)}
-                          title={`Abrir la ficha de ${r.name}`}
+                          onClick={() => irAAsistenciaEmpleado(r.cedula)}
+                          title={`Ver la asistencia de ${r.name} en este período`}
                         >
                           {r.name}
                         </button>
@@ -2340,8 +2460,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               {r.pago === 'pagado' ? 'Quitar marca de pagado' : 'Marcar como pagadas'}
                             </button>
                           )}
-                          <button className="btn primary block" onClick={() => irAFichaEmpleado(r.cedula)}>
-                            Abrir ficha del empleado
+                          <button className="btn primary block" onClick={() => irAAsistenciaEmpleado(r.cedula)}>
+                            Ver su asistencia del período
                           </button>
                         </>
                       ),
@@ -3448,9 +3568,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
                           {abierto && (
                             <div className="dia-detalle">
-                              {d.evs.map((e) => (
+                              {d.evs.map((e, i) => {
+                                // Mismo criterio que los bloques ⚠ de arriba y que el
+                                // resaltado de Asistencia: marcación con bandera
+                                // (tardía / salida temprana) o entrada sin su salida.
+                                const novedad = e.flag === 'late-entry' || e.flag === 'early-exit'
+                                  || (e.type === 'in' && d.evs[i + 1]?.type !== 'out');
+                                return (
                                 <div key={e.id}>
-                                  <div className="tl-row">
+                                  <div className={`tl-row${novedad ? ' con-novedad' : ''}`}>
                                     <span className={`tl-type ${e.type}`}>{e.type === 'in' ? 'Entrada' : 'Salida'}</span>
                                     <span className="tl-time">{fmt12(e.ts)}</span>
                                     <span className="tl-flag">
@@ -3473,7 +3599,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                   {evForm?.mode === 'edit' && evForm.eventId === e.id && formularioEv}
                                   {/* (el alta con fecha libre —conFecha— se pinta abajo, no aquí) */}
                                 </div>
-                              ))}
+                                );
+                              })}
 
                               {/* Alta manual: el formulario aparece bajo el botón, dentro del día */}
                               {evForm?.mode === 'add' && !evForm.conFecha && evForm.fecha === d.fecha
@@ -4186,6 +4313,10 @@ const CSS = `
 /* Punto de estado junto al nombre: verde marcó hoy, rojo ausente. */
 .punto-estado { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-left: 7px; vertical-align: middle; }
 .punto-estado.on { background: #1fa15f; }
+
+/* Novedad del día: la FILA entera lleva un lavado suave (nada de columnas ni
+   iconos); al pasar el mouse gana el hover normal y el tooltip da el detalle. */
+.att-table tbody tr.con-novedad td { background: color-mix(in srgb, var(--crit-soft) 55%, transparent); }
 .punto-estado.off { background: #dc2626; }
 /* Horas extra del día, debajo del total trabajado. */
 .extra-h { display: block; font-size: 11px; font-weight: 700; color: var(--btn-primary); }
@@ -4742,6 +4873,11 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .drawer-hours { margin-left: auto; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .drawer-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; }
 .tl-row { display: grid; grid-template-columns: 64px 84px 1fr auto; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--grid); font-size: 13px; }
+/* Marcación con novedad: el mismo lavado suave de la tabla de Asistencia. */
+.tl-row.con-novedad {
+  background: color-mix(in srgb, var(--crit-soft) 55%, transparent);
+  border-radius: 8px; padding-left: 8px; padding-right: 8px; margin: 0 -8px;
+}
 .tl-type { font-weight: 700; font-size: 12px; }
 .tl-type.in { color: var(--good-text); }
 .tl-type.out { color: var(--warn-text); }

@@ -36,8 +36,13 @@ export async function construirLote(esquema, rango = null) {
     `select m.empleado_id, e.cedula, e.nombre, e.jornada_semanal, e.salario_mensual,
             s.nombre as sede_nombre, m.tipo,
             to_char(m.ts at time zone 'America/Bogota', 'YYYY-MM-DD') as fecha,
+            -- Minutos FRACCIONARIOS (con los segundos): 14:03:18 → 843.3.
+            -- Descartar los segundos por marcación era acumulativo: dos
+            -- redondeos de 30 s al día durante un mes son minutos enteros
+            -- pagados de más o de menos.
             (extract(hour from m.ts at time zone 'America/Bogota') * 60
-             + extract(minute from m.ts at time zone 'America/Bogota'))::int as minutos,
+             + extract(minute from m.ts at time zone 'America/Bogota')
+             + extract(second from m.ts at time zone 'America/Bogota') / 60)::float as minutos,
             extract(epoch from m.ts) as epoch,
             extract(dow from m.ts at time zone 'America/Bogota')::int as dow
        from marcaciones m
