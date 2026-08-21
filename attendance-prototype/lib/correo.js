@@ -40,7 +40,9 @@ function transporte() {
   return g.__crTransporte
 }
 
-const HORA_CO = { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }
+// Formato de 12 horas: "07:58:24 a. m." — es como la gente lee su reloj.
+// (El "Acumulado hoy" NO cambia: es una duración, no una hora del día.)
+const HORA_CO = { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }
 const FECHA_CO = { timeZone: 'America/Bogota', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }
 
 /**
