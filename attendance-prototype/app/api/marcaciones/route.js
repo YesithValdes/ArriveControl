@@ -9,7 +9,7 @@
  *        permiso VER.
  */
 import { NextResponse, after } from 'next/server'
-import { registrarPaso, listarMarcaciones, guardarDireccion } from '../../../lib/marcaciones'
+import { registrarPaso, listarMarcaciones, guardarDireccion, acumuladoDelDia } from '../../../lib/marcaciones'
 import { enviarComprobanteMarcacion } from '../../../lib/correo.js'
 import { direccionDesdeCoordenadas } from '../../../lib/geocodificar.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
@@ -86,6 +86,8 @@ export async function POST(req) {
       await guardarDireccion(ctx.esquema, r.marcacion.id, direccion).catch(() => {})
     }
     if (r.empleado?.correo) {
+      // Acumulado del día (mejor esfuerzo: si falla, el correo sale sin él).
+      const acumuladoSeg = await acumuladoDelDia(ctx.esquema, empleadoId, r.marcacion.ts).catch(() => null)
       await enviarComprobanteMarcacion({
         para: r.empleado.correo,
         nombre: r.empleado.nombre,
@@ -95,6 +97,7 @@ export async function POST(req) {
         lat: r.marcacion.lat,
         lon: r.marcacion.lon,
         direccion,
+        acumuladoSeg,
         diferido: !!diferido,
         empresa: ctx.empresa?.nombre,
       })

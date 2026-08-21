@@ -53,10 +53,11 @@ const FECHA_CO = { timeZone: 'America/Bogota', weekday: 'long', day: 'numeric', 
  * @param {string=} p.sede       nombre de la sede donde marcó
  * @param {number=} p.lat @param {number=} p.lon  ubicación exacta, si se guardó
  * @param {string=} p.direccion  dirección legible (geocodificación inversa)
+ * @param {number=} p.acumuladoSeg  segundos trabajados en el día (pares cerrados)
  * @param {boolean=} p.diferido  marcación de la cola offline (hora del aparato)
  * @param {string=} p.empresa    nombre de la empresa
  */
-export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede, lat, lon, direccion, diferido, empresa }) {
+export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede, lat, lon, direccion, acumuladoSeg, diferido, empresa }) {
   const t = transporte()
   if (!t || !para) return false
 
@@ -67,6 +68,10 @@ export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede,
   const hora = fecha.toLocaleTimeString('es-CO', HORA_CO)
   const dia = fecha.toLocaleDateString('es-CO', FECHA_CO)
   const mapa = lat != null && lon != null ? `https://www.google.com/maps?q=${lat},${lon}` : null
+  // Acumulado del día en hh:mm:ss. Con 0 segundos y ENTRADA no se muestra
+  // (acaba de empezar el día); con salida, 0 sería raro pero se muestra igual.
+  const hhmmss = (seg) => `${String(Math.floor(seg / 3600)).padStart(2, '0')}:${String(Math.floor((seg % 3600) / 60)).padStart(2, '0')}:${String(seg % 60).padStart(2, '0')}`
+  const acumulado = acumuladoSeg != null && !(esEntrada && acumuladoSeg === 0) ? hhmmss(acumuladoSeg) : null
 
   const html = `
   <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:480px;margin:0 auto;border:1px solid #d8e2ee;border-radius:14px;overflow:hidden">
@@ -79,6 +84,7 @@ export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede,
       <div style="font-size:30px;font-weight:800;color:${color};font-variant-numeric:tabular-nums;margin-top:2px">${hora}</div>
       <div style="font-size:13px;color:#7b8ca0;text-transform:capitalize">${dia}</div>
       <table style="margin-top:16px;font-size:13px;color:#46586a;border-collapse:collapse">
+        ${acumulado ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Acumulado hoy</td><td style="font-variant-numeric:tabular-nums;font-weight:700">${acumulado}</td></tr>` : ''}
         ${sede ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Sede</td><td>${sede}</td></tr>` : ''}
         ${mapa ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Ubicación</td><td><a href="${mapa}" style="color:#557d9e">${direccion || `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`}</a></td></tr>` : ''}
         ${empresa ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Empresa</td><td>${empresa}</td></tr>` : ''}
@@ -94,7 +100,7 @@ export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede,
       to: para,
       subject: `${esEntrada ? 'Entrada' : 'Salida'} registrada — ${hora}`,
       html,
-      text: `${titulo}\n${nombre}\n${hora} — ${dia}${sede ? `\nSede: ${sede}` : ''}${mapa ? `\nUbicación: ${direccion ? `${direccion} — ` : ''}${mapa}` : ''}`,
+      text: `${titulo}\n${nombre}\n${hora} — ${dia}${acumulado ? `\nAcumulado hoy: ${acumulado}` : ''}${sede ? `\nSede: ${sede}` : ''}${mapa ? `\nUbicación: ${direccion ? `${direccion} — ` : ''}${mapa}` : ''}`,
     })
     return true
   } catch (e) {

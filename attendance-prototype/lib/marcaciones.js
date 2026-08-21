@@ -126,6 +126,35 @@ export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo
 }
 
 /**
+ * Segundos TRABAJADOS en el día (Bogotá) de una marcación: suma los pares
+ * entrada→salida cerrados de ese día. Para el comprobante por correo — la
+ * persona quiere saber cuánto lleva acumulado, no solo a qué hora marcó.
+ * Una entrada sin cerrar no suma (el acumulado corre cuando marque salida).
+ */
+export async function acumuladoDelDia(esquema, empleadoId, ts) {
+  const dia = diaBogota(ts)
+  return conEmpresa(esquema, async (db) => {
+    const { rows } = await db.query(
+      `select tipo, ts from marcaciones
+        where empleado_id = $1 and not eliminada
+          and (ts at time zone 'America/Bogota')::date = $2::date
+        order by ts`,
+      [empleadoId, dia],
+    )
+    let segundos = 0
+    let abierta = null
+    for (const m of rows) {
+      if (m.tipo === 'entrada') abierta = m
+      else if (m.tipo === 'salida' && abierta) {
+        segundos += (new Date(m.ts) - new Date(abierta.ts)) / 1000
+        abierta = null
+      }
+    }
+    return Math.round(segundos)
+  })
+}
+
+/**
  * Guarda la dirección legible de una marcación (geocodificación inversa).
  * Se llama DESPUÉS de responder al kiosco; si falla, quedan las coordenadas.
  */
