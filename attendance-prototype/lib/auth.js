@@ -57,6 +57,11 @@ export const auth = betterAuth({
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID ?? '',
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+      // SIEMPRE mostrar el selector de cuentas. Sin esto, Google entraba en
+      // silencio con la última cuenta usada en ese navegador: el superadmin
+      // tocaba "Entrar con Google" y aterrizaba en la sesión de la empresa
+      // sin que nadie le preguntara con cuál cuenta quería entrar.
+      prompt: 'select_account',
     },
   },
   // Correo y contraseña como SEGUNDA llave, no como puerta de entrada.
