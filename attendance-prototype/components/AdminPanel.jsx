@@ -348,6 +348,21 @@ function useFlip(ref, deps) {
 const iniciales = (texto) =>
   texto.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
 
+/**
+ * Un nombre y un apellido, para las listas donde el nombre completo estorba.
+ * En Colombia la cédula trae «Nombre1 Nombre2 Apellido1 Apellido2», así que
+ * con cuatro palabras se toman la primera y la TERCERA («Yeraldin Camuez»);
+ * con tres, las dos primeras («Edwin Espinoza»). Se capitaliza porque los
+ * nombres llegan como los tecleó quien registró, a veces en minúscula.
+ */
+const nombreCorto = (texto) => {
+  const p = String(texto ?? '').trim().split(/\s+/).filter(Boolean);
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  if (p.length === 0) return '';
+  if (p.length <= 2) return p.map(cap).join(' ');
+  return [p[0], p[p.length >= 4 ? 2 : 1]].map(cap).join(' ');
+};
+
 const ROL_ETIQUETA = { empresa: 'Empresa', superadmin: 'Superadministrador' };
 
 export default function AdminPanel({ sesion = null, permisos = {}, seccionInicial = 'dashboard' }) {
@@ -818,6 +833,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         // Ubicación» y hasta ahora solo cumplía la mitad: quien no tiene sede
         // —justo el caso donde importa el GPS— salía con un guion.
         lugar: [...today].reverse().find((e) => e.lat != null && e.lon != null) || null,
+        // La ÚLTIMA marcación del día, sea entrada o salida. Antes la tabla
+        // mostraba la primera entrada, así que quien salía a almorzar y volvía
+        // seguía anunciando la hora de la mañana.
+        ultimoEv: today[today.length - 1] || null,
       };
     });
 
@@ -1656,10 +1675,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   {attRows.length > 0 && (() => {
                     // Última marcación en corto; el punto de al lado del nombre
                     // ya dice el estado (verde marcó hoy, rojo ausente).
+                    // La hora de la ÚLTIMA marcación, entrada o salida.
                     const ultima = (r) => {
-                      if (!r.firstIn) return esHoy ? 'sin marcación hoy' : 'sin marcación';
-                      if (r.lastOut && !r.present) return `salió ${horaCorta(r.lastOut.ts)}`;
-                      return `entró ${horaCorta(r.firstIn.ts)}`;
+                      if (!r.ultimoEv) return esHoy ? 'sin marcación hoy' : 'sin marcación';
+                      return `${r.ultimoEv.type === 'in' ? 'entró' : 'salió'} ${horaCorta(r.ultimoEv.ts)}`;
                     };
                     const jornadaPrevista = (r) => {
                       const f = franjaEsperada(r.person, diaAsistencia);
@@ -1669,12 +1688,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     // Quien ya salió (hoy o un día pasado) va en rojo, y la
                     // letra pequeña dice por qué: "salió 16:02" o "sin marcación".
                     const estadoPunto = (r) => (r.present ? 'on' : 'off');
+                    // Nombre corto en la lista; el completo, en el title.
                     const celdaEmpleado = (r) => (
-                      <span className="emp-cell">
-                        <span className="av av-tabla">{iniciales(r.person.name)}</span>
+                      <span className="emp-cell" title={r.person.name}>
+                        <span className="av av-tabla">{iniciales(nombreCorto(r.person.name))}</span>
                         <span>
                           <span className="att-name">
-                            {r.person.name}
+                            {nombreCorto(r.person.name)}
                             <span className={`punto-estado ${estadoPunto(r)}`} title={estadoPunto(r) === 'on' ? 'Trabajando' : 'No está trabajando'} />
                           </span>
                           <span className="emp-cedula">{ultima(r)}</span>
@@ -1747,7 +1767,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           const e = extrasHoy.get(r.person.cedula);
                           return {
                             id: r.person.id,
-                            title: r.person.name,
+                            title: nombreCorto(r.person.name),
                             right: <span className={`punto-estado ${r.present ? 'on' : 'off'}`} />,
                             fields: [
                               ['Última marcación', ultima(r)],
