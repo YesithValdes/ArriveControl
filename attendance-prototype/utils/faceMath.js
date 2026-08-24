@@ -16,6 +16,23 @@ export const EMBEDDING_LENGTH = 128;
 export const MATCH_THRESHOLD = 0.5;
 
 /**
+ * Margen mínimo entre el PRIMER y el SEGUNDO candidato para dar por buena una
+ * identificación 1:N. Parecerse al más cercano no basta: hay que parecerse
+ * claramente MÁS que al siguiente.
+ *
+ * Nace de un caso real: dos empleadas con rostros vecinos (0.548 entre sus
+ * fotos de registro), y la cara de una cayó a 0.494 de la otra — dentro del
+ * umbral — ganando por milésimas. El sistema lo trató como certeza y registró
+ * la asistencia en la persona equivocada.
+ *
+ * Bajar `MATCH_THRESHOLD` no era la salida: con los descriptores actuales
+ * (rostros apiñados por fotos de baja calidad), 0.45 habría rechazado el 38%
+ * de las marcaciones legítimas. El margen es selectivo — solo frena los
+ * empates, que son exactamente los casos donde el sistema no sabe.
+ */
+export const MARGEN_MINIMO = 0.10;
+
+/**
  * Valida que el valor sea un vector numérico de 128 posiciones.
  * Acepta Array o Float32Array (face-api devuelve Float32Array).
  */

@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { euclideanDistance, MATCH_THRESHOLD } from '../utils/faceMath.js';
+import { euclideanDistance, MATCH_THRESHOLD, MARGEN_MINIMO } from '../utils/faceMath.js';
 import {
   cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
   getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
@@ -248,6 +248,49 @@ export default function KioskMode() {
     return () => { cancelled = true; };
   }, []);
 
+  // ── Sonidos ───────────────────────────────────────────────────────────
+  // Se SINTETIZAN con Web Audio en vez de cargar archivos: pesan cero, suenan
+  // sin internet (que es justo cuando el kiosco más los necesita) y no
+  // dependen de que el service worker haya cacheado un .mp3.
+  //
+  // Cada resultado tiene su timbre, para que la persona sepa qué pasó sin
+  // mirar la pantalla: entrada sube, salida baja, aviso es un toque neutro y
+  // el rechazo es grave. El contexto se crea al pulsar "Iniciar kiosco"
+  // porque los navegadores solo permiten audio tras un gesto de la persona.
+  const audioRef = useRef(null);
+  const sonar = useCallback((tipo) => {
+    const ctx = audioRef.current;
+    if (!ctx) return;
+    // [frecuencia Hz, arranque s, duración s]
+    const NOTAS = {
+      entrada: [[784.0, 0, 0.13], [1046.5, 0.11, 0.20]], // sol → do: sube
+      salida: [[1046.5, 0, 0.13], [784.0, 0.11, 0.20]],  // do → sol: baja
+      aviso: [[659.3, 0, 0.20]],                          // mi: un toque neutro
+      error: [[311.1, 0, 0.20], [233.1, 0.16, 0.30]],     // mib → sib: grave
+    };
+    const notas = NOTAS[tipo];
+    if (!notas) return;
+    try {
+      if (ctx.state === 'suspended') ctx.resume();
+      const t0 = ctx.currentTime;
+      for (const [hz, desde, dur] of notas) {
+        const osc = ctx.createOscillator();
+        const gan = ctx.createGain();
+        osc.type = tipo === 'error' ? 'triangle' : 'sine';
+        osc.frequency.value = hz;
+        // Envolvente suave: un tono que arranca o corta en seco produce un
+        // "clic" desagradable en el altavoz de una tablet.
+        const ini = t0 + desde;
+        gan.gain.setValueAtTime(0.0001, ini);
+        gan.gain.exponentialRampToValueAtTime(0.22, ini + 0.015);
+        gan.gain.exponentialRampToValueAtTime(0.0001, ini + dur);
+        osc.connect(gan).connect(ctx.destination);
+        osc.start(ini);
+        osc.stop(ini + dur + 0.02);
+      }
+    } catch { /* sin audio disponible: el kiosco sigue igual */ }
+  }, []);
+
   // ── Ubicación GPS ─────────────────────────────────────────────────────
   // Mientras el kiosco corre se mantiene el último fix en memoria (watch,
   // sin esperar nada al marcar). Se envía con cada marcación y el SERVIDOR
@@ -376,6 +419,14 @@ export default function KioskMode() {
         : 'No hay empleados registrados.');
       return;
     }
+    // El audio se desbloquea AQUÍ: "Iniciar kiosco" es el gesto de la persona
+    // que los navegadores exigen para permitir sonido.
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC && !audioRef.current) audioRef.current = new AC();
+      audioRef.current?.resume?.();
+    } catch { /* sin audio: el kiosco funciona igual, mudo */ }
+
     // Aprovechar el arranque para vaciar la cola offline pendiente.
     sincronizarCola().then(({ motivo }) => {
       setPendientes(pendientesEnCola());
@@ -526,34 +577,52 @@ export default function KioskMode() {
           // se toma en los cuadros previos con los ojos abiertos.
           if (st.sawOpen && st.sawClosed && st.descs.length > 0) {
             const live = averageDescriptors(st.descs);
+            // Los DOS más parecidos, no solo el ganador: sin el segundo no se
+            // puede saber si la decisión fue clara o un empate a los pelos.
             let best = { distance: Infinity, person: null };
+            let segundo = { distance: Infinity, person: null };
             for (const p of peopleRef.current) {
               const d = euclideanDistance(p.descriptor, live);
-              if (d < best.distance) best = { distance: d, person: p };
+              if (d < best.distance) { segundo = best; best = { distance: d, person: p }; }
+              else if (d < segundo.distance) segundo = { distance: d, person: p };
             }
+            const margen = segundo.distance - best.distance; // Infinity con un solo empleado
 
-            // REINTENTO SILENCIOSO: si la identidad no alcanzó el umbral la
-            // primera vez, no se muestra el rechazo — se descartan las
+            // MARGEN DE DECISIÓN: no basta parecerse al primero; hay que
+            // parecerse CLARAMENTE más que al segundo. Con rostros vecinos
+            // (Tatiana/Hanny a 0.548) una cara podía caer a 0.494 de la
+            // persona equivocada y ganar por milésimas: el sistema lo daba
+            // por certeza. Ahora un empate es "no sé quién eres" y se
+            // rechaza, que es el error barato — el caro es marcar por otro.
+            //
+            // Bajar el umbral global NO era la solución: con las fotos
+            // actuales (rostros apiñados) 0.45 habría rechazado el 38% de
+            // las marcaciones buenas. El margen solo frena los empates.
+            const ambiguo = margen < MARGEN_MINIMO;
+
+            // REINTENTO SILENCIOSO: si la identidad no alcanzó el umbral, o
+            // quedó ambigua, no se muestra el rechazo — se descartan las
             // capturas (pudieron salir movidas o en mal ángulo) y se toman
-            // frescas para medir de nuevo. Solo aplica al fallo por
-            // DISTANCIA: la prueba de vida ya está hecha y no se repite, y
-            // un reconocido con sede ajena no reintenta (daría lo mismo).
-            if (best.distance >= MATCH_THRESHOLD && !st.reintento) {
+            // frescas para medir de nuevo. La prueba de vida ya está hecha y
+            // no se repite; un reconocido con sede ajena no reintenta.
+            if ((best.distance >= MATCH_THRESHOLD || ambiguo) && !st.reintento) {
               st.reintento = true;
-              st.mejor = best; // por si el segundo intento sale peor
+              // El mejor de los dos intentos solo se guarda si fue LIMPIO:
+              // quedarse con una medición ambigua sería reciclar la duda.
+              st.mejor = ambiguo ? null : best;
               st.descs = []; st.captures = 0; st.lastCapture = 0;
               st.deadline = Math.max(st.deadline, now + 4000); // aire para las capturas nuevas
-              console.log(`[Kiosco⏱] identidad no coincidió (distancia ${Math.round(best.distance * 1000) / 1000}); reintento silencioso con capturas frescas`);
+              console.log(`[Kiosco⏱] ${ambiguo ? `AMBIGUO: ${best.person?.name} (${best.distance.toFixed(3)}) vs ${segundo.person?.name} (${segundo.distance.toFixed(3)}), margen ${margen.toFixed(3)}` : `identidad no coincidió (distancia ${best.distance.toFixed(3)})`}; reintento silencioso con capturas frescas`);
               break;
             }
-            // Tras un reintento, vale el MEJOR de los dos intentos.
+            // Tras un reintento, vale el MEJOR de los dos intentos limpios.
             if (st.mejor && st.mejor.distance < best.distance) best = st.mejor;
 
             const total = Math.round(now - st.t0);
             const primero = (st.tParpadeo ?? Infinity) <= (st.tCaptura ?? Infinity) ? 'OJOS' : 'ROSTRO';
-            console.log(`[Kiosco⏱] CONCLUYE a los ${total} ms — primero terminó: ${primero} (ojos: ${Math.round(st.tParpadeo ?? -1)} ms, rostro: ${Math.round(st.tCaptura ?? -1)} ms${st.reintento ? ', con reintento' : ''})`);
+            console.log(`[Kiosco⏱] CONCLUYE a los ${total} ms — primero terminó: ${primero} (ojos: ${Math.round(st.tParpadeo ?? -1)} ms, rostro: ${Math.round(st.tCaptura ?? -1)} ms${st.reintento ? ', con reintento' : ''}) · 1º ${best.person?.name} ${best.distance.toFixed(3)} · 2º ${segundo.person?.name ?? '—'} ${Number.isFinite(segundo.distance) ? segundo.distance.toFixed(3) : '—'} · margen ${Number.isFinite(margen) ? margen.toFixed(3) : '∞'}`);
             const distance = Math.round(best.distance * 1000) / 1000;
-            const reconocido = distance < MATCH_THRESHOLD;
+            const reconocido = distance < MATCH_THRESHOLD && !ambiguo;
             // Sede exigida: si el empleado tiene el flag, solo puede marcar en
             // un kiosco de SU sede. La sede asignada sin flag es informativa.
             const sedeAjena = reconocido && best.person.validarSede
@@ -563,7 +632,9 @@ export default function KioskMode() {
               ok,
               reconocido ? best.person : null, // con sede ajena el rechazo dice a QUIÉN
               distance,
-              ok ? null : sedeAjena ? 'Debes marcar en el kiosco de tu sede asignada.' : 'Intenta de nuevo mirando de frente.',
+              ok ? null : sedeAjena ? 'Debes marcar en el kiosco de tu sede asignada.'
+                : ambiguo ? 'No pudimos distinguirte con seguridad. Acércate un poco más e intenta de nuevo.'
+                  : 'Intenta de nuevo mirando de frente.',
             );
           }
           break;
@@ -617,6 +688,7 @@ export default function KioskMode() {
     const time = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 
     if (!ok) {
+      sonar('error');
       setResult({ kind: 'no', name: person?.name, time, distance, reason: failReason });
       setUi('no');
       return;
@@ -638,24 +710,29 @@ export default function KioskMode() {
 
       if (paso.errorConfig) {
         // (con clave rechazada, registrarPaso lanza y cae al catch de abajo)
+        sonar('error');
         setResult({ kind: 'no', name: person.name, time, reason: `No se pudo registrar: ${paso.errorConfig}` });
         setUi('no');
         return;
       }
       if (paso.pendiente) {
         // Sin red: quedó en la cola local y se sincroniza sola.
+        sonar('aviso');
         setPendientes(paso.enCola);
         setResult({ kind: 'pending', name: person.name, time });
         setUi('ok');
         return;
       }
       if (paso.duplicado) {
+        sonar('aviso');
         const lastTime = new Date(paso.ultima.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
         const lastLabel = paso.ultima.tipo === 'entrada' ? 'ENTRADA' : 'SALIDA';
         setResult({ kind: 'dup', name: person.name, time, lastLabel, lastTime });
         setUi('ok');
         return;
       }
+      // Entrada sube, salida baja: se distinguen de oído, sin mirar.
+      sonar(paso.tipo === 'entrada' ? 'entrada' : 'salida');
       const tsOficial = new Date(paso.marcacion.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
       setResult({
         kind: paso.tipo === 'entrada' ? 'in' : 'out',
@@ -677,6 +754,7 @@ export default function KioskMode() {
         setCfgError('Este dispositivo ya no está autorizado. Vuelve a registrarlo.');
         return;
       }
+      sonar('error');
       setResult({ kind: 'no', name: person.name, time, reason: `No se pudo registrar: ${e.message}` });
       setUi('no');
     });
