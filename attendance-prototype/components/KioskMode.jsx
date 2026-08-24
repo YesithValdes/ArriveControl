@@ -258,9 +258,44 @@ export default function KioskMode() {
   // el rechazo es grave. El contexto se crea al pulsar "Iniciar kiosco"
   // porque los navegadores solo permiten audio tras un gesto de la persona.
   const audioRef = useRef(null);
+
+  /**
+   * Crea (o reanuda) el contexto de audio. TIENE que llamarse de forma
+   * SÍNCRONA dentro del gesto de la persona: después de un `await` el
+   * navegador ya no considera que sigue en el gesto y el contexto nace
+   * suspendido — así quedó mudo el kiosco en el APK la primera vez.
+   *
+   * El buffer de un cuadro en silencio es el truco clásico de desbloqueo:
+   * algunos WebView no arrancan el reloj de audio hasta que algo suena.
+   */
+  const abrirAudio = useCallback(() => {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { console.log('[KioscoAudio] este WebView no tiene Web Audio'); return; }
+      if (!audioRef.current) audioRef.current = new AC();
+      const ctx = audioRef.current;
+      ctx.resume?.().then?.(() => console.log(`[KioscoAudio] contexto ${ctx.state}`)).catch?.(() => {});
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, 1, 22050);
+      src.connect(ctx.destination);
+      src.start(0);
+      console.log(`[KioscoAudio] desbloqueo pedido; estado ${ctx.state}`);
+    } catch (e) {
+      console.log(`[KioscoAudio] no se pudo abrir: ${e?.message || e}`);
+    }
+  }, []);
+
+  // Red de seguridad: cualquier toque en la pantalla reanuda el audio si el
+  // sistema lo dejó suspendido (pasa al volver de una llamada o del reposo).
+  useEffect(() => {
+    const despertar = () => { if (audioRef.current?.state === 'suspended') audioRef.current.resume?.(); };
+    document.addEventListener('pointerdown', despertar);
+    return () => document.removeEventListener('pointerdown', despertar);
+  }, []);
+
   const sonar = useCallback((tipo) => {
     const ctx = audioRef.current;
-    if (!ctx) return;
+    if (!ctx) { console.log(`[KioscoAudio] "${tipo}" sin contexto de audio`); return; }
     // [frecuencia Hz, arranque s, duración s]
     const NOTAS = {
       entrada: [[784.0, 0, 0.13], [1046.5, 0.11, 0.20]], // sol → do: sube
@@ -272,6 +307,7 @@ export default function KioskMode() {
     if (!notas) return;
     try {
       if (ctx.state === 'suspended') ctx.resume();
+      console.log(`[KioscoAudio] suena "${tipo}" (contexto ${ctx.state})`);
       const t0 = ctx.currentTime;
       for (const [hz, desde, dur] of notas) {
         const osc = ctx.createOscillator();
@@ -383,6 +419,10 @@ export default function KioskMode() {
 
   // ── Arranque ──────────────────────────────────────────────────────────
   const handleStart = async () => {
+    // LO PRIMERO, sin ningún `await` antes: el permiso de audio solo se
+    // concede dentro del gesto que lo pidió.
+    abrirAudio();
+
     // Roster desde la BASE DE DATOS (con caché local para cortes de red).
     let all = [];
     try {
@@ -419,14 +459,6 @@ export default function KioskMode() {
         : 'No hay empleados registrados.');
       return;
     }
-    // El audio se desbloquea AQUÍ: "Iniciar kiosco" es el gesto de la persona
-    // que los navegadores exigen para permitir sonido.
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (AC && !audioRef.current) audioRef.current = new AC();
-      audioRef.current?.resume?.();
-    } catch { /* sin audio: el kiosco funciona igual, mudo */ }
-
     // Aprovechar el arranque para vaciar la cola offline pendiente.
     sincronizarCola().then(({ motivo }) => {
       setPendientes(pendientesEnCola());
