@@ -814,6 +814,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         rangoHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= rangoAgo), nowMs),
         present: !!firstIn && today[today.length - 1]?.type === 'in',
         corrected,
+        // Desde DÓNDE marcó por última vez hoy. La columna se llama «Sede /
+        // Ubicación» y hasta ahora solo cumplía la mitad: quien no tiene sede
+        // —justo el caso donde importa el GPS— salía con un guion.
+        lugar: [...today].reverse().find((e) => e.lat != null && e.lon != null) || null,
       };
     });
 
@@ -1717,7 +1721,21 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                     {e && e.horas > 0 && <span className="extra-h">+{fmtHM(e.horas)} extra</span>}
                                   </td>
                                   <td className="num">{celdaExtras(r)}</td>
-                                  <td className="att-sede">{r.sede || '—'}</td>
+                                  <td className="att-sede">
+                                    {r.sede || (r.lugar ? '' : '—')}
+                                    {r.lugar && (
+                                      <a
+                                        className="att-lugar"
+                                        href={`https://www.google.com/maps?q=${r.lugar.lat},${r.lugar.lon}`}
+                                        target="_blank" rel="noreferrer"
+                                        title={`Marcó desde aquí · ${horaCorta(r.lugar.ts)}`}
+                                        onClick={(ev) => ev.stopPropagation()}
+                                      >
+                                        <Icon name="pin" size={11} />
+                                        {r.lugar.direccion || `${Number(r.lugar.lat).toFixed(4)}, ${Number(r.lugar.lon).toFixed(4)}`}
+                                      </a>
+                                    )}
+                                  </td>
                                 </tr>
                               );
                             })}
@@ -1738,6 +1756,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               ['Extras (COP)', celdaExtras(r)],
                               ...(novedadDe(r) ? [['Novedad', novedadDe(r)]] : []),
                               ['Sede', r.sede || '—'],
+                              ...(r.lugar ? [['Marcó desde', (
+                                <a key="l" className="att-lugar" target="_blank" rel="noreferrer"
+                                  href={`https://www.google.com/maps?q=${r.lugar.lat},${r.lugar.lon}`}>
+                                  <Icon name="pin" size={11} />
+                                  {r.lugar.direccion || `${Number(r.lugar.lat).toFixed(4)}, ${Number(r.lugar.lon).toFixed(4)}`}
+                                </a>
+                              )]] : []),
                             ],
                             actions: (
                               <button className="btn primary block" onClick={() => openDrawer(r.person.id, r.person.name, esHoy ? null : diaAsistencia)}>
@@ -4911,6 +4936,13 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 }
 .tl-lugar:hover { color: var(--accent-2); text-decoration: underline; }
 .tl-lugar em { font-style: normal; opacity: .7; }
+/* Ubicación en la tabla de asistencia: bajo la sede, discreta y enlazable. */
+.att-lugar {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 2px;
+  font-size: 11px; color: var(--muted); text-decoration: none; line-height: 1.3;
+}
+.att-sede .att-lugar { display: flex; }
+.att-lugar:hover { color: var(--accent-2); text-decoration: underline; }
 .tl-actions { display: flex; gap: 6px; }
 .btn.small { font-size: 12px; padding: 4px 10px; }
 .ev-form { border: 1px solid var(--grid); border-radius: 8px; padding: 12px; background: var(--surface-blanca); display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
