@@ -22,6 +22,15 @@ import {
   olvidarActivacion, ClaveRechazada,
 } from '../services/kioskoApi.js';
 
+/**
+ * Tamaño con el que el detector busca la cara. TIENE que ser el mismo del
+ * registro (EmployeeRegister): el kiosco usaba 224 y el registro 416, así que
+ * el rostro se recortaba con precisión distinta al marcar que al registrarse
+ * — y un recorte descuadrado corre el descriptor. Esa asimetría metía
+ * distancia artificial entre la misma persona y su propia foto.
+ */
+const DETECTOR_INPUT = 416;
+
 const FACEAPI_MODEL_URL = '/models';
 const MEDIAPIPE_MODEL = '/models/face_landmarker.task';
 const WASM_PATH = '/wasm';
@@ -230,7 +239,7 @@ export default function KioskMode() {
         try {
           const c = document.createElement('canvas');
           c.width = 224; c.height = 224;
-          await faceapi.detectSingleFace(c, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }));
+          await faceapi.detectSingleFace(c, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECTOR_INPUT, scoreThreshold: 0.5 }));
           const c2 = document.createElement('canvas');
           c2.width = 150; c2.height = 150;
           await faceapi.nets.faceLandmark68Net.detectLandmarks(c2);
@@ -377,7 +386,7 @@ export default function KioskMode() {
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
       streamRef.current?.getTracks?.().forEach((t) => t.stop());
       stream.getVideoTracks()[0]?.addEventListener('ended', () => {
         if (document.visibilityState === 'visible') reanudarCamara();
@@ -445,9 +454,12 @@ export default function KioskMode() {
     }
     // Solo personas con descriptor VÁLIDO: un registro corrupto en el roster
     // no debe poder tumbar la comparación 1:N (y con ella, todo el kiosco).
-    const valid = all.filter(
-      (p) => Array.isArray(p.descriptor) && p.descriptor.length === 128 && p.descriptor.every(Number.isFinite)
-    );
+    // Cada persona se queda solo con sus rostros SANOS; quien no conserve
+    // ninguno sale del roster (no podría compararse contra nada).
+    const sano = (d) => Array.isArray(d) && d.length === 128 && d.every(Number.isFinite);
+    const valid = all
+      .map((p) => ({ ...p, descriptores: (p.descriptores ?? []).filter(sano) }))
+      .filter((p) => p.descriptores.length > 0);
     if (valid.length < all.length) {
       console.warn(`Kiosco: ${all.length - valid.length} registro(s) sin rostro o corruptos fueron excluidos.`);
     }
@@ -465,7 +477,7 @@ export default function KioskMode() {
       setSyncMotivo(motivo);
     }).catch(() => {});
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
       // Si el sistema mata el track SIN ocultar la app (llamada en burbuja,
       // otra app pidiendo la cámara), se recupera igual que al volver del
       // segundo plano. Oculta, no: el visibilitychange lo hará al volver.
@@ -586,7 +598,7 @@ export default function KioskMode() {
           const frontal = Math.abs(yaw) < 12;
           if (frontal && !faBusy && st.captures < FACE_CAPTURES && now - st.lastCapture >= CAPTURE_GAP_MS) {
             faBusy = true; st.captures += 1; st.lastCapture = now;
-            faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }))
+            faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECTOR_INPUT, scoreThreshold: 0.5 }))
               .withFaceLandmarks().withFaceDescriptor()
               .then((det) => {
                 if (det) {
@@ -614,7 +626,15 @@ export default function KioskMode() {
             let best = { distance: Infinity, person: null };
             let segundo = { distance: Infinity, person: null };
             for (const p of peopleRef.current) {
-              const d = euclideanDistance(p.descriptor, live);
+              // Distancia al rostro MÁS PARECIDO de esa persona: con varias
+              // fotos (distinta luz, con y sin gafas) gana la que se parezca,
+              // sin promediarlas — un promedio de fotos distintas cae en un
+              // punto que no representa a ninguna.
+              let d = Infinity;
+              for (const desc of p.descriptores) {
+                const dd = euclideanDistance(desc, live);
+                if (dd < d) d = dd;
+              }
               if (d < best.distance) { segundo = best; best = { distance: d, person: p }; }
               else if (d < segundo.distance) segundo = { distance: d, person: p };
             }

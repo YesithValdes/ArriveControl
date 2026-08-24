@@ -102,6 +102,11 @@ export async function cargarRoster() {
     if (!r.ok || !d?.ok) throw new Error(d?.error || `Error ${r.status}`);
     const empleados = d.empleados.map((e) => ({
       id: e.id, name: e.nombre, descriptor: e.descriptor_facial,
+      // TODOS sus rostros: al identificar se usa el más parecido de los suyos.
+      // Respaldo al principal para rosters guardados antes de esta versión.
+      descriptores: Array.isArray(e.descriptores) && e.descriptores.length > 0
+        ? e.descriptores
+        : (e.descriptor_facial ? [e.descriptor_facial] : []),
       // Para exigir (si el flag está activo) que marque en SU sede.
       sedeId: e.sede_id || null, validarSede: e.validar_sede === true,
     }));

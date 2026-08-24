@@ -20,6 +20,7 @@ import {
   deleteEvent,
   NIGHT_WINDOW_MS,
   listPeople, listArchivados, removePerson, updatePerson, expectedDailyHours, jornadaDelDia,
+  listarRostros, agregarRostro, quitarRostro,
   franjaEsperada, horasFranja, horasSemanaDias, resumenDias, DIAS_CORTOS, ORDEN_SEMANA,
   getLaborConfig, saveLaborConfig, getHorasValorizadas, getEventosRango, marcarHorasPagadas,
   getSedes, addSede, updateSede, removeSede,
@@ -637,6 +638,68 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // Edición de empleado (CRUD): diálogo con datos no biométricos.
   const [editEmp, setEditEmp] = useState(null); // { id, name, cedula, sede, expectedEntry }
+
+  // ── Rostros del empleado abierto en la ficha ────────────────────────
+  // Agregar una foto no debe obligar a registrar de nuevo a la persona.
+  const [rostros, setRostros] = useState([]);
+  const [rostroOcupado, setRostroOcupado] = useState(false);
+  const rostroFileRef = useRef(null);
+  const faceapiFichaRef = useRef(null);
+
+  useEffect(() => {
+    if (!editEmp?.id) { setRostros([]); return; }
+    let vigente = true;
+    listarRostros(editEmp.id).then((r) => { if (vigente) setRostros(r); }).catch(() => {});
+    return () => { vigente = false; };
+  }, [editEmp?.id]);
+
+  /**
+   * Suma fotos al empleado abierto. El modelo facial se carga bajo demanda
+   * (la primera vez tarda unos segundos): el panel no lo necesita hasta que
+   * alguien decide agregar un rostro.
+   */
+  const agregarFotos = async (empleadoId, ev) => {
+    const files = [...(ev.target.files ?? [])];
+    ev.target.value = '';
+    if (files.length === 0) return;
+    setRostroOcupado(true);
+    try {
+      if (!faceapiFichaRef.current) {
+        const faceapi = await import('@vladmandic/face-api');
+        try { await faceapi.tf.ready(); } catch { await faceapi.tf.setBackend('cpu'); await faceapi.tf.ready(); }
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
+          faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
+          faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
+        ]);
+        faceapiFichaRef.current = faceapi;
+      }
+      const faceapi = faceapiFichaRef.current;
+      let sumadas = 0;
+      for (const file of files) {
+        const img = await faceapi.bufferToImage(file);
+        const det = await faceapi
+          .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
+          .withFaceLandmarks().withFaceDescriptor();
+        if (!det) { showToast(`Sin rostro claro en ${file.name}. Usa una foto frontal y con buena luz.`); continue; }
+        if (Math.min(det.detection.box.width, det.detection.box.height) < 120) {
+          showToast(`En ${file.name} la cara sale muy pequeña: acércate y repite.`); continue;
+        }
+        const res = await agregarRostro(empleadoId, Array.from(det.descriptor));
+        if (res.error) { showToast(res.error); continue; }
+        sumadas += 1;
+      }
+      if (sumadas > 0) {
+        setRostros(await listarRostros(empleadoId));
+        refresh();
+        showToast(sumadas === 1 ? 'Rostro agregado' : `${sumadas} rostros agregados`);
+      }
+    } catch (e) {
+      showToast(`No se pudo procesar la foto: ${e?.message || e}`);
+    } finally {
+      setRostroOcupado(false);
+    }
+  };
 
   /**
    * Abre la ficha de un empleado. Vive a nivel de componente (y no dentro de
@@ -3965,14 +4028,51 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </div>
                 </div>
                 {/* El rostro es un ESTADO, no una instrucción suelta: lo primero
-                    que se quiere saber es si esta persona puede marcar. */}
+                    que se quiere saber es si esta persona puede marcar. Y las
+                    fotos se agregan AQUÍ: pedir otra vez cédula, horario y
+                    correo solo para sumar una foto no tenía sentido. */}
                 <div className="ficha-estado">
-                  <span className={`ficha-punto${editEmp.tieneRostro ? '' : ' apagado'}`} />
-                  <span><b>{editEmp.tieneRostro ? 'Rostro registrado' : 'Sin rostro'}</b></span>
-                  <Q texto={editEmp.tieneRostro
-                    ? 'Puede marcar en el kiosco. Para cambiar el rostro, elimina al empleado y regístralo de nuevo con la foto nueva.'
-                    : 'No podrá marcar en el kiosco hasta que se le registre el rostro con una foto.'} />
+                  <span className={`ficha-punto${rostros.length > 0 ? '' : ' apagado'}`} />
+                  <span>
+                    <b>
+                      {rostros.length === 0 ? 'Sin rostro'
+                        : rostros.length === 1 ? '1 rostro registrado'
+                          : `${rostros.length} rostros registrados`}
+                    </b>
+                  </span>
+                  <Q texto={rostros.length === 0
+                    ? 'No podrá marcar en el kiosco hasta que se le registre un rostro.'
+                    : 'Al marcar se compara contra el más parecido de sus rostros. Con varias fotos (distinta luz, con y sin gafas) lo reconoce mejor y es más difícil confundirlo con otra persona.'} />
+                  <input ref={rostroFileRef} type="file" accept="image/*" multiple hidden
+                    onChange={(e) => agregarFotos(editEmp.id, e)} />
+                  <button className="btn small" disabled={rostroOcupado} onClick={() => rostroFileRef.current?.click()}>
+                    {rostroOcupado ? 'Analizando…' : '＋ Agregar foto'}
+                  </button>
                 </div>
+                {rostros.length > 0 && (
+                  <div className="ficha-rostros">
+                    {rostros.map((r, i) => (
+                      <span className="ficha-rostro" key={r.id}>
+                        Rostro {i + 1}
+                        <em>{new Date(r.creado_en).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}</em>
+                        {rostros.length > 1 && (
+                          <button title="Quitar este rostro" onClick={async () => {
+                            const res = await quitarRostro(editEmp.id, r.id);
+                            if (res.error) { showToast(res.error); return; }
+                            setRostros(await listarRostros(editEmp.id));
+                            showToast('Rostro quitado');
+                          }}>×</button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {rostros.length === 1 && (
+                  <small className="field-hint">
+                    Con una sola foto el kiosco puede confundirlo con otra persona. Agrega dos más,
+                    tomadas con distinta luz y la cara grande en el encuadre.
+                  </small>
+                )}
               </section>
 
               <section className="ficha-sec">
@@ -4514,6 +4614,19 @@ const CSS = `
 }
 .ficha-fila { display: grid; gap: 10px; margin-bottom: 10px; }
 .field-hint { display: block; font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+/* Rostros del empleado: cada foto guardada, con su fecha y su aspa. */
+.ficha-rostros { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ficha-rostro {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600;
+  padding: 5px 8px 5px 11px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent-2); border: 1px solid var(--border);
+}
+.ficha-rostro em { font-style: normal; font-weight: 400; color: var(--muted); }
+.ficha-rostro button {
+  border: none; background: transparent; color: var(--muted); cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 0 2px;
+}
+.ficha-rostro button:hover { color: var(--crit-text); }
 .ficha-fila:last-child { margin-bottom: 0; }
 /* minmax(0): sin él, el ancho mínimo intrínseco de los inputs desborda la
    columna y el cajón los recorta por la derecha. */

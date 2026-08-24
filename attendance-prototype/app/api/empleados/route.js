@@ -30,8 +30,15 @@ export async function GET(req) {
         { status: 401 },
       )
     }
+    // TODOS los rostros de cada empleado, no solo el principal: el kiosco
+    // compara contra el más parecido de los suyos, que es lo que absorbe los
+    // cambios de luz y de ángulo sin diluir la identidad.
     const { rows } = await conEmpresa(ctx.esquema, (db) => db.query(
-      `select e.id, e.nombre, e.cedula, e.sede_id, e.validar_sede, e.descriptor_facial
+      `select e.id, e.nombre, e.cedula, e.sede_id, e.validar_sede, e.descriptor_facial,
+              coalesce(
+                (select array_agg(r.descriptor) from rostros r where r.empleado_id = e.id),
+                case when e.descriptor_facial is null then '{}' else array[e.descriptor_facial] end
+              ) as descriptores
          from empleados e
         where e.activo
         order by e.nombre`,
@@ -87,7 +94,13 @@ export async function POST(req) {
   // misma persona puede estar en dos empresas clientes sin chocar.
   if (cedula.length < 5) return NextResponse.json({ ok: false, error: 'La cédula es obligatoria (solo números).' }, { status: 400 })
 
-  const descriptor = Array.isArray(c?.descriptor_facial) && c.descriptor_facial.length === 128 ? c.descriptor_facial : null
+  const esDescriptor = (d) => Array.isArray(d) && d.length === 128 && d.every((n) => typeof n === 'number' && Number.isFinite(n))
+  const descriptor = esDescriptor(c?.descriptor_facial) ? c.descriptor_facial : null
+  // Varias fotos por persona: la primera es el rostro principal y todas se
+  // guardan en `rostros` para comparar al más parecido.
+  const descriptores = (Array.isArray(c?.descriptores) ? c.descriptores : []).filter(esDescriptor)
+  const listaRostros = descriptores.length > 0 ? descriptores : (descriptor ? [descriptor] : [])
+  const principal = listaRostros[0] ?? null
 
   // Correo del comprobante de marcación. OPCIONAL: sin correo no se envía
   // nada. Validación mínima: si viene algo, que al menos parezca un correo.
@@ -118,15 +131,22 @@ export async function POST(req) {
   }
 
   try {
-    const { rows } = await conEmpresa(esquema, (db) => db.query(
-      `insert into empleados
-         (nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, descriptor_facial)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-       returning id, nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo, creado_en`,
-      [nombre, cedula, correo, c.sede_id ?? null, c.validar_sede === true, c.validar_ubicacion === true, c.entrada_esperada ?? null, c.salida_esperada ?? null,
-       c.almuerzo_min ?? 60, jornadaDias == null ? null : JSON.stringify(jornadaDias), jornada, salario, descriptor],
-    ))
-    return NextResponse.json({ ok: true, empleado: rows[0] })
+    const empleado = await conEmpresa(esquema, async (db) => {
+      const { rows } = await db.query(
+        `insert into empleados
+           (nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, descriptor_facial)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         returning id, nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo, creado_en`,
+        [nombre, cedula, correo, c.sede_id ?? null, c.validar_sede === true, c.validar_ubicacion === true, c.entrada_esperada ?? null, c.salida_esperada ?? null,
+         c.almuerzo_min ?? 60, jornadaDias == null ? null : JSON.stringify(jornadaDias), jornada, salario, principal],
+      )
+      // Misma transacción: un empleado sin sus rostros no podría marcar.
+      for (const d of listaRostros) {
+        await db.query(`insert into rostros (empleado_id, descriptor) values ($1,$2)`, [rows[0].id, d])
+      }
+      return { ...rows[0], rostros: listaRostros.length }
+    })
+    return NextResponse.json({ ok: true, empleado })
   } catch (e) {
     if (e.code === '23505') {
       return NextResponse.json({ ok: false, error: 'Ya hay un empleado con esa cédula.' }, { status: 409 })

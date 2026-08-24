@@ -23,6 +23,12 @@ import {
 import { SALARIO_MINIMO } from '../lib/jornada.js';
 
 const FACEAPI_MODEL_URL = '/models';
+/** Cuántas fotos se recomiendan y cuántas se admiten como máximo. */
+const FOTOS_RECOMENDADAS = 3;
+const MAX_FOTOS = 5;
+/** Lado mínimo del rostro detectado, en píxeles. Por debajo, el descriptor
+ *  sale pobre y acerca a personas distintas (medido en producción). */
+const MIN_ROSTRO_PX = 120;
 
 /**
  * Formulario de registro, embebible (página propia o cajón del panel).
@@ -59,7 +65,10 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
   const [horarios, setHorarios] = useState(() => getHorarios());
   const [horarioId, setHorarioId] = useState('');
   const [datosCargados, setDatosCargados] = useState(false);
-  const [photo, setPhoto] = useState(null);      // { previewUrl, descriptor } | null
+  // Varias fotos por persona: [{ previewUrl, descriptor }]. Tres es el punto
+  // dulce — cubren luz de mañana, de tarde y con/sin gafas sin fastidiar a
+  // quien registra.
+  const [fotos, setFotos] = useState([]);
   const [analyzing, setAnalyzing] = useState(false);
 
   // Sedes y horarios desde la API (el roster lo maneja quien embebe el form).
@@ -107,32 +116,42 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
   }, []);
 
   // Analiza la foto apenas se selecciona: detecta el rostro y extrae el vector.
+  // Se admiten VARIAS: con una sola, el perfil hereda los defectos de esa foto
+  // (una luz rasante, medio perfil) y queda corrido, cerca del de otra persona.
   const handlePhoto = async (e) => {
-    const file = e.target.files?.[0];
+    const files = [...(e.target.files ?? [])];
     e.target.value = '';
-    if (!file || !faceapiRef.current) return;
+    if (files.length === 0 || !faceapiRef.current) return;
 
     setAnalyzing(true);
-    setPhoto(null);
-    setStatus('Analizando la foto…');
+    setStatus(files.length > 1 ? `Analizando ${files.length} fotos…` : 'Analizando la foto…');
+    const nuevas = [];
+    const sinRostro = [];
     try {
       const faceapi = faceapiRef.current;
-      const img = await faceapi.bufferToImage(file);
-      const det = await faceapi
-        .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-
-      if (!det) {
-        setStatus('❌ Sin rostro claro. Usa una foto frontal y con buena luz.');
-        setAnalyzing(false);
-        return;
+      for (const file of files) {
+        if (fotos.length + nuevas.length >= MAX_FOTOS) break;
+        const img = await faceapi.bufferToImage(file);
+        const det = await faceapi
+          .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+        if (!det) { sinRostro.push(file.name); continue; }
+        // Un recorte de rostro pequeño da un descriptor pobre: es la causa
+        // medida de que perfiles de personas distintas queden vecinos.
+        if (Math.min(det.detection.box.width, det.detection.box.height) < MIN_ROSTRO_PX) {
+          sinRostro.push(`${file.name} (cara muy pequeña)`);
+          continue;
+        }
+        // La foto NO se guarda en ninguna parte: de ella solo sale el vector de
+        // 128 floats. La previsualización vive en memoria del navegador y se
+        // libera al terminar.
+        nuevas.push({ previewUrl: URL.createObjectURL(file), descriptor: Array.from(det.descriptor) });
       }
-      // La foto NO se guarda en ninguna parte: de ella solo sale el vector de
-      // 128 floats. La previsualización vive en memoria del navegador y se
-      // libera al terminar.
-      setPhoto({ previewUrl: URL.createObjectURL(file), descriptor: Array.from(det.descriptor) });
-      setStatus('');
+      setFotos((prev) => [...prev, ...nuevas]);
+      setStatus(sinRostro.length > 0
+        ? `❌ Sin rostro claro en: ${sinRostro.join(', ')}. Usa fotos frontales, con buena luz y la cara grande en el encuadre.`
+        : '');
     } catch (err) {
       setStatus(`❌ Error procesando la foto: ${err?.message || err}`);
     } finally {
@@ -140,22 +159,28 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
     }
   };
 
+  const quitarFoto = (i) => setFotos((prev) => {
+    if (prev[i]?.previewUrl) URL.revokeObjectURL(prev[i].previewUrl);
+    return prev.filter((_, k) => k !== i);
+  });
+
   // La cédula se guarda solo con dígitos: es la que cruza con los reportes de
   // horas, y «1.085.312» y «1085312» tienen que ser la misma persona.
   const cedulaLimpia = cedula.replace(/\D/g, '');
   // El horario es OBLIGATORIO: la franja del empleado sale de la plantilla.
-  const canRegister = ready && !analyzing && nombre.trim() && cedulaLimpia.length >= 5 && horarioId && photo;
+  const canRegister = ready && !analyzing && nombre.trim() && cedulaLimpia.length >= 5 && horarioId && fotos.length > 0;
 
   // Checklist de lo que falta, para que el botón deshabilitado no sea un misterio.
   const faltan = [
     !nombre.trim() && 'nombre',
     cedulaLimpia.length < 5 && 'cédula (mín. 5 dígitos)',
     !horarioId && 'horario',
-    !photo && 'foto',
+    fotos.length === 0 && 'foto',
   ].filter(Boolean);
 
   const handleRegister = async () => {
-    const result = await addPerson(nombre.trim(), photo.descriptor, {
+    const result = await addPerson(nombre.trim(), fotos[0].descriptor, {
+      descriptores: fotos.map((f) => f.descriptor),
       cedula: cedulaLimpia,
       correo: correo.trim().toLowerCase() || null,
       sede, validarSede, validarUbicacion, jornadaDias,
@@ -170,8 +195,8 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
     setCedula('');
     setCorreo('');
     setSalarioMensual('');
-    if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
-    setPhoto(null);
+    fotos.forEach((f) => f.previewUrl && URL.revokeObjectURL(f.previewUrl));
+    setFotos([]);
     setStatus('✅ Registrado. Puedes agregar otro.');
     alRegistrar?.(result.name);
   };
@@ -311,26 +336,38 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
       </section>
 
       <section className="regf-sec">
-        <input ref={fileRef} type="file" accept="image/*" hidden onChange={handlePhoto} />
-        {!photo ? (
+        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={handlePhoto} />
+        {fotos.length === 0 ? (
           <button className="regf-drop" onClick={() => fileRef.current?.click()} disabled={!ready || analyzing}>
             <span className="regf-drop-ico">{analyzing ? '⏳' : '📷'}</span>
             <span>
-              <b>{analyzing ? 'Analizando…' : ready ? 'Tomar o subir foto' : 'Cargando modelo facial…'}</b>
-              <small>Frontal, tipo carnet. La imagen no se guarda.</small>
+              <b>{analyzing ? 'Analizando…' : ready ? `Tomar o subir ${FOTOS_RECOMENDADAS} fotos` : 'Cargando modelo facial…'}</b>
+              <small>Frontales, con la cara grande y buena luz. Las imágenes no se guardan.</small>
             </span>
           </button>
         ) : (
-          <div className="regf-preview">
-            {/* Vista previa local; la imagen NO se guarda en el sistema */}
-            <img src={photo.previewUrl} alt={`Foto de ${nombre.trim() || 'empleado'}`} />
-            <div>
-              <span className="regf-ok">Rostro detectado</span>
-              <button className="regf-btn" onClick={() => { URL.revokeObjectURL(photo.previewUrl); setPhoto(null); fileRef.current?.click(); }}>
-                Cambiar foto
-              </button>
+          <>
+            {/* Vista previa local; las imágenes NO se guardan en el sistema */}
+            <div className="regf-fotos">
+              {fotos.map((f, i) => (
+                <div className="regf-foto" key={f.previewUrl}>
+                  <img src={f.previewUrl} alt={`Foto ${i + 1} de ${nombre.trim() || 'empleado'}`} />
+                  <button className="regf-foto-x" onClick={() => quitarFoto(i)} title="Quitar esta foto">×</button>
+                </div>
+              ))}
+              {fotos.length < MAX_FOTOS && (
+                <button className="regf-foto-mas" onClick={() => fileRef.current?.click()} disabled={!ready || analyzing}>
+                  {analyzing ? '⏳' : '＋'}
+                  <small>Otra foto</small>
+                </button>
+              )}
             </div>
-          </div>
+            <small className={fotos.length < FOTOS_RECOMENDADAS ? 'regf-err' : 'regf-hint'}>
+              {fotos.length < FOTOS_RECOMENDADAS
+                ? `${fotos.length} de ${FOTOS_RECOMENDADAS}. Con una sola foto el kiosco puede confundirlo con otra persona: agrega otra con distinta luz, y una con gafas o gorra si las usa a diario.`
+                : `${fotos.length} rostros. Cuantas más condiciones distintas, mejor lo reconocerá.`}
+            </small>
+          </>
         )}
       </section>
 
@@ -509,6 +546,27 @@ const FORM_CSS = `
 .regf-preview img { width: 60px; height: 60px; object-fit: cover; border-radius: var(--r-md); border: 2px solid var(--accent); flex: 0 0 auto; }
 .regf-preview > div { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .regf-ok { font-size: 13px; font-weight: 600; color: var(--accent-2); }
+
+/* Galería de rostros del empleado (varias fotos por persona) */
+.regf-fotos { display: flex; flex-wrap: wrap; gap: 10px; }
+.regf-foto { position: relative; }
+.regf-foto img {
+  width: 74px; height: 74px; object-fit: cover; border-radius: var(--r-md);
+  border: 2px solid var(--accent); display: block;
+}
+.regf-foto-x {
+  position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%;
+  border: none; background: var(--crit); color: #fff; font-size: 15px; line-height: 1;
+  cursor: pointer; display: grid; place-items: center; box-shadow: var(--elev-1);
+}
+.regf-foto-mas {
+  width: 74px; height: 74px; border-radius: var(--r-md); cursor: pointer;
+  border: 2px dashed var(--border); background: transparent; color: var(--muted);
+  font-size: 20px; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 2px; font-family: inherit;
+}
+.regf-foto-mas small { font-size: 10px; }
+.regf-foto-mas:disabled { opacity: .5; cursor: default; }
 
 .regf-btn {
   font: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 14px;

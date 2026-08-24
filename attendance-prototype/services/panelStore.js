@@ -300,6 +300,30 @@ export function listArchivados() {
   return store.people.filter((p) => !p.activo);
 }
 
+// ── Rostros de un empleado YA registrado ──────────────────────────────
+// Agregar una foto no debe obligar a dar de alta otra vez: los datos
+// (cédula, horario, correo…) se piden una sola vez en la vida.
+export const listarRostros = (id) => api(`/api/empleados/${id}/rostros`).then((d) => d.rostros);
+
+export async function agregarRostro(id, descriptor, { forzar = false } = {}) {
+  try {
+    return await api(`/api/empleados/${id}/rostros`, {
+      method: 'POST',
+      body: JSON.stringify({ descriptor, forzar }),
+    });
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+export async function quitarRostro(id, rostroId) {
+  try {
+    return await api(`/api/empleados/${id}/rostros?rostro=${encodeURIComponent(rostroId)}`, { method: 'DELETE' });
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
 export async function removePerson(id) {
   // Baja LÓGICA: el empleado queda ARCHIVADO (activo=false), con su historial
   // completo, y deja de ocupar cupo. No se borra de la memoria del panel:
@@ -343,6 +367,8 @@ export async function addPerson(name, descriptor, extra = {}) {
         nombre: name,
         cedula: extra.cedula || null,
         correo: extra.correo || null,
+        // Varias fotos por persona (la primera es el rostro principal).
+        descriptores: extra.descriptores ?? (descriptor ? [descriptor] : []),
         sede_id: sede?.id ?? extra.sedeId ?? null,
         validar_sede: extra.validarSede === true,
         validar_ubicacion: extra.validarUbicacion === true,
