@@ -158,6 +158,12 @@ function construirEventos(marcaciones, correcciones = []) {
       ts: m.ts,
       flag: m.origen === 'manual' ? 'manual' : corr ? 'corrected' : null,
       correctedBy: m.origen === 'manual' || corr ? (corr?.admin_email || 'admin') : null,
+      // Desde DÓNDE se marcó. Solo viene cuando el empleado tiene activado
+      // «validar ubicación»; sin eso el kiosco no retiene el punto.
+      lat: m.lat ?? null,
+      lon: m.lon ?? null,
+      precision: m.precision_m ?? null,
+      direccion: m.direccion ?? null,
     };
   });
 

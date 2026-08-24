@@ -3601,6 +3601,21 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                       <button className="btn small danger-btn" onClick={() => removeEv(e)}>Eliminar</button>
                                     </span>
                                   </div>
+                                  {/* Desde dónde se marcó. Solo aparece si el
+                                      empleado tiene «validar ubicación»: sin
+                                      eso el kiosco no guarda el punto. */}
+                                  {e.lat != null && e.lon != null && (
+                                    <a
+                                      className="tl-lugar"
+                                      href={`https://www.google.com/maps?q=${e.lat},${e.lon}`}
+                                      target="_blank" rel="noreferrer"
+                                      title="Abrir en Google Maps"
+                                    >
+                                      <Icon name="pin" size={12} />
+                                      {e.direccion || `${Number(e.lat).toFixed(5)}, ${Number(e.lon).toFixed(5)}`}
+                                      {e.precision != null && <em>±{Math.round(e.precision)} m</em>}
+                                    </a>
+                                  )}
                                   {/* El formulario de edición, JUSTO bajo la marcación editada */}
                                   {evForm?.mode === 'edit' && evForm.eventId === e.id && formularioEv}
                                   {/* (el alta con fecha libre —conFecha— se pinta abajo, no aquí) */}
@@ -4889,6 +4904,13 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .tl-type.out { color: var(--warn-text); }
 .tl-time { font-variant-numeric: tabular-nums; font-weight: 600; }
 .tl-flag { color: var(--muted); font-size: 11.5px; }
+/* Desde dónde se marcó: renglón discreto bajo la marcación, con enlace al mapa. */
+.tl-lugar {
+  display: inline-flex; align-items: center; gap: 5px; margin: -2px 0 8px 64px;
+  font-size: 11.5px; color: var(--muted); text-decoration: none; line-height: 1.35;
+}
+.tl-lugar:hover { color: var(--accent-2); text-decoration: underline; }
+.tl-lugar em { font-style: normal; opacity: .7; }
 .tl-actions { display: flex; gap: 6px; }
 .btn.small { font-size: 12px; padding: 4px 10px; }
 .ev-form { border: 1px solid var(--grid); border-radius: 8px; padding: 12px; background: var(--surface-blanca); display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
