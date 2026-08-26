@@ -44,18 +44,24 @@ const ROSTRO_COMODO = 150;
  * confianza. Subir la resolución de análisis y aflojar el umbral recupera esos
  * casos; el descriptor sale del mismo recorte, así que no se pierde calidad.
  */
-async function detectarRostro(faceapi, img) {
+async function detectarRostro(faceapi, img, nombre = '') {
   const intentos = [
     { inputSize: 416, scoreThreshold: 0.5 },
     { inputSize: 608, scoreThreshold: 0.4 }, // fotos verticales o con la cara descentrada
     { inputSize: 800, scoreThreshold: 0.3 }, // último recurso: caras pequeñas o de perfil suave
   ];
+  console.log(`[Foto] ${nombre}: imagen ${img.width}×${img.height}`);
   for (const opciones of intentos) {
     const det = await faceapi
       .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions(opciones))
       .withFaceLandmarks()
       .withFaceDescriptor();
-    if (det) return det;
+    if (det) {
+      const b = det.detection.box;
+      console.log(`[Foto] ${nombre}: CARA a ${opciones.inputSize}px — ${Math.round(b.width)}×${Math.round(b.height)} px, confianza ${det.detection.score.toFixed(2)}`);
+      return det;
+    }
+    console.log(`[Foto] ${nombre}: sin cara a ${opciones.inputSize}px (umbral ${opciones.scoreThreshold})`);
   }
   return null;
 }
@@ -162,9 +168,17 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
       const faceapi = faceapiRef.current;
       for (const file of files) {
         if (fotos.length + nuevas.length >= MAX_FOTOS) break;
-        const img = await faceapi.bufferToImage(file);
-        const det = await detectarRostro(faceapi, img);
-        if (!det) { sinRostro.push(`${file.name} (no se encontró una cara)`); continue; }
+        let img;
+        try {
+          img = await faceapi.bufferToImage(file);
+        } catch {
+          // Formatos que el navegador no decodifica (HEIC de iPhone, sobre
+          // todo): antes reventaban el lote entero con un error genérico.
+          sinRostro.push(`${file.name} (el navegador no pudo abrir esta imagen; conviértela a JPG)`);
+          continue;
+        }
+        const det = await detectarRostro(faceapi, img, file.name);
+        if (!det) { sinRostro.push(`${file.name} (no se encontró una cara en ${img.width}×${img.height})`); continue; }
         // Un recorte de rostro pequeño da un descriptor pobre: es la causa
         // medida de que perfiles de personas distintas queden vecinos. Se
         // mide en PÍXELES porque es lo que ve el modelo: una cara puede
