@@ -26,9 +26,39 @@ const FACEAPI_MODEL_URL = '/models';
 /** Cuántas fotos se recomiendan y cuántas se admiten como máximo. */
 const FOTOS_RECOMENDADAS = 3;
 const MAX_FOTOS = 5;
-/** Lado mínimo del rostro detectado, en píxeles. Por debajo, el descriptor
- *  sale pobre y acerca a personas distintas (medido en producción). */
-const MIN_ROSTRO_PX = 120;
+/**
+ * Lado mínimo del rostro detectado, EN PÍXELES. El reconocedor recorta la
+ * cara y la lleva a 150×150: por debajo de ~90 px el recorte se estira y el
+ * descriptor sale pobre, que es lo que acerca perfiles de personas distintas.
+ * Entre 90 y 150 sirve pero va justo, así que se avisa sin bloquear.
+ */
+const MIN_ROSTRO_PX = 90;
+const ROSTRO_COMODO = 150;
+
+/**
+ * Busca la cara probando de menos a más esfuerzo.
+ *
+ * Con un solo intento a 416 px se rechazaban fotos perfectamente buenas: el
+ * detector redimensiona la imagen a un cuadrado, así que una foto vertical de
+ * celular queda aplastada y una cara nítida puede no alcanzar el umbral de
+ * confianza. Subir la resolución de análisis y aflojar el umbral recupera esos
+ * casos; el descriptor sale del mismo recorte, así que no se pierde calidad.
+ */
+async function detectarRostro(faceapi, img) {
+  const intentos = [
+    { inputSize: 416, scoreThreshold: 0.5 },
+    { inputSize: 608, scoreThreshold: 0.4 }, // fotos verticales o con la cara descentrada
+    { inputSize: 800, scoreThreshold: 0.3 }, // último recurso: caras pequeñas o de perfil suave
+  ];
+  for (const opciones of intentos) {
+    const det = await faceapi
+      .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions(opciones))
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+    if (det) return det;
+  }
+  return null;
+}
 
 /**
  * Formulario de registro, embebible (página propia o cajón del panel).
@@ -127,22 +157,25 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
     setStatus(files.length > 1 ? `Analizando ${files.length} fotos…` : 'Analizando la foto…');
     const nuevas = [];
     const sinRostro = [];
+    const avisos = [];
     try {
       const faceapi = faceapiRef.current;
       for (const file of files) {
         if (fotos.length + nuevas.length >= MAX_FOTOS) break;
         const img = await faceapi.bufferToImage(file);
-        const det = await faceapi
-          .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-        if (!det) { sinRostro.push(file.name); continue; }
+        const det = await detectarRostro(faceapi, img);
+        if (!det) { sinRostro.push(`${file.name} (no se encontró una cara)`); continue; }
         // Un recorte de rostro pequeño da un descriptor pobre: es la causa
-        // medida de que perfiles de personas distintas queden vecinos.
-        if (Math.min(det.detection.box.width, det.detection.box.height) < MIN_ROSTRO_PX) {
-          sinRostro.push(`${file.name} (cara muy pequeña)`);
+        // medida de que perfiles de personas distintas queden vecinos. Se
+        // mide en PÍXELES porque es lo que ve el modelo: una cara puede
+        // ocupar media foto y aun así tener pocos píxeles si la imagen es
+        // de baja resolución.
+        const ladoCara = Math.round(Math.min(det.detection.box.width, det.detection.box.height));
+        if (ladoCara < MIN_ROSTRO_PX) {
+          sinRostro.push(`${file.name} (la cara tiene ${ladoCara} px y hacen falta ${MIN_ROSTRO_PX}: acércate o usa una foto de más resolución)`);
           continue;
         }
+        if (ladoCara < ROSTRO_COMODO) avisos.push(`${file.name}: la cara mide ${ladoCara} px, va justa`);
         // La foto NO se guarda en ninguna parte: de ella solo sale el vector de
         // 128 floats. La previsualización vive en memoria del navegador y se
         // libera al terminar.
@@ -150,8 +183,8 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
       }
       setFotos((prev) => [...prev, ...nuevas]);
       setStatus(sinRostro.length > 0
-        ? `❌ Sin rostro claro en: ${sinRostro.join(', ')}. Usa fotos frontales, con buena luz y la cara grande en el encuadre.`
-        : '');
+        ? `❌ No se pudo usar ${sinRostro.length === 1 ? 'esta foto' : 'estas fotos'} — ${sinRostro.join(' · ')}`
+        : avisos.length > 0 ? `⚠️ ${avisos.join(' · ')}. Sirve, pero más cerca reconoce mejor.` : '');
     } catch (err) {
       setStatus(`❌ Error procesando la foto: ${err?.message || err}`);
     } finally {

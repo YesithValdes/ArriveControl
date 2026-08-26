@@ -678,12 +678,18 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       let sumadas = 0;
       for (const file of files) {
         const img = await faceapi.bufferToImage(file);
-        const det = await faceapi
-          .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
-          .withFaceLandmarks().withFaceDescriptor();
-        if (!det) { showToast(`Sin rostro claro en ${file.name}. Usa una foto frontal y con buena luz.`); continue; }
-        if (Math.min(det.detection.box.width, det.detection.box.height) < 120) {
-          showToast(`En ${file.name} la cara sale muy pequeña: acércate y repite.`); continue;
+        // Mismos reintentos que el registro: con un solo pase a 416 px se
+        // rechazaban fotos buenas (una vertical de celular queda aplastada al
+        // redimensionar y la cara no alcanza el umbral de confianza).
+        let det = null;
+        for (const o of [{ inputSize: 416, scoreThreshold: 0.5 }, { inputSize: 608, scoreThreshold: 0.4 }, { inputSize: 800, scoreThreshold: 0.3 }]) {
+          det = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions(o)).withFaceLandmarks().withFaceDescriptor();
+          if (det) break;
+        }
+        if (!det) { showToast(`En ${file.name} no se encontró una cara. Usa una foto frontal y con buena luz.`); continue; }
+        const lado = Math.round(Math.min(det.detection.box.width, det.detection.box.height));
+        if (lado < 90) {
+          showToast(`En ${file.name} la cara tiene ${lado} px y hacen falta 90: acércate o usa una foto de más resolución.`); continue;
         }
         const res = await agregarRostro(empleadoId, Array.from(det.descriptor));
         if (res.error) { showToast(res.error); continue; }
