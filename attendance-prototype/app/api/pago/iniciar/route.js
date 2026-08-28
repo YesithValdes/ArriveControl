@@ -53,6 +53,7 @@ export async function POST(req) {
     checkout: datos.checkout,
     orderId: datos.orderId,
     montoCentavos: datos.montoCentavos,
+    // El panel lo usa para advertir que no se está cobrando de verdad.
     entorno: datos.entorno,
   })
 }

@@ -2990,6 +2990,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       </button>
                     </div>
                   )}
+                  {/* Mientras la pasarela esté en pruebas hay que decirlo: el
+                      pago no cobra dinero real, pero SÍ activa el plan. Sin
+                      este aviso alguien podría creer que ya pagó. */}
+                  {miEmpresa.plan !== 'pago' && sesion?.pagoDePrueba && (
+                    <p className="cfg-note" style={{ marginTop: 8, color: 'var(--warn-text)' }}>
+                      ⚠️ Pagos en <b>modo de pruebas</b>: no se cobra dinero real. Si continúas, el
+                      plan se activa igual y habrá que revertirlo a mano.
+                    </p>
+                  )}
                   {miEmpresa.plan === 'pago' && sesion?.planEstado?.venceEn && (
                     <p className="cfg-note" style={{ marginTop: 10 }}>
                       Suscripción activa hasta el{' '}

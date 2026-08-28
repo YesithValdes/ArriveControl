@@ -84,6 +84,9 @@ export default async function AdminPage({ params }) {
         // quedó. Lo calcula el servidor para que la pantalla no rehaga la
         // regla y termine diciendo algo distinto.
         planEstado: estadoDelPlan(empresa),
+        // Cobro en PRUEBAS: el panel lo advierte, para que nadie active un
+        // plan creyendo que pagó ni espere que le hayan cobrado de verdad.
+        pagoDePrueba: (process.env.BOLD_ENTORNO ?? 'test') !== 'prod',
       }}
       permisos={permisos}
     />
