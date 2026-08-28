@@ -9,7 +9,7 @@
  */
 import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { signIn } from '../../lib/auth-client'
+import { signIn, signOut, useSession } from '../../lib/auth-client'
 
 // useSearchParams() exige un límite de <Suspense> para el prerender del build.
 export default function LoginPage() {
@@ -55,18 +55,55 @@ function LoginForm() {
 
   const destino = params.get('destino') || '/admin'
 
+  // ¿Ya hay alguien conectado en este navegador?
+  const { data: sesionActiva } = useSession()
+  const [saliendo, setSaliendo] = useState(false)
+
+  /**
+   * Cierra la sesión que hubiera ANTES de abrir una nueva.
+   *
+   * Sin esto, entrar con otra cuenta encima de una sesión viva dejaba al
+   * servidor viendo al usuario anterior: la persona elegía su otra cuenta en
+   * Google, volvía al panel y seguía siendo la primera. La única salida era
+   * borrar las cookies a mano desde el inspector.
+   *
+   * Aquí el fallo NO se ignora: si la sesión vieja no muere, iniciar otra
+   * encima repetiría exactamente el problema que esto viene a resolver.
+   */
+  const limpiarSesionPrevia = async () => {
+    if (!sesionActiva?.user) return true
+    try {
+      await signOut()
+      return true
+    } catch {
+      setError('No se pudo cerrar la sesión anterior. Recarga la página e inténtalo de nuevo.')
+      setCargando(false)
+      return false
+    }
+  }
+
   // Google se lleva la página entera y vuelve al callback; no hay promesa que
   // esperar ni router.push que hacer después.
-  const entrarConGoogle = () => {
+  const entrarConGoogle = async () => {
     setError('')
     setCargando(true)
+    if (!(await limpiarSesionPrevia())) return
     signIn.social({ provider: 'google', callbackURL: destino })
+  }
+
+  /** Salir de la cuenta actual sin entrar a otra: deja el login limpio. */
+  const salirDeLaCuenta = async () => {
+    setError('')
+    setSaliendo(true)
+    try { await signOut() } catch { setError('No se pudo cerrar la sesión. Recarga la página.') }
+    setSaliendo(false)
   }
 
   async function enviar(e) {
     e.preventDefault()
     setError('')
     setCargando(true)
+    if (!(await limpiarSesionPrevia())) return
     const { error: err } = await signIn.email({ email, password })
     setCargando(false)
     if (err) {
@@ -156,6 +193,46 @@ function LoginForm() {
               Accede al panel de asistencia
             </p>
           </div>
+
+          {/* Decirlo ANTES de que lo intente: quien llega aquí con sesión viva
+              casi siempre viene justo a cambiar de cuenta, y hasta ahora el
+              cambio fallaba en silencio. */}
+          {sesionActiva?.user && (
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 8,
+              padding: '12px 14px', borderRadius: 8,
+              background: '#eff6ff', border: '1px solid #bfdbfe', fontSize: 13.5, color: '#1e3a5f',
+            }}>
+              <span>
+                Ya hay una sesión abierta como <b>{sesionActiva.user.email}</b>.
+                Si entras con otra cuenta, esta se cerrará.
+              </span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => { window.location.href = destino }}
+                  style={{
+                    padding: '7px 13px', borderRadius: 7, border: '1px solid #93c5fd',
+                    background: '#fff', color: '#1e3a5f', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  Continuar como {sesionActiva.user.name?.split(' ')[0] || 'esta cuenta'}
+                </button>
+                <button
+                  type="button"
+                  onClick={salirDeLaCuenta}
+                  disabled={saliendo}
+                  style={{
+                    padding: '7px 13px', borderRadius: 7, border: '1px solid transparent',
+                    background: 'transparent', color: '#1e3a5f', fontSize: 13, fontWeight: 600,
+                    cursor: saliendo ? 'default' : 'pointer', textDecoration: 'underline', opacity: saliendo ? 0.6 : 1,
+                  }}
+                >
+                  {saliendo ? 'Cerrando…' : 'Cerrar esta sesión'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Único camino en producción. Un solo botón: entrar y registrarse son
               lo mismo — quien llega sin empresa recibe la suya al entrar. */}

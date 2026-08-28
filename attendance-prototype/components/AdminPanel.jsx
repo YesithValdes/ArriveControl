@@ -1174,7 +1174,16 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // Cerrar sesión.
   const cerrarSesion = async () => {
-    try { await signOut(); } catch { /* la redirección igual lleva al login */ }
+    try {
+      await signOut();
+    } catch (e) {
+      // NO se ignora: si la sesión no muere, mandar a /login solo aparenta
+      // haber salido. La persona entra con otra cuenta, el servidor sigue
+      // viéndola como la anterior, y la única salida acaba siendo borrar las
+      // cookies a mano. Mejor decirlo y quedarse donde está.
+      showToast(`No se pudo cerrar la sesión: ${e?.message || 'inténtalo de nuevo'}`);
+      return;
+    }
     window.location.href = '/login';
   };
 

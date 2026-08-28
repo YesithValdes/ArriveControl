@@ -127,7 +127,15 @@ export default function PlataformaPanel({ sesion }) {
   }, [empresas, filtro, segmento]);
 
   const cerrarSesion = async () => {
-    try { await signOut(); } catch { /* la redirección igual lleva al login */ }
+    try {
+      await signOut();
+    } catch (e) {
+      // Igual que en el panel de empresa: si la sesión no muere, redirigir
+      // solo aparenta haber salido y el siguiente inicio de sesión reusa la
+      // cuenta vieja. Es preferible avisar y no moverse.
+      alert(`No se pudo cerrar la sesión: ${e?.message || 'inténtalo de nuevo'}`);
+      return;
+    }
     window.location.href = '/login';
   };
 
