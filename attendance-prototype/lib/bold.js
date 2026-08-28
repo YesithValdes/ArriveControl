@@ -39,13 +39,19 @@ export const MONTOS_DE_PRUEBA = {
 export const configBold = () => {
   const { BOLD_API_KEY, BOLD_SECRET_KEY, BOLD_WEBHOOK_SECRET, BOLD_ENTORNO } = process.env
   if (!BOLD_API_KEY || !BOLD_SECRET_KEY) return null
+  const entorno = BOLD_ENTORNO === 'prod' ? 'prod' : 'test'
   return {
     apiKey: BOLD_API_KEY,
     secreto: BOLD_SECRET_KEY,
-    // `??` y no `||`: en pruebas el secreto del webhook es la CADENA VACÍA, y
-    // con `||` se confundiría con no haberlo configurado.
-    secretoWebhook: BOLD_WEBHOOK_SECRET ?? null,
-    entorno: BOLD_ENTORNO === 'prod' ? 'prod' : 'test',
+    // En PRUEBAS Bold firma con la cadena vacía. Se admite '' como valor
+    // válido —de ahí el `??` en vez de `||`— y además se asume vacío cuando
+    // la variable ni siquiera existe, porque algunos paneles (Vercel entre
+    // ellos) no dejan guardar una variable con valor vacío.
+    //
+    // En PRODUCCIÓN no se asume nada: sin secreto queda `null` y el webhook
+    // rechaza todo. Ante la duda, mejor no cobrar que aceptar un evento falso.
+    secretoWebhook: BOLD_WEBHOOK_SECRET ?? (entorno === 'test' ? '' : null),
+    entorno,
     montoCentavos: Number(process.env.PRECIO_MENSUAL_CENTAVOS) || PRECIO_POR_DEFECTO,
     moneda: 'COP',
   }
