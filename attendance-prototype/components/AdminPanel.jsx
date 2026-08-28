@@ -641,6 +641,34 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // ── Rostros del empleado abierto en la ficha ────────────────────────
   // Agregar una foto no debe obligar a registrar de nuevo a la persona.
+  // ── Contratar el plan ────────────────────────────────────────────────
+  // El servidor arma y FIRMA los datos del checkout (el monto va firmado para
+  // que nadie lo cambie por el camino); aquí solo se envían a Wompi con un
+  // formulario, que es como su checkout espera recibirlos.
+  const [pagando, setPagando] = useState(false);
+  const irAPagar = async () => {
+    setPagando(true);
+    try {
+      const r = await fetch('/api/pago/iniciar', { method: 'POST' });
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d?.ok) { showToast(d?.error || 'No se pudo iniciar el pago.'); return; }
+      const form = document.createElement('form');
+      form.method = 'GET';
+      form.action = d.checkout.url;
+      for (const [k, v] of Object.entries(d.checkout.campos)) {
+        const input = document.createElement('input');
+        input.type = 'hidden'; input.name = k; input.value = v;
+        form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      form.submit();
+    } catch (e) {
+      showToast(`No se pudo iniciar el pago: ${e.message}`);
+    } finally {
+      setPagando(false);
+    }
+  };
+
   const [rostros, setRostros] = useState([]);
   const [rostroOcupado, setRostroOcupado] = useState(false);
   const rostroFileRef = useRef(null);
@@ -2917,6 +2945,31 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         : <b>{miEmpresa.empleados} de {miEmpresa.limiteEmpleados} empleados</b>}
                     </div>
                   </div>
+
+                  {/* Contratar el plan. Aparece durante la prueba y en el plan
+                      gratuito: quien ya sabe que lo necesita no tiene por qué
+                      esperar a que se le venza nada para poder pagar. */}
+                  {miEmpresa.plan !== 'pago' && (
+                    <div className="plan-pago">
+                      <div>
+                        <b>Plan Empresa · empleados ilimitados</b>
+                        <small>
+                          {sesion?.planEstado?.enPrueba
+                            ? `Tu prueba termina en ${sesion.planEstado.diasPrueba} día${sesion.planEstado.diasPrueba === 1 ? '' : 's'}. Puedes contratarlo desde ya: los días que te quedan no se pierden.`
+                            : `Hoy tienes hasta ${miEmpresa.limiteEmpleados ?? 5} empleados. Con el plan Empresa no hay tope.`}
+                        </small>
+                      </div>
+                      <button className="btn primary" disabled={pagando} onClick={irAPagar}>
+                        {pagando ? 'Abriendo…' : 'Contratar plan'}
+                      </button>
+                    </div>
+                  )}
+                  {miEmpresa.plan === 'pago' && sesion?.planEstado?.venceEn && (
+                    <p className="cfg-note" style={{ marginTop: 10 }}>
+                      Suscripción activa hasta el{' '}
+                      <b>{new Date(sesion.planEstado.venceEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}</b>.
+                    </p>
+                  )}
                 </div>
 
                 <div className="cfg-group">
@@ -4923,6 +4976,15 @@ const CSS = `
 .banner-prueba b { color: var(--ink); }
 .banner-prueba.urge { background: var(--warn-soft); color: var(--warn-text); border-color: var(--warn-text); }
 .banner-prueba.urge b { color: inherit; }
+
+/* Contratar el plan, dentro de Ajustes → Mi empresa */
+.plan-pago {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  margin-top: 14px; padding: 15px 17px; border-radius: 12px;
+  background: var(--accent-soft); border: 1px solid var(--border);
+}
+.plan-pago b { display: block; font-size: 14.5px; }
+.plan-pago small { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.45; margin-top: 3px; max-width: 46ch; }
 
 /* Banner de suscripción vencida */
 .banner-vencida { background: var(--crit-soft); color: var(--crit-text); border: 1px solid var(--crit, #fca5a5); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; }
