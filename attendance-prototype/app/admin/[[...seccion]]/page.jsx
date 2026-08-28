@@ -18,6 +18,7 @@ import AdminPanel from '../../../components/AdminPanel.jsx';
 import DefinirContrasena from '../../../components/DefinirContrasena.jsx';
 import { estadoAcceso, tienePermiso } from '../../../lib/sesion';
 import { tabDeSegmentos } from '../../../lib/rutasPanel.js';
+import { estadoDelPlan } from '../../../lib/empresas.js';
 
 export const metadata = {
   title: 'Panel del administrador',
@@ -79,6 +80,10 @@ export default async function AdminPage({ params }) {
         plan: empresa?.plan ?? 'gratis',
         estadoSuscripcion: empresa?.estado ?? 'activa',
         limiteEmpleados: empresa?.limite_empleados ?? null,
+        // Prueba gratuita: días que quedan, si ya venció y con qué tope se
+        // quedó. Lo calcula el servidor para que la pantalla no rehaga la
+        // regla y termine diciendo algo distinto.
+        planEstado: estadoDelPlan(empresa),
       }}
       permisos={permisos}
     />

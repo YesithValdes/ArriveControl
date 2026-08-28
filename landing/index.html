@@ -1,0 +1,466 @@
+<!doctype html>
+<!--
+  Landing de Control Registro.
+
+  HTML estático a propósito: sin build ni dependencias, carga en milisegundos
+  (que es lo que decide si alguien se queda) y se edita sin saber programar.
+  Vive APARTE de la aplicación: se despliega como su propio proyecto y no
+  puede romper el kiosco ni el panel, que ya tienen gente usándolos.
+
+  Para cambiar el precio, busca «PRECIO» más abajo.
+-->
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Control Registro — Asistencia con reconocimiento facial para tu empresa</title>
+<meta name="description" content="Tus empleados marcan entrada y salida con la cara, desde un celular o tablet. Recibe las horas trabajadas y las extras calculadas según la ley colombiana, listas para nómina. Prueba 30 días gratis." />
+<meta property="og:title" content="Control Registro — Asistencia con reconocimiento facial" />
+<meta property="og:description" content="Marcación facial sin huelleros. Horas extra calculadas según la ley colombiana, listas para nómina." />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --page: #ffffff;
+    --suave: #eaf1f8;
+    --tinta: #233240;
+    --tinta-2: #46586a;
+    --apagado: #7b8ca0;
+    --borde: #d8e2ee;
+    --marca: #3a5570;
+    --marca-oscura: #2e455d;
+    --acento: #6e96b8;
+    --acento-2: #557d9e;
+    --verde: #2f6b55;
+    --sombra: 0 1px 2px rgba(16,24,40,.05), 0 8px 24px rgba(16,24,40,.08);
+    --r: 14px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--page); color: var(--tinta);
+    font-family: Montserrat, "Segoe UI", system-ui, sans-serif;
+    font-size: 16px; line-height: 1.65; -webkit-font-smoothing: antialiased;
+  }
+  .env { max-width: 1080px; margin: 0 auto; padding: 0 22px; }
+  a { color: var(--acento-2); }
+
+  /* ── Barra ───────────────────────────────────────────────────── */
+  header.barra {
+    position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.92);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--borde);
+  }
+  .barra .env { display: flex; align-items: center; justify-content: space-between; height: 64px; gap: 16px; }
+  .logo { display: flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: .06em; font-size: 14px; color: var(--tinta); text-decoration: none; }
+  .logo span { color: var(--acento); }
+  .barra nav { display: flex; align-items: center; gap: 22px; font-size: 14px; font-weight: 600; }
+  .barra nav a { color: var(--tinta-2); text-decoration: none; }
+  .barra nav a:hover { color: var(--marca); }
+  @media (max-width: 720px) { .barra nav .oculta-movil { display: none; } }
+
+  .btn {
+    display: inline-block; font: inherit; font-weight: 700; font-size: 15px;
+    padding: 12px 22px; border-radius: 10px; text-decoration: none; border: 1px solid transparent;
+    cursor: pointer; transition: background .15s, border-color .15s;
+  }
+  .btn-primario { background: var(--marca); color: #fff; box-shadow: var(--sombra); }
+  .btn-primario:hover { background: var(--marca-oscura); }
+  .btn-borde { border-color: var(--borde); color: var(--tinta); background: #fff; }
+  .btn-borde:hover { border-color: var(--acento); }
+  .btn-chico { padding: 9px 16px; font-size: 14px; }
+
+  /* ── Portada ─────────────────────────────────────────────────── */
+  .portada { padding: 74px 0 64px; }
+  .portada .env { display: grid; grid-template-columns: 1.05fr .95fr; gap: 54px; align-items: center; }
+  @media (max-width: 900px) { .portada .env { grid-template-columns: 1fr; gap: 40px; } }
+  .marca-arriba {
+    display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700;
+    color: var(--verde); background: #ddf0e7; padding: 6px 13px; border-radius: 999px; margin-bottom: 20px;
+  }
+  h1 {
+    font-size: clamp(34px, 5.2vw, 52px); line-height: 1.1; letter-spacing: -.035em;
+    font-weight: 800; margin: 0; text-wrap: balance;
+  }
+  .bajada { font-size: clamp(16px, 2vw, 18.5px); color: var(--tinta-2); margin: 22px 0 30px; max-width: 52ch; }
+  .acciones { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .letra-chica { font-size: 13.5px; color: var(--apagado); margin-top: 16px; }
+
+  /* Teléfono de la portada */
+  .tel-marco {
+    background: var(--marca); border-radius: 26px; padding: 12px; box-shadow: 0 20px 60px rgba(16,24,40,.22);
+    max-width: 290px; margin: 0 auto; transform: rotate(-1.5deg);
+  }
+  .tel-pantalla {
+    background: #fff; border-radius: 17px; overflow: hidden; aspect-ratio: 9/17.5;
+    display: flex; flex-direction: column; align-items: center; padding: 16px 14px;
+  }
+  .tel-barra { width: 100%; display: flex; justify-content: space-between; font-size: 8.5px; font-weight: 800; letter-spacing: .1em; color: var(--apagado); }
+  .tel-barra i { font-style: normal; color: var(--acento); }
+  .tel-msg { margin-top: auto; text-align: center; }
+  .tel-tag { font-size: 10px; font-weight: 800; letter-spacing: .14em; color: var(--verde); }
+  .tel-nombre { font-size: 17px; font-weight: 800; letter-spacing: -.01em; margin-top: 3px; }
+  .tel-hora { font-size: 27px; font-weight: 800; color: var(--verde); font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .tel-cara {
+    width: 78%; aspect-ratio: 5/6; border-radius: 15px; margin: 14px auto auto;
+    background: linear-gradient(160deg, #b9c6d4, #8fa0b2 55%, #75879b);
+    position: relative; overflow: hidden; flex-shrink: 0;
+    box-shadow: 0 0 0 3px var(--verde);
+  }
+  .tel-cara svg { position: absolute; left: 50%; bottom: -6%; transform: translateX(-50%); width: 78%; opacity: .5; }
+  .tel-velo { position: absolute; inset: 0; background: rgba(47,107,85,.55); display: grid; place-items: center; }
+  .tel-ok { width: 62px; height: 62px; border-radius: 50%; background: var(--verde); display: grid; place-items: center; font-size: 30px; }
+  .tel-pie { margin-top: auto; padding-top: 10px; font-size: 8px; color: var(--apagado); }
+
+  /* ── Bloques ─────────────────────────────────────────────────── */
+  section { padding: 72px 0; }
+  .fondo-suave { background: var(--suave); }
+  .titulo-bloque { max-width: 60ch; margin: 0 auto 44px; text-align: center; }
+  h2 { font-size: clamp(26px, 3.6vw, 34px); line-height: 1.2; letter-spacing: -.025em; font-weight: 800; margin: 0; text-wrap: balance; }
+  .titulo-bloque p { color: var(--tinta-2); margin: 14px 0 0; }
+  .ojo { font-size: 12px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--acento-2); margin: 0 0 10px; }
+
+  .dolores { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+  .dolor { background: #fff; border: 1px solid var(--borde); border-radius: var(--r); padding: 24px; }
+  .dolor h3 { font-size: 17px; font-weight: 800; margin: 0 0 8px; letter-spacing: -.01em; }
+  .dolor p { margin: 0; color: var(--tinta-2); font-size: 15px; }
+  .dolor .ico { font-size: 24px; display: block; margin-bottom: 12px; }
+
+  .pasos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; counter-reset: paso; }
+  @media (max-width: 800px) { .pasos { grid-template-columns: 1fr; } }
+  .paso { counter-increment: paso; }
+  .paso::before {
+    content: counter(paso); display: grid; place-items: center;
+    width: 38px; height: 38px; border-radius: 11px; background: var(--marca); color: #fff;
+    font-size: 17px; font-weight: 800; margin-bottom: 15px;
+  }
+  .paso h3 { font-size: 18px; font-weight: 800; margin: 0 0 7px; letter-spacing: -.01em; }
+  .paso p { margin: 0; color: var(--tinta-2); font-size: 15px; }
+
+  .rejilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; }
+  .tarjeta { background: #fff; border: 1px solid var(--borde); border-radius: var(--r); padding: 22px; box-shadow: var(--sombra); }
+  .tarjeta h3 { font-size: 16.5px; font-weight: 800; margin: 0 0 7px; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+  .tarjeta p { margin: 0; color: var(--tinta-2); font-size: 14.5px; }
+
+  /* ── Precios ─────────────────────────────────────────────────── */
+  .planes { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 22px; max-width: 800px; margin: 0 auto; }
+  .plan { background: #fff; border: 1px solid var(--borde); border-radius: var(--r); padding: 30px 26px; display: flex; flex-direction: column; }
+  .plan.destacado { border-color: var(--marca); border-width: 2px; box-shadow: var(--sombra); position: relative; }
+  .plan .etiqueta {
+    position: absolute; top: -12px; left: 26px; background: var(--marca); color: #fff;
+    font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; padding: 4px 12px; border-radius: 999px;
+  }
+  .plan h3 { font-size: 19px; font-weight: 800; margin: 0; letter-spacing: -.01em; }
+  .plan .precio { font-size: 33px; font-weight: 800; letter-spacing: -.03em; margin: 14px 0 4px; }
+  .plan .precio small { font-size: 15px; font-weight: 600; color: var(--apagado); letter-spacing: 0; }
+  .plan .para { color: var(--tinta-2); font-size: 14.5px; margin: 0 0 18px; }
+  .plan ul { list-style: none; padding: 0; margin: 0 0 24px; font-size: 14.5px; color: var(--tinta-2); }
+  .plan li { padding-left: 25px; position: relative; margin-bottom: 9px; }
+  .plan li::before { content: "✓"; position: absolute; left: 0; color: var(--verde); font-weight: 800; }
+  .plan .btn { margin-top: auto; text-align: center; }
+
+  /* ── Preguntas ───────────────────────────────────────────────── */
+  .preguntas { max-width: 720px; margin: 0 auto; }
+  details {
+    background: #fff; border: 1px solid var(--borde); border-radius: 11px;
+    padding: 16px 20px; margin-bottom: 11px;
+  }
+  details[open] { border-color: var(--acento); }
+  summary { font-weight: 700; cursor: pointer; font-size: 16px; list-style: none; display: flex; justify-content: space-between; gap: 14px; align-items: center; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; color: var(--acento); font-size: 21px; font-weight: 700; flex: 0 0 auto; }
+  details[open] summary::after { content: "−"; }
+  details p { margin: 12px 0 0; color: var(--tinta-2); font-size: 15px; }
+
+  /* ── Cierre y pie ────────────────────────────────────────────── */
+  .cierre { background: var(--marca); color: #fff; text-align: center; }
+  .cierre h2 { color: #fff; }
+  .cierre p { color: #c7d8e8; margin: 16px auto 28px; max-width: 50ch; }
+  .cierre .btn-primario { background: #fff; color: var(--marca); }
+  .cierre .btn-primario:hover { background: #eaf1f8; }
+
+  footer { background: #1a2836; color: #90a3b7; font-size: 14px; padding: 42px 0; }
+  footer .env { display: flex; justify-content: space-between; gap: 22px; flex-wrap: wrap; align-items: center; }
+  footer a { color: #c7d8e8; text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  footer .logo { color: #fff; }
+  .pie-enlaces { display: flex; gap: 20px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<header class="barra">
+  <div class="env">
+    <a class="logo" href="#">
+      <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
+        <rect width="64" height="64" rx="14" fill="#3a5570"/>
+        <g transform="translate(6.4 6.4) scale(0.8)" stroke="#fff" stroke-linecap="round" fill="none">
+          <path d="M 51 17.5 A 24 24 0 1 0 51 46.5" stroke-width="7.5"/>
+          <line x1="32" y1="10" x2="32" y2="15" stroke-width="3.4"/>
+          <line x1="10" y1="32" x2="15" y2="32" stroke-width="3.4"/>
+          <line x1="32" y1="49" x2="32" y2="54" stroke-width="3.4"/>
+          <circle cx="32" cy="32" r="3" fill="#fff" stroke="none"/>
+          <line x1="32" y1="32" x2="41" y2="23" stroke-width="4.4"/>
+        </g>
+      </svg>
+      CONTROL <span>REGISTRO</span>
+    </a>
+    <nav>
+      <a class="oculta-movil" href="#como">Cómo funciona</a>
+      <a class="oculta-movil" href="#precios">Precios</a>
+      <a class="oculta-movil" href="#preguntas">Preguntas</a>
+      <a class="btn btn-primario btn-chico" href="https://arrivecontrol.vercel.app/login">Entrar</a>
+    </nav>
+  </div>
+</header>
+
+<section class="portada">
+  <div class="env">
+    <div>
+      <span class="marca-arriba">● 30 días gratis, sin tarjeta</span>
+      <h1>La asistencia de tu equipo, sin planillas ni huelleros</h1>
+      <p class="bajada">
+        Tu gente marca entrada y salida con la cara, desde un celular o una tablet común.
+        Tú recibes las horas trabajadas y las extras ya calculadas según la ley colombiana,
+        listas para pasar a nómina.
+      </p>
+      <div class="acciones">
+        <a class="btn btn-primario" href="https://arrivecontrol.vercel.app/login">Probar 30 días gratis</a>
+        <a class="btn btn-borde" href="#como">Ver cómo funciona</a>
+      </div>
+      <p class="letra-chica">No pedimos tarjeta. Al terminar la prueba sigues gratis hasta 10 empleados.</p>
+    </div>
+
+    <div class="tel-marco" aria-hidden="true">
+      <div class="tel-pantalla">
+        <div class="tel-barra"><span>CONTROL <i>REGISTRO</i></span><span>⏹</span></div>
+        <div class="tel-msg">
+          <div class="tel-tag">🟢 ENTRADA</div>
+          <div class="tel-nombre">¡Bienvenida, Laura!</div>
+          <div class="tel-hora">07:58</div>
+        </div>
+        <div class="tel-cara">
+          <svg viewBox="0 0 100 90"><g fill="#31404f"><circle cx="50" cy="30" r="17"/><path d="M14 90 q4 -34 36 -34 q32 0 36 34 z"/></g></svg>
+          <div class="tel-velo"><div class="tel-ok">👍</div></div>
+        </div>
+        <div class="tel-pie">🔐 No se guardan fotos</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="fondo-suave">
+  <div class="env">
+    <div class="titulo-bloque">
+      <p class="ojo">El problema</p>
+      <h2>Controlar la asistencia no debería costar tanto trabajo</h2>
+    </div>
+    <div class="dolores">
+      <div class="dolor">
+        <span class="ico">📋</span>
+        <h3>Planillas de papel</h3>
+        <p>Alguien firma por otro, la letra no se entiende, y al final del mes toca sumar horas
+          a mano con una calculadora.</p>
+      </div>
+      <div class="dolor">
+        <span class="ico">👆</span>
+        <h3>Huelleros que no leen</h3>
+        <p>Manos mojadas, con grasa o desgastadas por el trabajo. La fila crece mientras alguien
+          intenta cinco veces poner el dedo.</p>
+      </div>
+      <div class="dolor">
+        <span class="ico">🧮</span>
+        <h3>Horas extra a ojo</h3>
+        <p>Nocturnas, dominicales, festivas. Un error de cálculo se paga de más o genera un
+          reclamo del empleado.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="como">
+  <div class="env">
+    <div class="titulo-bloque">
+      <p class="ojo">Cómo funciona</p>
+      <h2>Listo en una tarde, con lo que ya tienes</h2>
+      <p>No hace falta comprar equipos. Sirve cualquier celular o tablet con cámara.</p>
+    </div>
+    <div class="pasos">
+      <div class="paso">
+        <h3>Registras a tu equipo</h3>
+        <p>Una foto por persona y sus datos básicos. La foto no se guarda: el sistema solo
+          conserva un código matemático que no permite reconstruir el rostro.</p>
+      </div>
+      <div class="paso">
+        <h3>Ellos marcan con la cara</h3>
+        <p>Se paran frente al aparato, parpadean y listo. En menos de un segundo saben si su
+          entrada quedó registrada, y les llega el comprobante al correo.</p>
+      </div>
+      <div class="paso">
+        <h3>Tú ves todo al instante</h3>
+        <p>Quién llegó, a qué hora, desde dónde y cuántas horas extra lleva cada quien.
+          Exportas el reporte y lo pasas a nómina.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="fondo-suave">
+  <div class="env">
+    <div class="titulo-bloque">
+      <p class="ojo">Lo que lo hace distinto</p>
+      <h2>Pensado para empresas colombianas</h2>
+    </div>
+    <div class="rejilla">
+      <div class="tarjeta">
+        <h3>📶 Funciona sin internet</h3>
+        <p>Si se cae la conexión, el kiosco sigue registrando y sincroniza solo cuando vuelve.
+          Nadie se queda sin marcar.</p>
+      </div>
+      <div class="tarjeta">
+        <h3>⚖️ Horas extra según la ley</h3>
+        <p>Diurnas, nocturnas, dominicales y festivas, calculadas con los recargos vigentes y la
+          jornada de la Ley 2101. Los porcentajes los ajustas tú.</p>
+      </div>
+      <div class="tarjeta">
+        <h3>📍 Sabes desde dónde marcaron</h3>
+        <p>Puedes exigir que solo marquen dentro de la sede, o simplemente registrar la
+          ubicación de cada marcación con su dirección.</p>
+      </div>
+      <div class="tarjeta">
+        <h3>✉️ Comprobante al empleado</h3>
+        <p>Cada quien recibe por correo su entrada o salida con la hora exacta y el acumulado
+          del día. Se acaban las discusiones de "yo sí llegué".</p>
+      </div>
+      <div class="tarjeta">
+        <h3>🏢 Varias sedes</h3>
+        <p>Cada sede con su propio aparato y su radio permitido. Los reportes se filtran por
+          sede o los ves todos juntos.</p>
+      </div>
+      <div class="tarjeta">
+        <h3>🔐 Prueba de vida</h3>
+        <p>Detecta que hay una persona real frente a la cámara, no una foto. Nadie marca por un
+          compañero que no llegó.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="precios">
+  <div class="env">
+    <div class="titulo-bloque">
+      <p class="ojo">Precios</p>
+      <h2>Empieza gratis y paga solo cuando crezcas</h2>
+      <p>Todos los planes incluyen el producto completo. Lo único que cambia es cuánta
+        gente puedes registrar.</p>
+    </div>
+    <div class="planes">
+      <div class="plan">
+        <h3>Gratis</h3>
+        <!-- PRECIO: este plan no se cobra. -->
+        <div class="precio">$0</div>
+        <p class="para">Para negocios pequeños o para probar sin apuro.</p>
+        <ul>
+          <li>Hasta 10 empleados</li>
+          <li>Marcación facial ilimitada</li>
+          <li>Reportes de horas y extras</li>
+          <li>Funciona sin internet</li>
+          <li>Sin vencimiento</li>
+        </ul>
+        <a class="btn btn-borde" href="https://arrivecontrol.vercel.app/login">Empezar gratis</a>
+      </div>
+      <div class="plan destacado">
+        <span class="etiqueta">30 días gratis</span>
+        <h3>Empresa</h3>
+        <!-- PRECIO: reemplaza esta línea cuando lo definas.
+             Ej.: <div class="precio">$89.000 <small>/ mes</small></div> -->
+        <div class="precio">A tu medida</div>
+        <p class="para">Para equipos que crecen y necesitan control real.</p>
+        <ul>
+          <li><b>Empleados ilimitados</b></li>
+          <li>Varias sedes</li>
+          <li>Control de ubicación por GPS</li>
+          <li>Comprobantes por correo</li>
+          <li>Exportación para nómina</li>
+          <li>Soporte directo</li>
+        </ul>
+        <a class="btn btn-primario" href="https://arrivecontrol.vercel.app/login">Probar 30 días gratis</a>
+      </div>
+    </div>
+    <p class="letra-chica" style="text-align:center; margin-top: 26px;">
+      ¿Más de 50 empleados o varias empresas? <a href="#contacto">Escríbenos</a> y armamos un plan.
+    </p>
+  </div>
+</section>
+
+<section id="preguntas" class="fondo-suave">
+  <div class="env">
+    <div class="titulo-bloque">
+      <p class="ojo">Preguntas</p>
+      <h2>Lo que todos preguntan antes de empezar</h2>
+    </div>
+    <div class="preguntas">
+      <details open>
+        <summary>¿Necesito comprar algún equipo?</summary>
+        <p>No. Funciona en cualquier celular o tablet con cámara frontal, incluso uno que ya no
+          uses. Lo dejas fijo en la entrada y listo. También puedes instalarlo como aplicación de
+          Android.</p>
+      </details>
+      <details>
+        <summary>¿Qué pasa si se cae el internet?</summary>
+        <p>El kiosco sigue funcionando y guarda las marcaciones en el aparato. Cuando vuelve la
+          conexión, las sube solas con la hora exacta en que ocurrieron. Tus empleados no notan
+          la diferencia.</p>
+      </details>
+      <details>
+        <summary>¿Guardan las fotos de mis empleados?</summary>
+        <p>No. De cada foto se extrae un vector de números que permite comparar rostros pero no
+          reconstruir la cara, y la imagen se descarta de inmediato. Es un dato biométrico y se
+          trata como tal, conforme a la Ley 1581 de protección de datos.</p>
+      </details>
+      <details>
+        <summary>¿Alguien puede marcar por otro con una foto?</summary>
+        <p>No. Antes de aceptar la marcación, el sistema comprueba que haya una persona viva
+          frente a la cámara mediante el movimiento de los párpados. Una foto o una pantalla no
+          pasan esa prueba.</p>
+      </details>
+      <details>
+        <summary>¿Los datos son míos si dejo de pagar?</summary>
+        <p>Sí, siempre. Si tu plan vence, el kiosco deja de registrar nuevas marcaciones pero
+          sigues entrando al panel para consultar y exportar todo tu historial. Nunca retenemos
+          tu información.</p>
+      </details>
+      <details>
+        <summary>¿Sirve para calcular la nómina?</summary>
+        <p>Calcula las horas trabajadas y clasifica las extras (diurnas, nocturnas, dominicales y
+          festivas) con los recargos que configures, y las exporta en un archivo listo para tu
+          contador o tu software de nómina. Control Registro no paga nómina ni mueve dinero.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="cierre" id="contacto">
+  <div class="env">
+    <h2>Pruébalo con tu equipo esta semana</h2>
+    <p>Treinta días con todo incluido, sin tarjeta y sin compromiso. Si no te sirve,
+      simplemente dejas de usarlo.</p>
+    <a class="btn btn-primario" href="https://arrivecontrol.vercel.app/login">Empezar ahora</a>
+  </div>
+</section>
+
+<footer>
+  <div class="env">
+    <a class="logo" href="#">CONTROL <span>REGISTRO</span></a>
+    <div class="pie-enlaces">
+      <a href="politica-datos.html">Tratamiento de datos</a>
+      <!-- CONTACTO: cambia este correo por el tuyo de negocio. -->
+      <a href="mailto:smartventaspasto@gmail.com">Contacto</a>
+      <a href="https://arrivecontrol.vercel.app/login">Entrar al sistema</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

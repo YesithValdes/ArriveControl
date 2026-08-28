@@ -1,0 +1,192 @@
+<!doctype html>
+<!--
+  BORRADOR de la política de tratamiento de datos.
+
+  Describe con precisión lo que el sistema hace de verdad, que es la parte que
+  sale del código. Los datos del responsable están como marcadores: hay que
+  completarlos.
+
+  ESTE TEXTO NO ES ASESORÍA JURÍDICA. Antes de publicarlo debe revisarlo un
+  abogado: la Ley 1581 de 2012 trata los datos biométricos como SENSIBLES y
+  exige autorización previa, expresa e informada de cada titular.
+-->
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Política de tratamiento de datos — Control Registro</title>
+<meta name="robots" content="noindex" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --tinta: #233240; --tinta-2: #46586a; --apagado: #7b8ca0;
+    --borde: #d8e2ee; --marca: #3a5570; --acento: #6e96b8; --acento-2: #557d9e;
+    --aviso-fondo: #f3ecd9; --aviso-tinta: #7a6432;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #fff; color: var(--tinta);
+    font-family: Montserrat, "Segoe UI", system-ui, sans-serif;
+    font-size: 16px; line-height: 1.7;
+  }
+  .env { max-width: 760px; margin: 0 auto; padding: 0 22px; }
+  header { border-bottom: 1px solid var(--borde); padding: 18px 0; margin-bottom: 44px; }
+  .logo { display: flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: .06em; font-size: 14px; color: var(--tinta); text-decoration: none; }
+  .logo span { color: var(--acento); }
+  h1 { font-size: clamp(27px, 4vw, 34px); letter-spacing: -.025em; margin: 0 0 8px; }
+  .fecha { color: var(--apagado); font-size: 14px; margin: 0 0 32px; }
+  h2 { font-size: 19px; letter-spacing: -.015em; margin: 38px 0 10px; }
+  p, li { color: var(--tinta-2); }
+  ul { padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  b, strong { color: var(--tinta); }
+  a { color: var(--acento-2); }
+  .aviso {
+    background: var(--aviso-fondo); color: var(--aviso-tinta);
+    border-radius: 12px; padding: 16px 20px; font-size: 14.5px; line-height: 1.6; margin-bottom: 36px;
+  }
+  .pendiente {
+    background: #eaf1f8; border: 1px dashed var(--acento); border-radius: 6px;
+    padding: 1px 7px; font-size: 14px; color: var(--acento-2); font-weight: 700;
+  }
+  footer { border-top: 1px solid var(--borde); margin-top: 56px; padding: 26px 0 60px; font-size: 14px; color: var(--apagado); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="env">
+    <a class="logo" href="index.html">
+      <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
+        <rect width="64" height="64" rx="14" fill="#3a5570"/>
+        <g transform="translate(6.4 6.4) scale(0.8)" stroke="#fff" stroke-linecap="round" fill="none">
+          <path d="M 51 17.5 A 24 24 0 1 0 51 46.5" stroke-width="7.5"/>
+          <line x1="32" y1="10" x2="32" y2="15" stroke-width="3.4"/>
+          <line x1="10" y1="32" x2="15" y2="32" stroke-width="3.4"/>
+          <line x1="32" y1="49" x2="32" y2="54" stroke-width="3.4"/>
+          <circle cx="32" cy="32" r="3" fill="#fff" stroke="none"/>
+          <line x1="32" y1="32" x2="41" y2="23" stroke-width="4.4"/>
+        </g>
+      </svg>
+      CONTROL <span>REGISTRO</span>
+    </a>
+  </div>
+</header>
+
+<main class="env">
+  <h1>Política de tratamiento de datos personales</h1>
+  <p class="fecha">Última actualización: <span class="pendiente">pendiente</span></p>
+
+  <div class="aviso">
+    <b>Borrador para revisión jurídica.</b> Este documento describe con exactitud cómo funciona
+    el sistema, pero debe ser revisado por un abogado antes de publicarse. Los datos biométricos
+    son datos sensibles bajo la Ley 1581 de 2012 y su tratamiento exige autorización previa,
+    expresa e informada de cada titular.
+  </div>
+
+  <h2>1. Responsable del tratamiento</h2>
+  <p>
+    <span class="pendiente">Razón social</span>, identificada con NIT
+    <span class="pendiente">número</span>, con domicilio en <span class="pendiente">dirección</span>,
+    correo <span class="pendiente">correo de contacto</span> y teléfono
+    <span class="pendiente">teléfono</span>, es responsable del tratamiento de los datos
+    recogidos a través de Control Registro.
+  </p>
+  <p>
+    Cuando una empresa cliente usa el sistema para controlar la asistencia de sus trabajadores,
+    esa empresa actúa como <b>responsable</b> de los datos de su personal y Control Registro
+    actúa como <b>encargado</b>, tratándolos únicamente por instrucción suya y para prestar el
+    servicio.
+  </p>
+
+  <h2>2. Qué datos se tratan</h2>
+  <ul>
+    <li><b>De la persona que administra:</b> nombre, correo electrónico y foto de perfil de su
+      cuenta de Google, usados para identificarla al entrar.</li>
+    <li><b>De cada trabajador:</b> nombre, número de documento, correo electrónico si se
+      registra, sede, horario y salario si la empresa decide cargarlo.</li>
+    <li><b>Dato biométrico:</b> un vector numérico derivado de la fotografía del rostro.</li>
+    <li><b>De cada marcación:</b> fecha y hora, tipo de registro (entrada o salida), sede y,
+      cuando la empresa lo activa, la ubicación geográfica del dispositivo.</li>
+  </ul>
+
+  <h2>3. Cómo se trata el rostro</h2>
+  <p>
+    Es la parte más importante de esta política, así que conviene ser explícito:
+  </p>
+  <ul>
+    <li>La <b>fotografía no se almacena</b> en ningún momento. Se procesa en el navegador del
+      dispositivo y se descarta.</li>
+    <li>Lo que se guarda es un <b>vector de 128 números</b> derivado de esa imagen. Sirve para
+      comparar si dos rostros corresponden a la misma persona, pero <b>no permite reconstruir
+      la cara</b> ni identificar a alguien fuera de este sistema.</li>
+    <li>Ese vector <b>solo se descarga</b> al dispositivo de marcación de la empresa a la que
+      pertenece el trabajador, y nunca se comparte con terceros.</li>
+    <li>Los datos de cada empresa viven en un <b>espacio separado</b> de la base de datos, sin
+      posibilidad de que una empresa consulte los de otra.</li>
+  </ul>
+
+  <h2>4. Para qué se usan</h2>
+  <ul>
+    <li>Registrar la entrada y la salida de los trabajadores y verificar su identidad.</li>
+    <li>Calcular horas trabajadas y horas extra para efectos laborales y de nómina.</li>
+    <li>Enviar a cada trabajador el comprobante de sus propias marcaciones.</li>
+    <li>Prestar soporte y mantener el servicio en funcionamiento.</li>
+  </ul>
+  <p>
+    Los datos <b>no se venden</b>, no se usan con fines publicitarios y no se emplean para
+    entrenar modelos de inteligencia artificial.
+  </p>
+
+  <h2>5. Autorización</h2>
+  <p>
+    El registro del rostro de un trabajador requiere su <b>autorización previa, expresa e
+    informada</b>. Corresponde a la empresa empleadora recogerla y conservarla antes de
+    registrarlo en el sistema. El trabajador puede negarse, y en ese caso la empresa debe
+    ofrecerle un medio alternativo para registrar su asistencia.
+  </p>
+
+  <h2>6. Derechos del titular</h2>
+  <p>Toda persona cuyos datos estén en el sistema puede:</p>
+  <ul>
+    <li>Conocer qué datos suyos se tratan y con qué finalidad.</li>
+    <li>Solicitar la actualización o corrección de datos inexactos.</li>
+    <li>Revocar la autorización y pedir la supresión de su dato biométrico.</li>
+    <li>Presentar quejas ante la Superintendencia de Industria y Comercio.</li>
+  </ul>
+  <p>
+    Para ejercerlos puede escribir a <span class="pendiente">correo de contacto</span>, o
+    dirigirse al área de recursos humanos de su empleador. La solicitud se atiende en los
+    términos y plazos de la Ley 1581 de 2012.
+  </p>
+
+  <h2>7. Conservación</h2>
+  <p>
+    Los datos se conservan mientras dure la relación con la empresa cliente y durante el tiempo
+    que exijan las obligaciones laborales y contables aplicables. Al terminar, el dato biométrico
+    se elimina. Cuando un trabajador se desactiva, su rostro deja de usarse para reconocimiento y
+    su historial de marcaciones se conserva como soporte laboral.
+  </p>
+
+  <h2>8. Seguridad</h2>
+  <p>
+    La información viaja cifrada, el acceso al panel exige autenticación, cada dispositivo de
+    marcación se activa con una credencial propia y revocable, y los datos de cada empresa están
+    aislados de los de las demás.
+  </p>
+
+  <h2>9. Cambios</h2>
+  <p>
+    Cualquier modificación sustancial de esta política se comunicará a las empresas clientes por
+    el correo registrado, con antelación razonable a su entrada en vigencia.
+  </p>
+</main>
+
+<footer class="env">
+  <a href="index.html">← Volver al inicio</a>
+</footer>
+
+</body>
+</html>

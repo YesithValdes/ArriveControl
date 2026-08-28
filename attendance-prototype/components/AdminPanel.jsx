@@ -1578,6 +1578,29 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         </div>
       )}
 
+      {/* Prueba gratuita. Los últimos días se avisan con más fuerza, pero sin
+          alarmar: al vencer no se pierde nada, solo el tope vuelve a regir. */}
+      {sesion?.planEstado?.enPrueba && (
+        <div className={`banner-prueba${sesion.planEstado.diasPrueba <= 7 ? ' urge' : ''}`}>
+          <span>
+            {sesion.planEstado.diasPrueba === 1
+              ? <>Hoy es el <b>último día</b> de tu prueba gratuita.</>
+              : <>Te quedan <b>{sesion.planEstado.diasPrueba} días</b> de prueba, con empleados ilimitados.</>}
+            {' '}Después seguirás usando Control Registro gratis hasta {sesion.limiteEmpleados ?? 10} empleados.
+          </span>
+          <button className="btn small" onClick={() => setTab('cfg-empresa')}>Ver planes</button>
+        </div>
+      )}
+      {sesion?.planEstado?.pruebaVencida && (
+        <div className="banner-prueba">
+          <span>
+            Tu prueba terminó y estás en el <b>plan gratuito</b> ({allPeople.length} de {sesion.limiteEmpleados ?? 10} empleados).
+            Tus datos y tus marcaciones siguen intactos.
+          </span>
+          <button className="btn small" onClick={() => setTab('cfg-empresa')}>Ver planes</button>
+        </div>
+      )}
+
       <header className="app-header">
         {/* Regresar a la ÚLTIMA pantalla visitada dentro del panel (como la
             flecha de la Configuración de Windows). Aparece solo cuando hay
@@ -4889,6 +4912,17 @@ const CSS = `
 /* Clave de API (Mi empresa) */
 .api-key-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .api-key { font-family: var(--f-data); font-size: 13px; background: var(--surface-blanca); border: 1px solid var(--grid); border-radius: 8px; padding: 8px 10px; letter-spacing: .04em; overflow-wrap: anywhere; }
+
+/* Aviso de prueba gratuita: informativo, no una alarma — al vencer no se
+   pierde nada. Solo en la última semana toma color de aviso. */
+.banner-prueba {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  background: var(--accent-soft); color: var(--ink-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 9px 14px; font-size: 13px; margin-bottom: 10px;
+}
+.banner-prueba b { color: var(--ink); }
+.banner-prueba.urge { background: var(--warn-soft); color: var(--warn-text); border-color: var(--warn-text); }
+.banner-prueba.urge b { color: inherit; }
 
 /* Banner de suscripción vencida */
 .banner-vencida { background: var(--crit-soft); color: var(--crit-text); border: 1px solid var(--crit, #fca5a5); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; }

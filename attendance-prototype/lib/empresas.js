@@ -20,7 +20,10 @@ import { control, conEmpresa, enTransaccion } from './db.js'
 const sha256 = (s) => createHash('sha256').update(s).digest('hex')
 
 /** Columnas que necesita cualquiera que resuelva una empresa. */
-const CAMPOS = `id, nombre, esquema, plan, limite_empleados, estado, api_key, dominio`
+const CAMPOS = `id, nombre, esquema, plan, limite_empleados, estado, api_key, dominio, prueba_hasta, vence_en`
+
+/** Días que dura la prueba de una empresa nueva. */
+export const DIAS_PRUEBA = 30
 
 // Caché corta: son pocas filas, cambian casi nunca y se consultan en CADA
 // petición. El TTL evita tener que invalidarla a mano al cambiar de plan.
@@ -84,6 +87,33 @@ export async function empresaDelDispositivo(clave) {
 export const puedeEscribir = (empresa) =>
   Boolean(empresa) && (empresa.plan === 'gratis' || empresa.estado === 'activa')
 
+/** ¿La prueba gratuita de esta empresa sigue vigente? */
+export const enPrueba = (empresa) =>
+  Boolean(empresa?.prueba_hasta) && new Date(empresa.prueba_hasta).getTime() > Date.now()
+
+/**
+ * Cómo está esta empresa de cara al plan, en una sola forma para el panel.
+ * Todo lo que la pantalla necesita para decidir qué avisar, sin que tenga que
+ * recomponer la regla (y arriesgarse a que diga algo distinto del servidor).
+ */
+export function estadoDelPlan(empresa) {
+  if (!empresa) return null
+  const prueba = enPrueba(empresa)
+  const finPrueba = empresa.prueba_hasta ? new Date(empresa.prueba_hasta) : null
+  return {
+    plan: empresa.plan,
+    estado: empresa.estado,
+    enPrueba: prueba,
+    // Se redondea hacia ARRIBA: el último día también cuenta como un día.
+    diasPrueba: prueba ? Math.ceil((finPrueba.getTime() - Date.now()) / 86400000) : 0,
+    pruebaHasta: finPrueba ? finPrueba.toISOString() : null,
+    // La prueba ya pasó y no se convirtió: es cuando conviene insistir.
+    pruebaVencida: Boolean(finPrueba) && !prueba && empresa.plan === 'gratis',
+    limite: prueba ? null : (empresa.limite_empleados ?? null),
+    venceEn: empresa.vence_en ? new Date(empresa.vence_en).toISOString() : null,
+  }
+}
+
 /**
  * ¿Cabe un empleado más en el plan de esta empresa?
  *
@@ -95,6 +125,10 @@ export const puedeEscribir = (empresa) =>
 export async function cabeOtroEmpleado(empresa) {
   const limite = empresa?.limite_empleados ?? null
   if (limite == null) return { cabe: true, actuales: 0, limite: null }
+  // Durante la prueba se ofrece el producto COMPLETO: sin tope. Al vencer,
+  // vuelve a regir `limite_empleados` — y quien haya pasado de ese número
+  // conserva a su gente marcando, solo no puede agregar más.
+  if (enPrueba(empresa)) return { cabe: true, actuales: 0, limite: null, enPrueba: true }
   const actuales = await conEmpresa(empresa.esquema, async (db) =>
     Number((await db.query(`select count(*)::int as n from empleados where activo`)).rows[0].n),
   )
@@ -168,10 +202,12 @@ export async function crearEmpresa({ nombre, nit = null, dominio = null, esquema
 
   const empresa = await enTransaccion(async (db) => {
     const { rows } = await db.query(
-      `insert into control.empresas (nombre, nit, dominio, esquema, api_key)
-       values ($1, $2, $3, $4, $5)
+      // Toda empresa nueva nace con la prueba corriendo: es el producto
+      // completo durante 30 días, sin pedir tarjeta ni activar nada.
+      `insert into control.empresas (nombre, nit, dominio, esquema, api_key, prueba_hasta)
+       values ($1, $2, $3, $4, $5, now() + ($6 || ' days')::interval)
        returning ${CAMPOS}`,
-      [nom, nit, dominio, elegido, apiKey],
+      [nom, nit, dominio, elegido, apiKey, String(DIAS_PRUEBA)],
     )
 
     await db.query(`create schema ${elegido}`)
