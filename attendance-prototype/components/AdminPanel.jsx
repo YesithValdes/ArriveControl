@@ -642,28 +642,45 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // ── Rostros del empleado abierto en la ficha ────────────────────────
   // Agregar una foto no debe obligar a registrar de nuevo a la persona.
   // ── Contratar el plan ────────────────────────────────────────────────
-  // El servidor arma y FIRMA los datos del checkout (el monto va firmado para
-  // que nadie lo cambie por el camino); aquí solo se envían a Wompi con un
-  // formulario, que es como su checkout espera recibirlos.
+  // El servidor arma y FIRMA la configuración del checkout (el monto va
+  // firmado para que nadie lo cambie por el camino); aquí solo se abre la
+  // pasarela de Bold con esos datos.
   const [pagando, setPagando] = useState(false);
+
+  /**
+   * Carga la librería de Bold una sola vez, bajo demanda: son unos kilobytes
+   * que no tienen por qué pesar en cada visita al panel de quien ya pagó.
+   */
+  const cargarBold = () => new Promise((resolver, rechazar) => {
+    if (window.BoldCheckout) { resolver(); return; }
+    const yaEsta = document.querySelector('script[data-bold-lib]');
+    if (yaEsta) {
+      yaEsta.addEventListener('load', () => resolver());
+      yaEsta.addEventListener('error', () => rechazar(new Error('no se pudo cargar la pasarela')));
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = 'https://checkout.bold.co/library/boldPaymentButton.js';
+    s.async = true;
+    s.dataset.boldLib = '1';
+    s.onload = () => resolver();
+    s.onerror = () => rechazar(new Error('no se pudo cargar la pasarela'));
+    document.head.appendChild(s);
+  });
+
   const irAPagar = async () => {
     setPagando(true);
     try {
       const r = await fetch('/api/pago/iniciar', { method: 'POST' });
       const d = await r.json().catch(() => null);
       if (!r.ok || !d?.ok) { showToast(d?.error || 'No se pudo iniciar el pago.'); return; }
-      const form = document.createElement('form');
-      form.method = 'GET';
-      form.action = d.checkout.url;
-      for (const [k, v] of Object.entries(d.checkout.campos)) {
-        const input = document.createElement('input');
-        input.type = 'hidden'; input.name = k; input.value = v;
-        form.appendChild(input);
-      }
-      document.body.appendChild(form);
-      form.submit();
+      await cargarBold();
+      if (!window.BoldCheckout) throw new Error('la pasarela no quedó disponible');
+      // `d.checkout` viene tal cual lo espera Bold, con la firma ya calculada
+      // en el servidor: aquí no se arma ni se altera ningún dato del cobro.
+      new window.BoldCheckout(d.checkout).open();
     } catch (e) {
-      showToast(`No se pudo iniciar el pago: ${e.message}`);
+      showToast(`No se pudo abrir el pago: ${e.message}`);
     } finally {
       setPagando(false);
     }
