@@ -651,6 +651,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // el servidor; aquí solo se pinta.
   const [catalogo, setCatalogo] = useState(null);
   const [mesesPlan, setMesesPlan] = useState(1);
+  // Se pide al ABRIR la pantalla, no con cada `tick`: el catálogo cambia una
+  // vez al mes, y colgarlo del reloj del panel lo hacía pedirse cada diez
+  // segundos indefinidamente.
   useEffect(() => {
     if (tab !== 'cfg-plan') return;
     let vigente = true;
@@ -659,7 +662,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       .then((d) => { if (vigente && d?.ok) setCatalogo(d); })
       .catch(() => { /* sin catálogo no se ofrecen botones */ });
     return () => { vigente = false; };
-  }, [tab, tick]);
+  }, [tab]);
 
   /**
    * Carga la librería de Bold una sola vez, bajo demanda: son unos kilobytes
