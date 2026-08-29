@@ -25,6 +25,8 @@ export const RUTAS_PANEL = {
   historial: 'historial',
   ajustes: 'ajustes',
   'cfg-empresa': 'ajustes/empresa',
+  // El plan tiene pantalla propia: es a donde llega quien vuelve de pagar.
+  'cfg-plan': 'ajustes/plan',
   'cfg-usuarios': 'ajustes/usuarios',
   'cfg-sedes': 'ajustes/sedes',
   'cfg-dispositivos': 'ajustes/dispositivos',

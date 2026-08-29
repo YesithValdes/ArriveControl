@@ -4,36 +4,41 @@ Cómo se cobra el plan de pago, qué hay que configurar y por qué está hecho a
 
 ## El modelo comercial
 
-**Usar el sistema exige suscripción vigente.** No hay plan gratuito ni prueba:
-sin pagar se puede entrar al panel y exportar el historial, pero el kiosco no
-registra marcaciones y no se pueden dar de alta empleados.
+Es el recorrido de un SaaS normal, en tres tramos:
 
-La puerta de entrada es deliberadamente barata, y sirve de filtro: quien pone
-un dólar tiene medio de pago y voluntad real de usar el producto — algo que una
-prueba gratuita no demuestra.
+1. **Prueba de 3 días** al registrarse, sin tarjeta. Es para ver el producto por
+   dentro con datos propios, no para operar un mes entero. Durante la prueba
+   rige el tope del plan más pequeño.
+2. **Precio de entrada: US$1 al mes durante los primeros 3 meses**, en el plan
+   que elija, por una sola vez. Sirve de filtro — quien pone un dólar tiene
+   medio de pago y voluntad real, algo que una prueba gratuita no demuestra.
+3. **Precio normal** del plan que le corresponda por tamaño.
 
-| Paquete | Precio | Cubre | Disponible |
-|---|---|---|---|
-| Entrada · 1 mes | US$1 | 30 días | una sola vez |
-| Entrada · 2 meses | US$2 | 60 días | una sola vez |
-| Entrada · 3 meses | US$3 | 90 días | una sola vez |
-| Renovación | US$15 | 30 días | siempre |
+| Plan | Empleados | Precio |
+|---|---|---|
+| Esencial | hasta 10 | US$15 / mes |
+| Equipo | hasta 30 | US$29 / mes |
+| Empresa | hasta 100 | US$49 / mes |
+| Más de 100 | — | se negocia, no por autoservicio |
 
-Todos incluyen el producto completo, con empleados ilimitados.
-
-**La oferta de entrada es de una sola vez por empresa.** No hace falta una
-columna que lo marque: se ofrece solo si la empresa no tiene ningún pago
-aprobado en su historial. Un dato derivado no se puede desincronizar del hecho
-que representa. Y se valida **en el servidor** al iniciar el pago, no solo al
-pintar la pantalla: ocultar un botón no impide llamar a la ruta.
-
-**Renovar antes de vencer no cuesta días.** El pago extiende desde el
-vencimiento vigente, no desde hoy.
+Sin prueba vigente ni suscripción al día **el kiosco no registra marcaciones y
+no se pueden dar de alta empleados**. Lo que nunca se detiene es consultar y
+exportar: los datos del cliente no se secuestran.
 
 **El catálogo vive en `lib/planes.js`**, en el servidor. Del navegador solo se
-acepta *cuál* paquete se quiere; cuánto cuesta y cuánto dura lo decide el
-servidor. Si el precio viniera del cliente, cualquiera pediría tres meses por
-un dólar.
+acepta *cuál* plan y *cuántos* meses; el precio lo calcula el servidor. Si
+viniera del cliente, cualquiera pediría el plan grande por un dólar.
+
+**No se puede comprar un plan donde no quepa la gente ya registrada.** Se valida
+al iniciar el pago: sin eso, alguien con cincuenta empleados pagaría el plan de
+diez y se encontraría con que no puede agregar a nadie.
+
+**El precio de entrada es de una sola vez.** Se ofrece solo si la empresa no
+tiene ningún pago aprobado — dato derivado, imposible de desincronizar — y se
+valida en el servidor, no solo al pintar la pantalla.
+
+**Renovar antes de vencer no cuesta días:** el pago extiende desde el
+vencimiento vigente, no desde hoy.
 
 ## Qué hay que configurar
 

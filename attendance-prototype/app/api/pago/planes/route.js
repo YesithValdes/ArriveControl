@@ -1,7 +1,9 @@
 /**
  * app/api/pago/planes/route.js
  *
- * GET — qué paquetes puede comprar ESTA empresa, con sus precios.
+ * GET — el catálogo tal como le corresponde a ESTA empresa: los planes con sus
+ *       precios, cuál le queda corto según su gente, y si todavía le toca el
+ *       precio de entrada.
  *
  * El catálogo sale del servidor, nunca del navegador: la pantalla solo pinta
  * lo que aquí se le diga. Y la oferta de entrada se ofrece únicamente a quien
@@ -9,9 +11,9 @@
  * podría olvidar de actualizar.
  */
 import { NextResponse } from 'next/server'
-import { control } from '../../../../lib/db.js'
+import { control, conEmpresa } from '../../../../lib/db.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../../lib/sesion'
-import { planesDisponibles, MONEDA } from '../../../../lib/planes.js'
+import { catalogoPara } from '../../../../lib/planes.js'
 import { boldActivo } from '../../../../lib/bold.js'
 
 export const runtime = 'nodejs'
@@ -30,11 +32,18 @@ export async function GET() {
   if (estado !== 'OK') {
     return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
   }
-  const yaPago = await yaPagoAlgunaVez(empresa.id)
+
+  const [yaPago, empleados] = await Promise.all([
+    yaPagoAlgunaVez(empresa.id),
+    conEmpresa(empresa.esquema, async (db) =>
+      Number((await db.query(`select count(*)::int as n from empleados where activo`)).rows[0].n)),
+  ])
+
   return NextResponse.json({
     ok: true,
-    planes: planesDisponibles(yaPago),
-    moneda: MONEDA,
+    ...catalogoPara({ yaPago, empleados }),
+    empleados,
+    planActual: empresa.plan_id ?? null,
     // Sin llaves configuradas no hay dónde pagar; el panel lo dice en vez de
     // ofrecer botones que terminarían en un error.
     disponible: boldActivo(),

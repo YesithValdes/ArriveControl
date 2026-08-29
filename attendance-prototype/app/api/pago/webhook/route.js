@@ -76,7 +76,7 @@ export async function POST(req) {
 
   try {
     const { rows } = await control(
-      `select p.id, p.empresa_id, p.estado, p.meses, e.vence_en
+      `select p.id, p.empresa_id, p.estado, p.meses, p.plan_contratado, e.vence_en
          from control.pagos p join control.empresas e on e.id = p.empresa_id
         where p.referencia = $1`,
       [referencia],
@@ -115,11 +115,15 @@ export async function POST(req) {
       [pago.id, transaccion, cuerpoCrudo, hasta.toISOString()],
     )
     await control(
+      // Queda registrado QUÉ plan se contrató: de él sale el tope de
+      // empleados. `limite_empleados` vuelve a null para que rija el del plan
+      // y no un acuerdo viejo que hubiera quedado colgado.
       `update control.empresas
           set plan = 'pago', estado = 'activa', limite_empleados = null,
+              plan_id = coalesce($4, plan_id),
               vence_en = $2, pago_proveedor = 'bold', pago_referencia = $3
         where id = $1`,
-      [pago.empresa_id, hasta.toISOString(), referencia],
+      [pago.empresa_id, hasta.toISOString(), referencia, pago.plan_contratado ?? null],
     )
     // La empresa se cachea 60 s por petición; sin esto el panel seguiría
     // mostrando el plan viejo hasta que expire el caché.

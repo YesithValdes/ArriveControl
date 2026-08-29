@@ -16,11 +16,12 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { control, conEmpresa, enTransaccion } from './db.js'
+import { planPorId, DIAS_PRUEBA } from './planes.js'
 
 const sha256 = (s) => createHash('sha256').update(s).digest('hex')
 
 /** Columnas que necesita cualquiera que resuelva una empresa. */
-const CAMPOS = `id, nombre, esquema, plan, limite_empleados, estado, api_key, dominio, vence_en`
+const CAMPOS = `id, nombre, esquema, plan, limite_empleados, estado, api_key, dominio, vence_en, prueba_hasta, plan_id`
 
 
 // Caché corta: son pocas filas, cambian casi nunca y se consultan en CADA
@@ -81,12 +82,8 @@ export async function empresaDelDispositivo(clave) {
   return empresa ? { dispositivo, empresa } : null
 }
 
-/** ¿Esta empresa puede ESCRIBIR, o está en solo lectura por impago? */
 /**
- * ¿Tiene suscripción vigente?
- *
- * Es la única puerta: sin ella no se puede registrar gente ni marcar. Ya no
- * existe el plan gratuito — usar el sistema exige estar al día.
+ * ¿Tiene suscripción PAGADA vigente?
  *
  * Se compara contra la FECHA, no contra el estado: `estado = 'activa'` sin
  * `vence_en` sería una suscripción eterna creada por un error de datos.
@@ -97,6 +94,17 @@ export const suscripcionVigente = (empresa) =>
   && Boolean(empresa.vence_en)
   && new Date(empresa.vence_en).getTime() > Date.now()
 
+/** ¿Sigue dentro de los días de prueba con que nace toda empresa? */
+export const enPrueba = (empresa) =>
+  Boolean(empresa?.prueba_hasta) && new Date(empresa.prueba_hasta).getTime() > Date.now()
+
+/**
+ * ¿Puede USAR el sistema? Con la prueba corriendo o con la suscripción al día.
+ *
+ * Es la única puerta: registrar gente y marcar asistencia pasan por aquí.
+ */
+export const tieneAcceso = (empresa) => suscripcionVigente(empresa) || enPrueba(empresa)
+
 /**
  * Quien no está al día puede CONSULTAR y exportar, pero no escribir.
  *
@@ -104,7 +112,7 @@ export const suscripcionVigente = (empresa) =>
  * llevárselo. Lo que se detiene es el servicio — registrar empleados y marcar
  * asistencia — hasta que renueve.
  */
-export const puedeEscribir = (empresa) => suscripcionVigente(empresa)
+export const puedeEscribir = (empresa) => tieneAcceso(empresa)
 
 /**
  * Cómo está esta empresa de cara al plan, en una sola forma para el panel.
@@ -113,17 +121,25 @@ export const puedeEscribir = (empresa) => suscripcionVigente(empresa)
  */
 export function estadoDelPlan(empresa) {
   if (!empresa) return null
-  const vigente = suscripcionVigente(empresa)
+  const pagada = suscripcionVigente(empresa)
+  const prueba = enPrueba(empresa)
   const vence = empresa.vence_en ? new Date(empresa.vence_en) : null
+  const finPrueba = empresa.prueba_hasta ? new Date(empresa.prueba_hasta) : null
+  // Se redondea hacia ARRIBA: el último día también cuenta como un día.
+  const dias = (f) => Math.ceil((f.getTime() - Date.now()) / 86400000)
   return {
-    plan: empresa.plan,
+    planId: empresa.plan_id ?? null,
     estado: empresa.estado,
-    vigente,
-    // Se redondea hacia ARRIBA: el último día también cuenta como un día.
-    diasRestantes: vigente ? Math.ceil((vence.getTime() - Date.now()) / 86400000) : 0,
+    // Puede operar, sea por prueba o por suscripción.
+    acceso: pagada || prueba,
+    pagada,
+    enPrueba: prueba,
+    diasPrueba: prueba ? dias(finPrueba) : 0,
+    diasRestantes: pagada ? dias(vence) : 0,
     venceEn: vence ? vence.toISOString() : null,
-    // Nunca pagó: es quien ve la oferta de entrada.
-    nunca: !vence,
+    pruebaHasta: finPrueba ? finPrueba.toISOString() : null,
+    // La prueba se acabó y nunca pagó: es el momento de insistir.
+    pruebaVencida: Boolean(finPrueba) && !prueba && !pagada && !vence,
     limite: empresa.limite_empleados ?? null,
   }
 }
@@ -138,12 +154,15 @@ export function estadoDelPlan(empresa) {
  * @returns {Promise<{cabe: boolean, actuales: number, limite: number|null}>}
  */
 export async function cabeOtroEmpleado(empresa) {
-  if (!suscripcionVigente(empresa)) {
-    return { cabe: false, actuales: 0, limite: 0, sinSuscripcion: true }
+  if (!tieneAcceso(empresa)) {
+    return { cabe: false, actuales: 0, limite: 0, sinAcceso: true }
   }
-  // Con suscripción al día no hay tope: los planes son de empleados
-  // ilimitados. `limite_empleados` se conserva para acuerdos puntuales.
-  const limite = empresa?.limite_empleados ?? null
+  // El tope sale del PLAN contratado. Un acuerdo puntual puede sobrescribirlo
+  // con `limite_empleados`; durante la prueba rige el plan más pequeño, que es
+  // suficiente para conocer el producto sin regalar el más grande.
+  const delPlan = planPorId(empresa.plan_id)?.empleados
+  const limite = empresa?.limite_empleados
+    ?? (delPlan !== undefined ? delPlan : (enPrueba(empresa) ? planPorId('esencial')?.empleados ?? null : null))
   if (limite == null) return { cabe: true, actuales: 0, limite: null }
   const actuales = await conEmpresa(empresa.esquema, async (db) =>
     Number((await db.query(`select count(*)::int as n from empleados where activo`)).rows[0].n),
@@ -218,12 +237,13 @@ export async function crearEmpresa({ nombre, nit = null, dominio = null, esquema
 
   const empresa = await enTransaccion(async (db) => {
     const { rows } = await db.query(
-      // Nace SIN suscripción: el primer paso del cliente es elegir un
-      // paquete. Hasta entonces entra al panel, pero no registra ni marca.
-      `insert into control.empresas (nombre, nit, dominio, esquema, api_key, limite_empleados)
-       values ($1, $2, $3, $4, $5, null)
+      // Nace con la PRUEBA corriendo: unos días para ver el producto por
+      // dentro con datos propios, sin pedir tarjeta. Al terminar hay que
+      // suscribirse — el tope de esos días es el del plan más pequeño.
+      `insert into control.empresas (nombre, nit, dominio, esquema, api_key, limite_empleados, prueba_hasta)
+       values ($1, $2, $3, $4, $5, null, now() + ($6 || ' days')::interval)
        returning ${CAMPOS}`,
-      [nom, nit, dominio, elegido, apiKey],
+      [nom, nit, dominio, elegido, apiKey, String(DIAS_PRUEBA)],
     )
 
     await db.query(`create schema ${elegido}`)

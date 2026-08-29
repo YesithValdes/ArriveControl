@@ -646,15 +646,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // firmado para que nadie lo cambie por el camino); aquí solo se abre la
   // pasarela de Bold con esos datos.
   const [pagando, setPagando] = useState(false);
-  // Los paquetes que ESTA empresa puede comprar: el servidor decide cuáles
-  // (la oferta de entrada solo si nunca pagó) y a qué precio.
-  const [planes, setPlanes] = useState(null);
+  // El catálogo resuelto para ESTA empresa: qué planes hay, cuál le queda
+  // corto según su gente y si todavía le toca el precio de entrada. Lo decide
+  // el servidor; aquí solo se pinta.
+  const [catalogo, setCatalogo] = useState(null);
+  const [mesesPlan, setMesesPlan] = useState(1);
   useEffect(() => {
-    if (tab !== 'cfg-empresa') return;
+    if (tab !== 'cfg-plan') return;
     let vigente = true;
     fetch('/api/pago/planes')
       .then((r) => r.json())
-      .then((d) => { if (vigente && d?.ok) setPlanes(d.disponible ? d.planes : []); })
+      .then((d) => { if (vigente && d?.ok) setCatalogo(d); })
       .catch(() => { /* sin catálogo no se ofrecen botones */ });
     return () => { vigente = false; };
   }, [tab, tick]);
@@ -680,13 +682,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     document.head.appendChild(s);
   });
 
-  const irAPagar = async (planId) => {
+  const irAPagar = async (planId, meses = 1) => {
     setPagando(true);
     try {
       const r = await fetch('/api/pago/iniciar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan: planId }),
+        body: JSON.stringify({ plan: planId, meses }),
       });
       const d = await r.json().catch(() => null);
       if (!r.ok || !d?.ok) { showToast(d?.error || 'No se pudo iniciar el pago.'); return; }
@@ -1651,18 +1653,34 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       {/* Sin suscripción no se puede registrar ni marcar, así que hay que
           decirlo arriba de todo — pero dejando claro que los datos siguen
           ahí y se pueden exportar. */}
-      {sesion?.planEstado && !sesion.planEstado.vigente && (
-        <div className="banner-prueba urge">
+      {/* En prueba: se dice cuánto queda y se ofrece suscribirse, sin
+          estorbar el trabajo. Es el aviso permanente del modelo. */}
+      {sesion?.planEstado?.enPrueba && (
+        <div className={`banner-prueba${sesion.planEstado.diasPrueba <= 1 ? ' urge' : ''}`}>
           <span>
-            {sesion.planEstado.nunca
-              ? <>Para empezar a registrar asistencia, <b>elige un plan</b>. Puedes probar el sistema completo por <b>US$1 el primer mes</b>.</>
-              : <>Tu suscripción venció: el kiosco no registra marcaciones. Tus datos siguen intactos y puedes consultarlos y exportarlos.</>}
+            {sesion.planEstado.diasPrueba === 1
+              ? <>Tu prueba termina <b>hoy</b>.</>
+              : <>Tu prueba termina en <b>{sesion.planEstado.diasPrueba} días</b>.</>}
+            {' '}Suscríbete desde US$1 al mes para no quedarte sin registrar asistencia.
           </span>
-          <button className="btn small" onClick={() => setTab('cfg-empresa')}>Ver planes</button>
+          <button className="btn small" onClick={() => setTab('cfg-plan')}>Suscribirse</button>
         </div>
       )}
-      {/* Los últimos días se avisan, sin alarmar antes de tiempo. */}
-      {sesion?.planEstado?.vigente && sesion.planEstado.diasRestantes <= 7 && (
+      {/* Sin acceso: el kiosco está detenido, así que se dice sin rodeos —
+          aclarando que los datos siguen ahí. */}
+      {sesion?.planEstado && !sesion.planEstado.acceso && (
+        <div className="banner-prueba urge">
+          <span>
+            {sesion.planEstado.pruebaVencida
+              ? <>Tu prueba terminó y el kiosco dejó de registrar marcaciones.</>
+              : <>Tu suscripción venció: el kiosco no registra marcaciones.</>}
+            {' '}Tus datos siguen intactos y puedes consultarlos y exportarlos.
+          </span>
+          <button className="btn small" onClick={() => setTab('cfg-plan')}>Ver planes</button>
+        </div>
+      )}
+      {/* Los últimos días de una suscripción pagada, sin alarmar antes. */}
+      {sesion?.planEstado?.pagada && sesion.planEstado.diasRestantes <= 7 && (
         <div className="banner-prueba urge">
           <span>
             {sesion.planEstado.diasRestantes === 1
@@ -1670,7 +1688,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               : <>Tu suscripción vence en <b>{sesion.planEstado.diasRestantes} días</b>.</>}
             {' '}Renuévala para que el kiosco siga registrando.
           </span>
-          <button className="btn small" onClick={() => setTab('cfg-empresa')}>Renovar</button>
+          <button className="btn small" onClick={() => setTab('cfg-plan')}>Renovar</button>
         </div>
       )}
 
@@ -1771,6 +1789,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {enAjustes && (
           <aside className="cfg-menu" aria-label="Opciones de ajustes">
             {(permisos.usuarios || permisos.config) && <h4>Cuenta y acceso</h4>}
+            {permisos.config && (
+              <button className={`cfg-item${tab === 'cfg-plan' ? ' on' : ''}`} onClick={() => setTab('cfg-plan')}>
+                <Icon name="file" size={16} /> Plan
+                {/* El punto avisa sin gritar cuando hay algo que atender. */}
+                {sesion?.planEstado && !sesion.planEstado.pagada && <span className="cfg-punto" />}
+              </button>
+            )}
             {permisos.config && (
               <button className={`cfg-item${tab === 'cfg-empresa' ? ' on' : ''}`} onClick={() => { setTab('cfg-empresa'); cargarMiEmpresa(); }}>
                 <Icon name="database" size={16} /> Mi empresa
@@ -2943,6 +2968,129 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         )}
 
         {/* ── Sub-pantalla: Mi empresa ── */}
+        {/* ── Plan y suscripción ─────────────────────────────────────── */}
+        {tab === 'cfg-plan' && (
+          <section className="card grow">
+            <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
+            <h2>Plan</h2>
+
+            {/* Lo primero es en qué situación está: se paga distinto según
+                si está probando, al día o vencida. */}
+            {sesion?.planEstado?.enPrueba && (
+              <div className="plan-estado prueba">
+                <div>
+                  <b>
+                    {sesion.planEstado.diasPrueba === 1
+                      ? 'Tu prueba termina hoy'
+                      : `Tu prueba termina en ${sesion.planEstado.diasPrueba} días`}
+                  </b>
+                  <small>Después de eso el kiosco deja de registrar marcaciones. Suscríbete para seguir.</small>
+                </div>
+              </div>
+            )}
+            {sesion?.planEstado?.pagada && (
+              <div className="plan-estado activa">
+                <div>
+                  <b>Suscripción activa · plan {catalogo?.planes?.find((p) => p.id === sesion.planEstado.planId)?.nombre ?? sesion.planEstado.planId ?? ''}</b>
+                  <small>
+                    Vence el {new Date(sesion.planEstado.venceEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}
+                    {' '}({sesion.planEstado.diasRestantes} día{sesion.planEstado.diasRestantes === 1 ? '' : 's'}). Puedes renovar cuando quieras: los días que te quedan se suman.
+                  </small>
+                </div>
+              </div>
+            )}
+            {sesion?.planEstado && !sesion.planEstado.acceso && (
+              <div className="plan-estado vencida">
+                <div>
+                  <b>{sesion.planEstado.pruebaVencida ? 'Tu prueba terminó' : 'Tu suscripción venció'}</b>
+                  <small>El kiosco no registra marcaciones. Tus datos siguen intactos: puedes consultarlos y exportarlos.</small>
+                </div>
+              </div>
+            )}
+
+            {catalogo === null && <p className="empty">Cargando planes…</p>}
+            {catalogo?.disponible === false && (
+              <p className="empty">Los pagos en línea todavía no están habilitados. Escríbenos y activamos tu plan.</p>
+            )}
+
+            {catalogo?.disponible && (
+              <>
+                {catalogo.conEntrada && (
+                  <p className="hint">
+                    <b>Precio de entrada:</b> US${catalogo.precioEntrada} al mes durante los primeros{' '}
+                    {catalogo.maxMesesEntrada} meses, en el plan que elijas. Es por una sola vez.
+                  </p>
+                )}
+                <p className="hint">
+                  Tienes <b>{catalogo.empleados} empleado{catalogo.empleados === 1 ? '' : 's'}</b> registrado{catalogo.empleados === 1 ? '' : 's'}.
+                  Elige el plan que los cubra.
+                </p>
+
+                {/* Cuántos meses adelantar. Con el precio de entrada, cada mes
+                    cuesta lo mismo sin importar el plan. */}
+                {catalogo.conEntrada && (
+                  <div className="meses-sel" role="group" aria-label="Meses">
+                    {Array.from({ length: catalogo.maxMesesEntrada }, (_, i) => i + 1).map((m) => (
+                      <button
+                        key={m}
+                        className="fchip"
+                        aria-pressed={mesesPlan === m}
+                        onClick={() => setMesesPlan(m)}
+                      >
+                        {m} mes{m === 1 ? '' : 'es'} · US${catalogo.precioEntrada * m}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="planes-lista">
+                  {catalogo.planes.map((p) => {
+                    const meses = catalogo.conEntrada ? mesesPlan : 1
+                    const total = catalogo.conEntrada ? catalogo.precioEntrada * meses : p.precio
+                    return (
+                      <div key={p.id} className={`plan-tarjeta${p.sugerido ? ' sugerido' : ''}${!p.alcanza ? ' corto' : ''}`}>
+                        {p.sugerido && <span className="plan-etiqueta">Para tu tamaño</span>}
+                        <h3>{p.nombre}</h3>
+                        <span className="plan-para">{p.para}</span>
+                        <div className="plan-precio">
+                          {catalogo.conEntrada && <s>US${p.precio}</s>}
+                          <b>US${catalogo.conEntrada ? catalogo.precioEntrada : p.precio}</b>
+                          <em>/mes</em>
+                        </div>
+                        <span className="plan-tope">
+                          Hasta {p.empleados} empleados
+                        </span>
+                        <button
+                          className={`btn ${p.sugerido ? 'primary' : ''} block`}
+                          disabled={pagando || !p.alcanza}
+                          onClick={() => irAPagar(p.id, meses)}
+                          title={!p.alcanza ? `Tienes ${catalogo.empleados} empleados y este plan cubre ${p.empleados}` : undefined}
+                        >
+                          {!p.alcanza ? 'No alcanza' : pagando ? 'Abriendo…' : `Pagar US$${total}`}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <p className="cfg-note" style={{ marginTop: 14 }}>
+                  {catalogo.conEntrada
+                    ? `Después de los meses de entrada, la renovación cuesta el precio normal del plan.`
+                    : 'Se cobra por mes. Sin permanencia: renuevas cuando quieras.'}
+                  {' '}Se paga en dólares con tarjeta. ¿Más de {catalogo.contactoDesde} empleados?{' '}
+                  <b>Escríbenos</b> y armamos un plan.
+                </p>
+                {sesion?.pagoDePrueba && (
+                  <p className="cfg-note" style={{ color: 'var(--warn-text)' }}>
+                    ⚠️ Pagos en <b>modo de pruebas</b>: no se cobra dinero real, pero el plan se
+                    activa igual y habrá que revertirlo a mano.
+                  </p>
+                )}
+              </>
+            )}
+          </section>
+        )}
+
         {tab === 'cfg-empresa' && (
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
@@ -2990,55 +3138,25 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   <h3>Plan</h3>
                   <div className="cfg-row">
                     <label>
-                      {sesion?.planEstado?.vigente ? 'Suscripción activa' : sesion?.planEstado?.nunca ? 'Sin plan' : 'Suscripción vencida'}
-                      {sesion?.planEstado?.vigente && sesion.planEstado.venceEn && (
+                      {sesion?.planEstado?.pagada ? 'Suscripción activa'
+                        : sesion?.planEstado?.enPrueba ? 'En prueba' : 'Sin suscripción'}
+                      {sesion?.planEstado?.pagada && sesion.planEstado.venceEn && (
                         <small>
-                          Hasta el {new Date(sesion.planEstado.venceEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}
-                          {' '}({sesion.planEstado.diasRestantes} día{sesion.planEstado.diasRestantes === 1 ? '' : 's'})
+                          Vence el {new Date(sesion.planEstado.venceEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}
                         </small>
                       )}
-                      {!sesion?.planEstado?.vigente && (
+                      {sesion?.planEstado?.enPrueba && (
+                        <small>Te quedan {sesion.planEstado.diasPrueba} día{sesion.planEstado.diasPrueba === 1 ? '' : 's'} de prueba.</small>
+                      )}
+                      {!sesion?.planEstado?.acceso && (
                         <small style={{ color: 'var(--crit-text)' }}>El kiosco no puede registrar marcaciones.</small>
                       )}
                     </label>
-                    <div className="cfg-input">{miEmpresa.empleados} empleados</div>
+                    <div className="cfg-input">
+                      {/* El detalle y el pago viven en su propia pantalla. */}
+                      <button className="btn small" onClick={() => setTab('cfg-plan')}>Ver planes</button>
+                    </div>
                   </div>
-
-                  {/* Los paquetes. El de entrada solo se ofrece a quien nunca
-                      ha pagado: el servidor lo decide y lo vuelve a validar,
-                      así que ocultarlo aquí es cortesía, no la defensa. */}
-                  <div className="planes-lista">
-                    {(planes ?? []).map((p) => (
-                      <button
-                        key={p.id}
-                        className={`plan-tarjeta${p.oferta ? ' oferta' : ''}`}
-                        disabled={pagando}
-                        onClick={() => irAPagar(p.id)}
-                      >
-                        <span className="plan-precio">US${p.precio}</span>
-                        <span className="plan-meses">{p.etiqueta}</span>
-                        {p.oferta
-                          ? <span className="plan-nota">precio de entrada</span>
-                          : <span className="plan-nota">precio normal</span>}
-                      </button>
-                    ))}
-                  </div>
-                  {(planes ?? []).some((p) => p.oferta) && (
-                    <p className="cfg-note" style={{ marginTop: 10 }}>
-                      Los precios de entrada son por <b>una sola vez</b>. Después, la renovación
-                      cuesta US${planes.find((p) => !p.oferta)?.precio ?? 15} al mes.
-                      Se cobra en dólares con tarjeta.
-                    </p>
-                  )}
-                  {/* Mientras la pasarela esté en pruebas hay que decirlo: el
-                      pago no cobra dinero real, pero SÍ activa el plan. Sin
-                      este aviso alguien podría creer que ya pagó. */}
-                  {sesion?.pagoDePrueba && (
-                    <p className="cfg-note" style={{ marginTop: 8, color: 'var(--warn-text)' }}>
-                      ⚠️ Pagos en <b>modo de pruebas</b>: no se cobra dinero real. Si continúas, el
-                      plan se activa igual y habrá que revertirlo a mano.
-                    </p>
-                  )}
                 </div>
 
                 <div className="cfg-group">
@@ -3720,7 +3838,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
         {/* La sesión (avatar, correo, cerrar sesión) vive ahora en la barra
             superior; el menú queda solo para navegar. */}
-        <div className="side-foot">v0.1 · prototipo</div>
+
       </nav>
 
       {/* Drawer de detalle: marcaciones de una persona en un día, editables */}
@@ -5046,19 +5164,46 @@ const CSS = `
 .banner-prueba.urge { background: var(--warn-soft); color: var(--warn-text); border-color: var(--warn-text); }
 .banner-prueba.urge b { color: inherit; }
 
-/* Los paquetes, dentro de Ajustes → Mi empresa */
-.planes-lista { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 14px; }
-.plan-tarjeta {
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 16px 12px; border-radius: 12px; cursor: pointer; font: inherit;
-  background: var(--surface-blanca); border: 1px solid var(--border); transition: border-color .15s, transform .1s;
+/* ── Pantalla de Plan (Ajustes → Plan) ─────────────────────────────── */
+.cfg-punto {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--warn-text);
+  margin-left: auto; flex: 0 0 auto;
 }
-.plan-tarjeta:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
-.plan-tarjeta:disabled { opacity: .55; cursor: default; }
-.plan-tarjeta.oferta { border-color: var(--accent); background: var(--accent-soft); }
-.plan-precio { font-size: 24px; font-weight: 800; letter-spacing: -.02em; color: var(--ink); }
-.plan-meses { font-size: 13.5px; font-weight: 700; color: var(--ink-2); }
-.plan-nota { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.plan-estado {
+  display: flex; gap: 12px; align-items: center; margin: 4px 0 18px;
+  padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border);
+}
+.plan-estado b { display: block; font-size: 15px; }
+.plan-estado small { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.5; margin-top: 3px; max-width: 62ch; }
+.plan-estado.prueba { background: var(--accent-soft); }
+.plan-estado.activa { background: var(--good-soft); }
+.plan-estado.activa b { color: var(--good-text); }
+.plan-estado.vencida { background: var(--crit-soft); }
+.plan-estado.vencida b { color: var(--crit-text); }
+
+.meses-sel { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 4px; }
+
+.planes-lista { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-top: 16px; }
+.plan-tarjeta {
+  display: flex; flex-direction: column; gap: 3px; position: relative;
+  padding: 20px 18px; border-radius: 14px;
+  background: var(--surface-blanca); border: 1px solid var(--border);
+}
+.plan-tarjeta.sugerido { border-color: var(--accent); border-width: 2px; box-shadow: var(--elev-1); }
+.plan-tarjeta.corto { opacity: .6; }
+.plan-etiqueta {
+  position: absolute; top: -10px; left: 16px; background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px;
+}
+.plan-tarjeta h3 { margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -.01em; }
+.plan-para { font-size: 12.5px; color: var(--muted); }
+.plan-precio { display: flex; align-items: baseline; gap: 6px; margin: 10px 0 2px; }
+.plan-precio s { font-size: 15px; color: var(--muted); }
+.plan-precio b { font-size: 30px; font-weight: 800; letter-spacing: -.03em; }
+.plan-precio em { font-style: normal; font-size: 13px; color: var(--muted); }
+.plan-tope { font-size: 12.5px; color: var(--ink-2); margin-bottom: 16px; }
+.plan-tarjeta .btn { margin-top: auto; }
 
 /* Banner de suscripción vencida */
 .banner-vencida { background: var(--crit-soft); color: var(--crit-text); border: 1px solid var(--crit, #fca5a5); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; }
