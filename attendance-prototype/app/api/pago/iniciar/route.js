@@ -43,16 +43,16 @@ export async function POST(req) {
   })
 
   await control(
-    `insert into control.pagos (empresa_id, referencia, monto_centavos, moneda, proveedor)
+    `insert into control.pagos (empresa_id, referencia, monto, moneda, proveedor)
      values ($1, $2, $3, $4, 'bold')`,
-    [empresa.id, datos.orderId, datos.montoCentavos, 'COP'],
+    [empresa.id, datos.orderId, datos.monto, 'COP'],
   )
 
   return NextResponse.json({
     ok: true,
     checkout: datos.checkout,
     orderId: datos.orderId,
-    montoCentavos: datos.montoCentavos,
+    monto: datos.monto,
     // El panel lo usa para advertir que no se está cobrando de verdad.
     entorno: datos.entorno,
   })

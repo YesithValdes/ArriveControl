@@ -12,7 +12,7 @@
  *                        cadena vacía, así que se admite '' como valor válido
  *                        y por eso se distingue de "no configurado".
  *   BOLD_ENTORNO         'test' (por defecto) o 'prod'
- *   PRECIO_MENSUAL_CENTAVOS  cuánto se cobra al mes, en centavos de peso
+ *   PRECIO_MENSUAL_COP   cuánto se cobra al mes, en PESOS enteros
  *
  * Sin llaves el módulo queda APAGADO y el panel no ofrece pagar: es preferible
  * a mostrar un botón que lleva a un checkout roto.
@@ -24,8 +24,14 @@
  */
 import { createHash, createHmac } from 'node:crypto'
 
-/** Precio provisional mientras se define el definitivo: $1.000 COP. */
-const PRECIO_POR_DEFECTO = 100000
+/**
+ * Precio provisional mientras se define el definitivo: $1.000 COP.
+ *
+ * En PESOS ENTEROS, que es como Bold espera el monto: su documentacion dice
+ * "sin decimales" y fija $1.000 como minimo. No son centavos — mandar 100000
+ * creyendo que son $1.000 cobraria $100.000.
+ */
+const PRECIO_POR_DEFECTO = 1000
 
 /** Montos que el sandbox de Bold usa para forzar cada desenlace. */
 export const MONTOS_DE_PRUEBA = {
@@ -52,7 +58,7 @@ export const configBold = () => {
     // rechaza todo. Ante la duda, mejor no cobrar que aceptar un evento falso.
     secretoWebhook: BOLD_WEBHOOK_SECRET ?? (entorno === 'test' ? '' : null),
     entorno,
-    montoCentavos: Number(process.env.PRECIO_MENSUAL_CENTAVOS) || PRECIO_POR_DEFECTO,
+    monto: Number(process.env.PRECIO_MENSUAL_COP) || PRECIO_POR_DEFECTO,
     moneda: 'COP',
   }
 }
@@ -74,9 +80,9 @@ export const ordenDePago = (empresaId) => `cr-${empresaId}-${Date.now().toString
  * SIEMPRE en el servidor: si la llave secreta llegara al navegador, la firma
  * dejaría de significar nada. Bold lo dice explícitamente en su documentación.
  */
-export function firmaIntegridad({ orderId, montoCentavos, moneda, secreto }) {
+export function firmaIntegridad({ orderId, monto, moneda, secreto }) {
   return createHash('sha256')
-    .update(`${orderId}${montoCentavos}${moneda}${secreto}`)
+    .update(`${orderId}${monto}${moneda}${secreto}`)
     .digest('hex')
 }
 
@@ -108,17 +114,17 @@ export function datosDeCheckout({ empresaId, urlRetorno, descripcion }) {
   const orderId = ordenDePago(empresaId)
   return {
     orderId,
-    montoCentavos: cfg.montoCentavos,
+    monto: cfg.monto,
     entorno: cfg.entorno,
     // Tal cual los espera `new BoldCheckout({...})` en el navegador.
     checkout: {
       orderId,
       currency: cfg.moneda,
-      amount: String(cfg.montoCentavos),
+      amount: String(cfg.monto),
       apiKey: cfg.apiKey,
       integritySignature: firmaIntegridad({
         orderId,
-        montoCentavos: cfg.montoCentavos,
+        monto: cfg.monto,
         moneda: cfg.moneda,
         secreto: cfg.secreto,
       }),
@@ -129,4 +135,4 @@ export function datosDeCheckout({ empresaId, urlRetorno, descripcion }) {
 }
 
 /** El monto en pesos, para mostrarlo. */
-export const precioEnPesos = () => (configBold()?.montoCentavos ?? PRECIO_POR_DEFECTO) / 100
+export const precioEnPesos = () => configBold()?.monto ?? PRECIO_POR_DEFECTO

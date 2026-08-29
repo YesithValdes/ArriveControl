@@ -8,7 +8,7 @@ Cómo se cobra el plan de pago, qué hay que configurar y por qué está hecho a
 |---|---|---|---|
 | **Empleados** | ilimitados | hasta 5 | ilimitados |
 | **Dura** | 30 días desde el registro | para siempre | mientras esté al día |
-| **Cuesta** | $0 | $0 | ver `PRECIO_MENSUAL_CENTAVOS` |
+| **Cuesta** | $0 | $0 | ver `PRECIO_MENSUAL_COP` |
 
 Toda empresa nueva nace con la prueba corriendo (`prueba_hasta` = hoy + 30 días).
 Al vencer **no se pierde nada**: cae al plan gratuito y quien ya tenga más de 5
@@ -28,7 +28,7 @@ BOLD_API_KEY          llave de identidad (viaja al navegador, no es secreta)
 BOLD_SECRET_KEY       llave secreta, para firmar el monto del checkout
 BOLD_WEBHOOK_SECRET   secreto de los webhooks — VACÍO en pruebas (ver abajo)
 BOLD_ENTORNO          'test' o 'prod'
-PRECIO_MENSUAL_CENTAVOS  monto mensual EN CENTAVOS ($1.000 → 100000)
+PRECIO_MENSUAL_COP    monto mensual en PESOS ENTEROS ($1.000 → 1000)
 ```
 
 Las llaves salen del panel de Bold, en **Llaves de pruebas** mientras se valida
@@ -63,9 +63,12 @@ Bold decide el resultado **por el monto**, no por la tarjeta:
 | $444.444 | rechazada: falla de red |
 | $999.999 | rechazada: rechazo general |
 
+> **La unidad es el PESO, no el centavo.** Bold pide el monto «sin decimales»
+> y su mínimo es $1.000. Poner 100000 no cobra $1.000 sino $100.000.
+
 El precio provisional de $1.000 cae en el rango aprobado, así que el camino
 feliz se prueba sin tocar nada. Para probar un rechazo, se cambia
-`PRECIO_MENSUAL_CENTAVOS` al monto correspondiente (en centavos).
+`PRECIO_MENSUAL_COP` al monto correspondiente.
 
 ## Cómo funciona
 

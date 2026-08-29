@@ -1,0 +1,11 @@
+-- control/008_monto_en_pesos.sql — El monto se guarda en PESOS, no centavos.
+--
+-- La columna nació llamándose `monto_centavos` heredando el nombre de otra
+-- pasarela. Bold espera el monto en PESOS ENTEROS —su documentación dice "sin
+-- decimales" y fija $1.000 como mínimo—, así que el nombre mentía: guardar
+-- 100000 ahí significaba $100.000, no $1.000.
+--
+-- Un nombre que miente sobre dinero termina en un cobro cien veces mayor, así
+-- que se renombra. No hay que convertir valores: la tabla se creó vacía y
+-- ningún pago llegó a registrarse con la interpretación vieja.
+alter table control.pagos rename column monto_centavos to monto;
