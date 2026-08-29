@@ -21,7 +21,7 @@ import { planPorId, DIAS_PRUEBA } from './planes.js'
 const sha256 = (s) => createHash('sha256').update(s).digest('hex')
 
 /** Columnas que necesita cualquiera que resuelva una empresa. */
-const CAMPOS = `id, nombre, esquema, plan, limite_empleados, estado, api_key, dominio, vence_en, prueba_hasta, plan_id`
+const CAMPOS = `id, nombre, esquema, plan, limite_empleados, estado, api_key, dominio, vence_en, prueba_hasta, plan_id, bienvenida_en`
 
 
 // Caché corta: son pocas filas, cambian casi nunca y se consultan en CADA

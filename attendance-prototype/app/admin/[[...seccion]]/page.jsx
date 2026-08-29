@@ -35,6 +35,12 @@ export default async function AdminPage({ params }) {
   if (estado === 'SIN_SESION') redirect('/login?destino=/admin');
   if (estado === 'SIN_PERMISO' || estado === 'CUENTA_INACTIVA') redirect('/login?error=sin-permiso');
 
+  // Primera visita: se ofrece suscribirse antes de entrar. Es opcional —
+  // desde ahí se puede omitir, y al omitir queda `bienvenida_en` marcada, que
+  // es lo que impide que esto se repita (y que se forme un bucle: la pantalla
+  // vive en su propia ruta fija, /admin/bienvenida, no en este comodín).
+  if (estado === 'OK' && !empresa?.bienvenida_en) redirect('/admin/bienvenida');
+
   // Sin empresa no hay panel que mostrar. El superadmin va al suyo; quien
   // quedó sin empresa por un fallo del alta ve qué hacer.
   if (estado === 'SIN_EMPRESA') {
