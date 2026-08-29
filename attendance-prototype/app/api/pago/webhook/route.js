@@ -27,9 +27,15 @@ import { olvidarEmpresas } from '../../../../lib/empresas.js'
 
 export const runtime = 'nodejs'
 
-/** Un pago aprobado cubre un mes desde hoy, o desde el vencimiento vigente si
- *  la empresa renueva antes de tiempo (no se le regalan días ni se le quitan). */
-const DIAS_CUBIERTOS = 30
+/**
+ * Cuántos días cubre un mes comprado.
+ *
+ * Se usan meses de calendario (`+ N months` de Postgres sería más exacto, pero
+ * el cálculo vive aquí para poder auditarlo junto al resto de la decisión):
+ * 30 días por mes, contados desde el vencimiento vigente si la empresa renueva
+ * antes de tiempo — así no se le regalan días ni se le quitan.
+ */
+const DIAS_POR_MES = 30
 
 export async function POST(req) {
   const cfg = configBold()
@@ -70,7 +76,7 @@ export async function POST(req) {
 
   try {
     const { rows } = await control(
-      `select p.id, p.empresa_id, p.estado, e.vence_en
+      `select p.id, p.empresa_id, p.estado, p.meses, e.vence_en
          from control.pagos p join control.empresas e on e.id = p.empresa_id
         where p.referencia = $1`,
       [referencia],
@@ -97,8 +103,10 @@ export async function POST(req) {
 
     // Aprobado: se extiende desde el vencimiento vigente si aún no ha pasado
     // (renovar antes no debe costar días), o desde hoy si ya venció.
+    // Los MESES salen del pago, no de una constante: es lo que se compró, y
+    // guardarlo allí hace que un cambio de precios no altere lo ya vendido.
     const base = pago.vence_en && new Date(pago.vence_en) > new Date() ? new Date(pago.vence_en) : new Date()
-    const hasta = new Date(base.getTime() + DIAS_CUBIERTOS * 86400000)
+    const hasta = new Date(base.getTime() + (pago.meses ?? 1) * DIAS_POR_MES * 86400000)
 
     await control(
       `update control.pagos

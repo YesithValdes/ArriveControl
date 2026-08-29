@@ -4,20 +4,36 @@ Cómo se cobra el plan de pago, qué hay que configurar y por qué está hecho a
 
 ## El modelo comercial
 
-| | Prueba | Gratis | Empresa |
+**Usar el sistema exige suscripción vigente.** No hay plan gratuito ni prueba:
+sin pagar se puede entrar al panel y exportar el historial, pero el kiosco no
+registra marcaciones y no se pueden dar de alta empleados.
+
+La puerta de entrada es deliberadamente barata, y sirve de filtro: quien pone
+un dólar tiene medio de pago y voluntad real de usar el producto — algo que una
+prueba gratuita no demuestra.
+
+| Paquete | Precio | Cubre | Disponible |
 |---|---|---|---|
-| **Empleados** | ilimitados | hasta 5 | ilimitados |
-| **Dura** | 30 días desde el registro | para siempre | mientras esté al día |
-| **Cuesta** | $0 | $0 | ver `PRECIO_MENSUAL_COP` |
+| Entrada · 1 mes | US$1 | 30 días | una sola vez |
+| Entrada · 2 meses | US$2 | 60 días | una sola vez |
+| Entrada · 3 meses | US$3 | 90 días | una sola vez |
+| Renovación | US$15 | 30 días | siempre |
 
-Toda empresa nueva nace con la prueba corriendo (`prueba_hasta` = hoy + 30 días).
-Al vencer **no se pierde nada**: cae al plan gratuito y quien ya tenga más de 5
-empleados los conserva marcando — simplemente no puede agregar más. Bloquear a
-gente que ya venía usando el sistema sería el peor momento para perder al cliente.
+Todos incluyen el producto completo, con empleados ilimitados.
 
-El plan de pago se puede contratar **en cualquier momento**, también durante la
-prueba: los días que queden no se pierden, porque un pago extiende desde el
-vencimiento vigente y no desde hoy.
+**La oferta de entrada es de una sola vez por empresa.** No hace falta una
+columna que lo marque: se ofrece solo si la empresa no tiene ningún pago
+aprobado en su historial. Un dato derivado no se puede desincronizar del hecho
+que representa. Y se valida **en el servidor** al iniciar el pago, no solo al
+pintar la pantalla: ocultar un botón no impide llamar a la ruta.
+
+**Renovar antes de vencer no cuesta días.** El pago extiende desde el
+vencimiento vigente, no desde hoy.
+
+**El catálogo vive en `lib/planes.js`**, en el servidor. Del navegador solo se
+acepta *cuál* paquete se quiere; cuánto cuesta y cuánto dura lo decide el
+servidor. Si el precio viniera del cliente, cualquiera pediría tres meses por
+un dólar.
 
 ## Qué hay que configurar
 
@@ -52,7 +68,8 @@ que es como se validó esta integración.
 
 ## Probar en el sandbox
 
-Bold decide el resultado **por el monto**, no por la tarjeta:
+Bold decide el resultado **por el monto**, no por la tarjeta. Su documentación
+lista estos casos **en pesos**:
 
 | Monto | Resultado |
 |---|---|
@@ -63,18 +80,16 @@ Bold decide el resultado **por el monto**, no por la tarjeta:
 | $444.444 | rechazada: falla de red |
 | $999.999 | rechazada: rechazo general |
 
-> **La unidad es el PESO, no el centavo.** Bold pide el monto «sin decimales»
-> y su mínimo es $1.000. Poner 100000 no cobra $1.000 sino $100.000.
-
-El precio provisional de $1.000 cae en el rango aprobado, así que el camino
-feliz se prueba sin tocar nada. Para probar un rechazo, se cambia
-`PRECIO_MENSUAL_COP` al monto correspondiente.
+> **Pendiente de comprobar:** cobramos en **dólares**, y esa tabla está escrita
+> para pesos. En la primera prueba del sandbox conviene verificar qué desenlace
+> produce US$1 antes de dar por buenos esos valores.
 
 ## Cómo funciona
 
-1. La persona pulsa **Contratar plan** en Ajustes → Mi empresa.
-2. `POST /api/pago/iniciar` genera un `orderId` único, **firma el monto** y
-   registra el pago como `PENDIENTE`.
+1. La persona elige un paquete en Ajustes → Mi empresa.
+2. `POST /api/pago/iniciar` valida el paquete contra el catálogo, comprueba que
+   la oferta no esté usada, genera un `orderId` único, **firma el monto** y
+   registra el pago como `PENDIENTE` con los meses que cubre.
 3. El navegador carga la librería de Bold y abre el checkout con esa
    configuración (`new BoldCheckout({...}).open()`).
 4. Bold avisa a `POST /api/pago/webhook` cuando la venta se resuelve.
@@ -113,6 +128,14 @@ webhook no llama a servicios externos ni hace trabajo lento.
 Por lo mismo se responde **200 a eventos que no nos sirven** (referencia
 desconocida, otro tipo de evento): reintentarlos no cambiaría nada. El 500 se
 reserva para fallos nuestros, donde el reintento sí ayuda.
+
+## Sobre la moneda
+
+Se cobra en **dólares**; Bold convierte a pesos con la TRM del momento y el
+comercio recibe en COP. La contrapartida: **en USD solo se puede pagar con
+tarjeta** — quedan fuera PSE y Nequi, que en Colombia son medios muy usados. Si
+la conversión resulta baja, cambiar a pesos es tocar `MONEDA` y los precios en
+`lib/planes.js`.
 
 ## Lo que falta
 

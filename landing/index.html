@@ -14,7 +14,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Control Registro — Asistencia con reconocimiento facial para tu empresa</title>
-<meta name="description" content="Tus empleados marcan entrada y salida con la cara, desde un celular o tablet. Recibe las horas trabajadas y las extras calculadas según la ley colombiana, listas para nómina. Prueba 30 días gratis." />
+<meta name="description" content="Tus empleados marcan entrada y salida con la cara, desde un celular o tablet. Recibe las horas trabajadas y las extras calculadas según la ley colombiana, listas para nómina. Empieza por US$1 el primer mes." />
 <meta property="og:title" content="Control Registro — Asistencia con reconocimiento facial" />
 <meta property="og:description" content="Marcación facial sin huelleros. Horas extra calculadas según la ley colombiana, listas para nómina." />
 <meta property="og:type" content="website" />
@@ -218,7 +218,7 @@
 <section class="portada">
   <div class="env">
     <div>
-      <span class="marca-arriba">● 30 días gratis, sin tarjeta</span>
+      <span class="marca-arriba">● Primer mes por US$1</span>
       <h1>La asistencia de tu equipo, sin planillas ni huelleros</h1>
       <p class="bajada">
         Tu gente marca entrada y salida con la cara, desde un celular o una tablet común.
@@ -226,10 +226,10 @@
         listas para pasar a nómina.
       </p>
       <div class="acciones">
-        <a class="btn btn-primario" href="https://arrivecontrol.vercel.app/login">Probar 30 días gratis</a>
+        <a class="btn btn-primario" href="https://arrivecontrol.vercel.app/login">Empezar por US$1</a>
         <a class="btn btn-borde" href="#como">Ver cómo funciona</a>
       </div>
-      <p class="letra-chica">No pedimos tarjeta. Al terminar la prueba sigues gratis hasta 5 empleados.</p>
+      <p class="letra-chica">Empleados ilimitados desde el primer día. Sin permanencia: renuevas solo si te sirve.</p>
     </div>
 
     <div class="tel-marco" aria-hidden="true">
@@ -351,47 +351,46 @@
   <div class="env">
     <div class="titulo-bloque">
       <p class="ojo">Precios</p>
-      <h2>Empieza gratis y paga solo cuando crezcas</h2>
-      <p>Todos los planes incluyen el producto completo. Lo único que cambia es cuánta
-        gente puedes registrar.</p>
+      <h2>Empieza por un dólar</h2>
+      <p>Sin versiones recortadas ni límite de empleados: lo que pruebas es
+        exactamente lo que vas a usar.</p>
     </div>
     <div class="planes">
-      <div class="plan">
-        <h3>Gratis</h3>
-        <!-- PRECIO: este plan no se cobra. -->
-        <div class="precio">$0</div>
-        <p class="para">Para negocios pequeños o para probar sin apuro.</p>
-        <ul>
-          <li>Hasta 5 empleados</li>
-          <li>Marcación facial ilimitada</li>
-          <li>Reportes de horas y extras</li>
-          <li>Funciona sin internet</li>
-          <li>Sin vencimiento</li>
-        </ul>
-        <a class="btn btn-borde" href="https://arrivecontrol.vercel.app/login">Empezar gratis</a>
-      </div>
       <div class="plan destacado">
-        <span class="etiqueta">30 días gratis</span>
-        <h3>Empresa</h3>
-        <!-- PRECIO: valor PROVISIONAL para validar el cobro con Wompi.
-             Cambia el número aquí y, en la aplicación, la variable de entorno
-             PRECIO_MENSUAL_CENTAVOS (en centavos: $89.000 -> 8900000). -->
-        <div class="precio">$1.000 <small>/ mes</small></div>
-        <p class="para">Para equipos que crecen y necesitan control real.
-          Puedes contratarlo de una, sin esperar a que termine la prueba.</p>
+        <span class="etiqueta">Solo al empezar</span>
+        <h3>Precio de entrada</h3>
+        <!-- PRECIO: los paquetes de entrada. Para cambiarlos, ajusta tambien
+             el catalogo del servidor en lib/planes.js. -->
+        <div class="precio">US$1 <small>el primer mes</small></div>
+        <p class="para">Conoce el sistema completo, con tu gente real, por lo que
+          cuesta un café. Si quieres más tiempo:</p>
         <ul>
-          <li><b>Empleados ilimitados</b></li>
+          <li><b>US$2</b> por dos meses</li>
+          <li><b>US$3</b> por tres meses</li>
+          <li>Empleados ilimitados</li>
+          <li>Todas las funciones, sin recortes</li>
+          <li>Por una sola vez, al registrarte</li>
+        </ul>
+        <a class="btn btn-primario" href="https://arrivecontrol.vercel.app/login">Empezar por US$1</a>
+      </div>
+      <div class="plan">
+        <h3>Después</h3>
+        <div class="precio">US$15 <small>/ mes</small></div>
+        <p class="para">El precio normal, cuando ya sepas que te sirve.</p>
+        <ul>
+          <li>Empleados ilimitados</li>
           <li>Varias sedes</li>
           <li>Control de ubicación por GPS</li>
           <li>Comprobantes por correo</li>
           <li>Exportación para nómina</li>
-          <li>Soporte directo</li>
+          <li>Sin permanencia: renuevas mes a mes</li>
         </ul>
-        <a class="btn btn-primario" href="https://arrivecontrol.vercel.app/login">Contratar ahora</a>
+        <a class="btn btn-borde" href="https://arrivecontrol.vercel.app/login">Ver el sistema</a>
       </div>
     </div>
     <p class="letra-chica" style="text-align:center; margin-top: 26px;">
-      ¿Más de 50 empleados o varias empresas? <a href="#contacto">Escríbenos</a> y armamos un plan.
+      Se cobra en dólares con tarjeta. ¿Muchos empleados o varias empresas?
+      <a href="#contacto">Escríbenos</a> y armamos un plan.
     </p>
   </div>
 </section>
@@ -408,6 +407,12 @@
         <p>No. Funciona en cualquier celular o tablet con cámara frontal, incluso uno que ya no
           uses. Lo dejas fijo en la entrada y listo. También puedes instalarlo como aplicación de
           Android.</p>
+      </details>
+      <details>
+        <summary>¿Por qué tan barato el primer mes?</summary>
+        <p>Porque una demostración no dice nada: el sistema hay que probarlo con tu gente y tus
+          horarios reales. Ese dólar cubre el mes completo, sin funciones recortadas ni límite de
+          empleados. Después vale US$15 al mes, y renuevas solo si te sirvió.</p>
       </details>
       <details>
         <summary>¿Qué pasa si se cae el internet?</summary>
@@ -445,9 +450,9 @@
 
 <section class="cierre" id="contacto">
   <div class="env">
-    <h2>Pruébalo con tu equipo esta semana</h2>
-    <p>Treinta días con todo incluido, sin tarjeta y sin compromiso. Si no te sirve,
-      simplemente dejas de usarlo.</p>
+    <h2>Pruébalo con tu equipo por un dólar</h2>
+    <p>Un mes con todo incluido por US$1. Si no te sirve, no renuevas y ya:
+      no hay permanencia ni cláusulas.</p>
     <a class="btn btn-primario" href="https://arrivecontrol.vercel.app/login">Empezar ahora</a>
   </div>
 </section>

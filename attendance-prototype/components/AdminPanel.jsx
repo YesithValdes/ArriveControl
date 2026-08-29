@@ -646,6 +646,18 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // firmado para que nadie lo cambie por el camino); aquí solo se abre la
   // pasarela de Bold con esos datos.
   const [pagando, setPagando] = useState(false);
+  // Los paquetes que ESTA empresa puede comprar: el servidor decide cuáles
+  // (la oferta de entrada solo si nunca pagó) y a qué precio.
+  const [planes, setPlanes] = useState(null);
+  useEffect(() => {
+    if (tab !== 'cfg-empresa') return;
+    let vigente = true;
+    fetch('/api/pago/planes')
+      .then((r) => r.json())
+      .then((d) => { if (vigente && d?.ok) setPlanes(d.disponible ? d.planes : []); })
+      .catch(() => { /* sin catálogo no se ofrecen botones */ });
+    return () => { vigente = false; };
+  }, [tab, tick]);
 
   /**
    * Carga la librería de Bold una sola vez, bajo demanda: son unos kilobytes
@@ -668,10 +680,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     document.head.appendChild(s);
   });
 
-  const irAPagar = async () => {
+  const irAPagar = async (planId) => {
     setPagando(true);
     try {
-      const r = await fetch('/api/pago/iniciar', { method: 'POST' });
+      const r = await fetch('/api/pago/iniciar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: planId }),
+      });
       const d = await r.json().catch(() => null);
       if (!r.ok || !d?.ok) { showToast(d?.error || 'No se pudo iniciar el pago.'); return; }
       await cargarBold();
@@ -1632,26 +1648,29 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         </div>
       )}
 
-      {/* Prueba gratuita. Los últimos días se avisan con más fuerza, pero sin
-          alarmar: al vencer no se pierde nada, solo el tope vuelve a regir. */}
-      {sesion?.planEstado?.enPrueba && (
-        <div className={`banner-prueba${sesion.planEstado.diasPrueba <= 7 ? ' urge' : ''}`}>
+      {/* Sin suscripción no se puede registrar ni marcar, así que hay que
+          decirlo arriba de todo — pero dejando claro que los datos siguen
+          ahí y se pueden exportar. */}
+      {sesion?.planEstado && !sesion.planEstado.vigente && (
+        <div className="banner-prueba urge">
           <span>
-            {sesion.planEstado.diasPrueba === 1
-              ? <>Hoy es el <b>último día</b> de tu prueba gratuita.</>
-              : <>Te quedan <b>{sesion.planEstado.diasPrueba} días</b> de prueba, con empleados ilimitados.</>}
-            {' '}Después seguirás usando Control Registro gratis hasta {sesion.limiteEmpleados ?? 10} empleados.
+            {sesion.planEstado.nunca
+              ? <>Para empezar a registrar asistencia, <b>elige un plan</b>. Puedes probar el sistema completo por <b>US$1 el primer mes</b>.</>
+              : <>Tu suscripción venció: el kiosco no registra marcaciones. Tus datos siguen intactos y puedes consultarlos y exportarlos.</>}
           </span>
           <button className="btn small" onClick={() => setTab('cfg-empresa')}>Ver planes</button>
         </div>
       )}
-      {sesion?.planEstado?.pruebaVencida && (
-        <div className="banner-prueba">
+      {/* Los últimos días se avisan, sin alarmar antes de tiempo. */}
+      {sesion?.planEstado?.vigente && sesion.planEstado.diasRestantes <= 7 && (
+        <div className="banner-prueba urge">
           <span>
-            Tu prueba terminó y estás en el <b>plan gratuito</b> ({allPeople.length} de {sesion.limiteEmpleados ?? 10} empleados).
-            Tus datos y tus marcaciones siguen intactos.
+            {sesion.planEstado.diasRestantes === 1
+              ? <>Tu suscripción vence <b>hoy</b>.</>
+              : <>Tu suscripción vence en <b>{sesion.planEstado.diasRestantes} días</b>.</>}
+            {' '}Renuévala para que el kiosco siga registrando.
           </span>
-          <button className="btn small" onClick={() => setTab('cfg-empresa')}>Ver planes</button>
+          <button className="btn small" onClick={() => setTab('cfg-empresa')}>Renovar</button>
         </div>
       )}
 
@@ -2228,9 +2247,20 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 {sesion?.limiteEmpleados != null ? `${allPeople.length} de ${sesion.limiteEmpleados}` : empRows.length}
               </span>
             </h2>
+            {/* Sin suscripción no se puede dar de alta a nadie. Se dice aquí,
+                antes de que llene el formulario y choque con el error. */}
+            {sesion?.planEstado && !sesion.planEstado.vigente && (
+              <p className="hint" style={{ color: 'var(--crit-text)' }}>
+                {sesion.planEstado.nunca
+                  ? 'Para registrar empleados necesitas un plan activo.'
+                  : 'Tu suscripción venció: no puedes registrar empleados nuevos hasta renovarla.'}
+                {' '}
+                <button className="btn small" style={{ marginLeft: 6 }} onClick={() => setTab('cfg-empresa')}>Ver planes</button>
+              </p>
+            )}
             {sesion?.limiteEmpleados != null && allPeople.length >= sesion.limiteEmpleados && (
               <p className="hint" style={{ color: 'var(--crit-text)' }}>
-                Llegaste al tope del plan gratuito. Para registrar más, pasa al plan de pago.
+                Llegaste al tope acordado de {sesion.limiteEmpleados} empleados. Escríbenos para ampliarlo.
               </p>
             )}
             <p className="hint">Quiénes pueden marcar en el kiosco. Toca una fila para editar.</p>
@@ -2960,49 +2990,53 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   <h3>Plan</h3>
                   <div className="cfg-row">
                     <label>
-                      {miEmpresa.plan === 'gratis' ? 'Gratis' : 'De pago'}
-                      {miEmpresa.plan === 'pago' && miEmpresa.estado !== 'activa' && (
-                        <small style={{ color: 'var(--crit-text)' }}>Suscripción {miEmpresa.estado}: el panel está en solo lectura.</small>
+                      {sesion?.planEstado?.vigente ? 'Suscripción activa' : sesion?.planEstado?.nunca ? 'Sin plan' : 'Suscripción vencida'}
+                      {sesion?.planEstado?.vigente && sesion.planEstado.venceEn && (
+                        <small>
+                          Hasta el {new Date(sesion.planEstado.venceEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}
+                          {' '}({sesion.planEstado.diasRestantes} día{sesion.planEstado.diasRestantes === 1 ? '' : 's'})
+                        </small>
+                      )}
+                      {!sesion?.planEstado?.vigente && (
+                        <small style={{ color: 'var(--crit-text)' }}>El kiosco no puede registrar marcaciones.</small>
                       )}
                     </label>
-                    <div className="cfg-input">
-                      {miEmpresa.limiteEmpleados == null
-                        ? `${miEmpresa.empleados} empleados`
-                        : <b>{miEmpresa.empleados} de {miEmpresa.limiteEmpleados} empleados</b>}
-                    </div>
+                    <div className="cfg-input">{miEmpresa.empleados} empleados</div>
                   </div>
 
-                  {/* Contratar el plan. Aparece durante la prueba y en el plan
-                      gratuito: quien ya sabe que lo necesita no tiene por qué
-                      esperar a que se le venza nada para poder pagar. */}
-                  {miEmpresa.plan !== 'pago' && (
-                    <div className="plan-pago">
-                      <div>
-                        <b>Plan Empresa · empleados ilimitados</b>
-                        <small>
-                          {sesion?.planEstado?.enPrueba
-                            ? `Tu prueba termina en ${sesion.planEstado.diasPrueba} día${sesion.planEstado.diasPrueba === 1 ? '' : 's'}. Puedes contratarlo desde ya: los días que te quedan no se pierden.`
-                            : `Hoy tienes hasta ${miEmpresa.limiteEmpleados ?? 5} empleados. Con el plan Empresa no hay tope.`}
-                        </small>
-                      </div>
-                      <button className="btn primary" disabled={pagando} onClick={irAPagar}>
-                        {pagando ? 'Abriendo…' : 'Contratar plan'}
+                  {/* Los paquetes. El de entrada solo se ofrece a quien nunca
+                      ha pagado: el servidor lo decide y lo vuelve a validar,
+                      así que ocultarlo aquí es cortesía, no la defensa. */}
+                  <div className="planes-lista">
+                    {(planes ?? []).map((p) => (
+                      <button
+                        key={p.id}
+                        className={`plan-tarjeta${p.oferta ? ' oferta' : ''}`}
+                        disabled={pagando}
+                        onClick={() => irAPagar(p.id)}
+                      >
+                        <span className="plan-precio">US${p.precio}</span>
+                        <span className="plan-meses">{p.etiqueta}</span>
+                        {p.oferta
+                          ? <span className="plan-nota">precio de entrada</span>
+                          : <span className="plan-nota">precio normal</span>}
                       </button>
-                    </div>
+                    ))}
+                  </div>
+                  {(planes ?? []).some((p) => p.oferta) && (
+                    <p className="cfg-note" style={{ marginTop: 10 }}>
+                      Los precios de entrada son por <b>una sola vez</b>. Después, la renovación
+                      cuesta US${planes.find((p) => !p.oferta)?.precio ?? 15} al mes.
+                      Se cobra en dólares con tarjeta.
+                    </p>
                   )}
                   {/* Mientras la pasarela esté en pruebas hay que decirlo: el
                       pago no cobra dinero real, pero SÍ activa el plan. Sin
                       este aviso alguien podría creer que ya pagó. */}
-                  {miEmpresa.plan !== 'pago' && sesion?.pagoDePrueba && (
+                  {sesion?.pagoDePrueba && (
                     <p className="cfg-note" style={{ marginTop: 8, color: 'var(--warn-text)' }}>
                       ⚠️ Pagos en <b>modo de pruebas</b>: no se cobra dinero real. Si continúas, el
                       plan se activa igual y habrá que revertirlo a mano.
-                    </p>
-                  )}
-                  {miEmpresa.plan === 'pago' && sesion?.planEstado?.venceEn && (
-                    <p className="cfg-note" style={{ marginTop: 10 }}>
-                      Suscripción activa hasta el{' '}
-                      <b>{new Date(sesion.planEstado.venceEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}</b>.
                     </p>
                   )}
                 </div>
@@ -5012,14 +5046,19 @@ const CSS = `
 .banner-prueba.urge { background: var(--warn-soft); color: var(--warn-text); border-color: var(--warn-text); }
 .banner-prueba.urge b { color: inherit; }
 
-/* Contratar el plan, dentro de Ajustes → Mi empresa */
-.plan-pago {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-  margin-top: 14px; padding: 15px 17px; border-radius: 12px;
-  background: var(--accent-soft); border: 1px solid var(--border);
+/* Los paquetes, dentro de Ajustes → Mi empresa */
+.planes-lista { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 14px; }
+.plan-tarjeta {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 16px 12px; border-radius: 12px; cursor: pointer; font: inherit;
+  background: var(--surface-blanca); border: 1px solid var(--border); transition: border-color .15s, transform .1s;
 }
-.plan-pago b { display: block; font-size: 14.5px; }
-.plan-pago small { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.45; margin-top: 3px; max-width: 46ch; }
+.plan-tarjeta:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
+.plan-tarjeta:disabled { opacity: .55; cursor: default; }
+.plan-tarjeta.oferta { border-color: var(--accent); background: var(--accent-soft); }
+.plan-precio { font-size: 24px; font-weight: 800; letter-spacing: -.02em; color: var(--ink); }
+.plan-meses { font-size: 13.5px; font-weight: 700; color: var(--ink-2); }
+.plan-nota { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
 
 /* Banner de suscripción vencida */
 .banner-vencida { background: var(--crit-soft); color: var(--crit-text); border: 1px solid var(--crit, #fca5a5); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; }

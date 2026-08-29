@@ -12,35 +12,23 @@
  *                        cadena vacía, así que se admite '' como valor válido
  *                        y por eso se distingue de "no configurado".
  *   BOLD_ENTORNO         'test' (por defecto) o 'prod'
- *   PRECIO_MENSUAL_COP   cuánto se cobra al mes, en PESOS enteros
+ *
+ * Los precios NO están aquí: viven en lib/planes.js, que es el catálogo.
  *
  * Sin llaves el módulo queda APAGADO y el panel no ofrece pagar: es preferible
  * a mostrar un botón que lleva a un checkout roto.
  *
- * SOBRE EL SANDBOX: Bold decide el resultado por el MONTO, no por la tarjeta.
- * Entre $1.000 y $2.000.000 aprueba; hay montos exactos que fuerzan cada tipo
- * de rechazo (ver MONTOS_DE_PRUEBA). El precio provisional de $1.000 cae en el
- * rango aprobado, así que sirve para el camino feliz sin tocar nada.
+ * MONEDA: se cobra en DÓLARES. Bold convierte a pesos con la TRM del momento
+ * y el comercio recibe en COP. La contrapartida es que en USD solo se puede
+ * pagar con tarjeta — quedan fuera PSE y Nequi.
+ *
+ * SOBRE EL SANDBOX: Bold decide el resultado por el MONTO, no por la tarjeta;
+ * los montos que fuerzan cada rechazo están documentados para pesos. Con
+ * dólares conviene comprobar en la primera prueba qué desenlace produce cada
+ * valor antes de dar por buena la tabla.
  */
 import { createHash, createHmac } from 'node:crypto'
-
-/**
- * Precio provisional mientras se define el definitivo: $1.000 COP.
- *
- * En PESOS ENTEROS, que es como Bold espera el monto: su documentacion dice
- * "sin decimales" y fija $1.000 como minimo. No son centavos — mandar 100000
- * creyendo que son $1.000 cobraria $100.000.
- */
-const PRECIO_POR_DEFECTO = 1000
-
-/** Montos que el sandbox de Bold usa para forzar cada desenlace. */
-export const MONTOS_DE_PRUEBA = {
-  111111: 'fondos insuficientes',
-  222222: 'PIN inválido',
-  333333: 'tarjeta vencida',
-  444444: 'falla de red',
-  999999: 'rechazo general',
-}
+import { MONEDA } from './planes.js'
 
 export const configBold = () => {
   const { BOLD_API_KEY, BOLD_SECRET_KEY, BOLD_WEBHOOK_SECRET, BOLD_ENTORNO } = process.env
@@ -58,8 +46,9 @@ export const configBold = () => {
     // rechaza todo. Ante la duda, mejor no cobrar que aceptar un evento falso.
     secretoWebhook: BOLD_WEBHOOK_SECRET ?? (entorno === 'test' ? '' : null),
     entorno,
-    monto: Number(process.env.PRECIO_MENSUAL_COP) || PRECIO_POR_DEFECTO,
-    moneda: 'COP',
+    // Cuánto y por cuánto tiempo lo decide el catálogo (lib/planes.js). Aquí
+    // solo vive la moneda, porque afecta a la firma y a los medios de pago.
+    moneda: MONEDA,
   }
 }
 
@@ -108,23 +97,28 @@ export function eventoAutentico(cuerpoCrudo, firmaRecibida, secreto) {
 }
 
 /** Datos que el navegador necesita para abrir el checkout, ya firmados. */
-export function datosDeCheckout({ empresaId, urlRetorno, descripcion }) {
+export function datosDeCheckout({ empresaId, monto, urlRetorno, descripcion }) {
   const cfg = configBold()
   if (!cfg) return null
   const orderId = ordenDePago(empresaId)
+  // El monto llega del catálogo de planes (lib/planes.js), que vive en el
+  // servidor. Nunca del navegador.
+  const valor = Number(monto)
+  if (!Number.isFinite(valor) || valor <= 0) return null
   return {
     orderId,
-    monto: cfg.monto,
+    monto: valor,
+    moneda: cfg.moneda,
     entorno: cfg.entorno,
     // Tal cual los espera `new BoldCheckout({...})` en el navegador.
     checkout: {
       orderId,
       currency: cfg.moneda,
-      amount: String(cfg.monto),
+      amount: String(valor),
       apiKey: cfg.apiKey,
       integritySignature: firmaIntegridad({
         orderId,
-        monto: cfg.monto,
+        monto: valor,
         moneda: cfg.moneda,
         secreto: cfg.secreto,
       }),
@@ -134,5 +128,3 @@ export function datosDeCheckout({ empresaId, urlRetorno, descripcion }) {
   }
 }
 
-/** El monto en pesos, para mostrarlo. */
-export const precioEnPesos = () => configBold()?.monto ?? PRECIO_POR_DEFECTO

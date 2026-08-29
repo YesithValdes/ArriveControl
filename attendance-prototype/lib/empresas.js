@@ -20,10 +20,8 @@ import { control, conEmpresa, enTransaccion } from './db.js'
 const sha256 = (s) => createHash('sha256').update(s).digest('hex')
 
 /** Columnas que necesita cualquiera que resuelva una empresa. */
-const CAMPOS = `id, nombre, esquema, plan, limite_empleados, estado, api_key, dominio, prueba_hasta, vence_en`
+const CAMPOS = `id, nombre, esquema, plan, limite_empleados, estado, api_key, dominio, vence_en`
 
-/** Días que dura la prueba de una empresa nueva. */
-export const DIAS_PRUEBA = 30
 
 // Caché corta: son pocas filas, cambian casi nunca y se consultan en CADA
 // petición. El TTL evita tener que invalidarla a mano al cambiar de plan.
@@ -84,51 +82,69 @@ export async function empresaDelDispositivo(clave) {
 }
 
 /** ¿Esta empresa puede ESCRIBIR, o está en solo lectura por impago? */
-export const puedeEscribir = (empresa) =>
-  Boolean(empresa) && (empresa.plan === 'gratis' || empresa.estado === 'activa')
+/**
+ * ¿Tiene suscripción vigente?
+ *
+ * Es la única puerta: sin ella no se puede registrar gente ni marcar. Ya no
+ * existe el plan gratuito — usar el sistema exige estar al día.
+ *
+ * Se compara contra la FECHA, no contra el estado: `estado = 'activa'` sin
+ * `vence_en` sería una suscripción eterna creada por un error de datos.
+ */
+export const suscripcionVigente = (empresa) =>
+  Boolean(empresa)
+  && empresa.estado === 'activa'
+  && Boolean(empresa.vence_en)
+  && new Date(empresa.vence_en).getTime() > Date.now()
 
-/** ¿La prueba gratuita de esta empresa sigue vigente? */
-export const enPrueba = (empresa) =>
-  Boolean(empresa?.prueba_hasta) && new Date(empresa.prueba_hasta).getTime() > Date.now()
+/**
+ * Quien no está al día puede CONSULTAR y exportar, pero no escribir.
+ *
+ * Sus datos no se secuestran nunca: puede entrar al panel, ver su historial y
+ * llevárselo. Lo que se detiene es el servicio — registrar empleados y marcar
+ * asistencia — hasta que renueve.
+ */
+export const puedeEscribir = (empresa) => suscripcionVigente(empresa)
 
 /**
  * Cómo está esta empresa de cara al plan, en una sola forma para el panel.
- * Todo lo que la pantalla necesita para decidir qué avisar, sin que tenga que
- * recomponer la regla (y arriesgarse a que diga algo distinto del servidor).
+ * Todo lo que la pantalla necesita para decidir qué mostrar, sin que tenga
+ * que recomponer la regla (y arriesgarse a decir algo distinto del servidor).
  */
 export function estadoDelPlan(empresa) {
   if (!empresa) return null
-  const prueba = enPrueba(empresa)
-  const finPrueba = empresa.prueba_hasta ? new Date(empresa.prueba_hasta) : null
+  const vigente = suscripcionVigente(empresa)
+  const vence = empresa.vence_en ? new Date(empresa.vence_en) : null
   return {
     plan: empresa.plan,
     estado: empresa.estado,
-    enPrueba: prueba,
+    vigente,
     // Se redondea hacia ARRIBA: el último día también cuenta como un día.
-    diasPrueba: prueba ? Math.ceil((finPrueba.getTime() - Date.now()) / 86400000) : 0,
-    pruebaHasta: finPrueba ? finPrueba.toISOString() : null,
-    // La prueba ya pasó y no se convirtió: es cuando conviene insistir.
-    pruebaVencida: Boolean(finPrueba) && !prueba && empresa.plan === 'gratis',
-    limite: prueba ? null : (empresa.limite_empleados ?? null),
-    venceEn: empresa.vence_en ? new Date(empresa.vence_en).toISOString() : null,
+    diasRestantes: vigente ? Math.ceil((vence.getTime() - Date.now()) / 86400000) : 0,
+    venceEn: vence ? vence.toISOString() : null,
+    // Nunca pagó: es quien ve la oferta de entrada.
+    nunca: !vence,
+    limite: empresa.limite_empleados ?? null,
   }
 }
 
 /**
- * ¿Cabe un empleado más en el plan de esta empresa?
+ * ¿Cabe un empleado más en esta empresa?
  *
- * El tope es del plan gratuito y solo afecta a esta acción: el resto del panel
- * sigue funcionando igual. Se cuenta en el servidor, no en la pantalla.
+ * Se cuenta en el servidor, no en la pantalla. Sin suscripción vigente no
+ * cabe nadie: es la puerta del modelo de cobro. Eso NO borra ni desactiva a
+ * quien ya estaba registrado — solo impide agregar más.
  *
  * @returns {Promise<{cabe: boolean, actuales: number, limite: number|null}>}
  */
 export async function cabeOtroEmpleado(empresa) {
+  if (!suscripcionVigente(empresa)) {
+    return { cabe: false, actuales: 0, limite: 0, sinSuscripcion: true }
+  }
+  // Con suscripción al día no hay tope: los planes son de empleados
+  // ilimitados. `limite_empleados` se conserva para acuerdos puntuales.
   const limite = empresa?.limite_empleados ?? null
   if (limite == null) return { cabe: true, actuales: 0, limite: null }
-  // Durante la prueba se ofrece el producto COMPLETO: sin tope. Al vencer,
-  // vuelve a regir `limite_empleados` — y quien haya pasado de ese número
-  // conserva a su gente marcando, solo no puede agregar más.
-  if (enPrueba(empresa)) return { cabe: true, actuales: 0, limite: null, enPrueba: true }
   const actuales = await conEmpresa(empresa.esquema, async (db) =>
     Number((await db.query(`select count(*)::int as n from empleados where activo`)).rows[0].n),
   )
@@ -202,12 +218,12 @@ export async function crearEmpresa({ nombre, nit = null, dominio = null, esquema
 
   const empresa = await enTransaccion(async (db) => {
     const { rows } = await db.query(
-      // Toda empresa nueva nace con la prueba corriendo: es el producto
-      // completo durante 30 días, sin pedir tarjeta ni activar nada.
-      `insert into control.empresas (nombre, nit, dominio, esquema, api_key, prueba_hasta)
-       values ($1, $2, $3, $4, $5, now() + ($6 || ' days')::interval)
+      // Nace SIN suscripción: el primer paso del cliente es elegir un
+      // paquete. Hasta entonces entra al panel, pero no registra ni marca.
+      `insert into control.empresas (nombre, nit, dominio, esquema, api_key, limite_empleados)
+       values ($1, $2, $3, $4, $5, null)
        returning ${CAMPOS}`,
-      [nom, nit, dominio, elegido, apiKey, String(DIAS_PRUEBA)],
+      [nom, nit, dominio, elegido, apiKey],
     )
 
     await db.query(`create schema ${elegido}`)
