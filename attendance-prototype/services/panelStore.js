@@ -91,7 +91,7 @@ export function franjaEsperada(person, fechaISO) {
  * Reportes no muestren números distintos del mismo día. Un turno que cruza la
  * medianoche (22:00–06:00) termina al día siguiente, y así queda.
  */
-export function finJornadaMs(person, fechaISO) {
+export function finJornadaMs(person, fechaISO, entradaMin = null) {
   const f = franjaEsperada(person, fechaISO);
   if (!f) return null;
   const [eh, em] = String(f.entrada).split(':').map(Number);
@@ -99,8 +99,19 @@ export function finJornadaMs(person, fechaISO) {
   if (![eh, em, xh, xm].every(Number.isFinite)) return null;
   const inicio = eh * 60 + em;
   const fin = xh * 60 + xm;
+  const finReal = fin + (fin <= inicio ? 1440 : 0); // cruza medianoche
   const base = new Date(`${fechaISO}T00:00:00-05:00`).getTime();
-  return base + (fin + (fin <= inicio ? 1440 : 0)) * 60000;
+
+  // El almuerzo también es un momento en que hay que marcar: quien entró en
+  // la mañana y no volvió a marcar nunca marcó su salida a almorzar, así que
+  // solo consta la mañana. La hora de almuerzo no se guarda; se usa la que
+  // implica el horario — las horas de trabajo partidas por la mitad.
+  const almuerzo = Number(f.almuerzoMin) || 0;
+  if (almuerzo > 0 && entradaMin != null) {
+    const iniAlmuerzo = inicio + Math.round((finReal - inicio - almuerzo) / 2);
+    if (entradaMin < iniAlmuerzo) return base + iniAlmuerzo * 60000;
+  }
+  return base + finReal * 60000;
 }
 
 /** Horas de una franja (salida − entrada − almuerzo); null si no hay franja. */

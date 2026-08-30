@@ -37,7 +37,7 @@ export async function construirLote(esquema, rango = null) {
             -- El HORARIO del empleado: con él se cierra una entrada que quedó
             -- sin salida, en la hora en que su jornada terminaba. Sin esto el
             -- olvido de marcar la salida dejaba el día entero en cero.
-            e.jornada_dias, e.entrada_esperada, e.salida_esperada,
+            e.jornada_dias, e.entrada_esperada, e.salida_esperada, e.almuerzo_min,
             s.nombre as sede_nombre, m.tipo,
             to_char(m.ts at time zone 'America/Bogota', 'YYYY-MM-DD') as fecha,
             -- Minutos FRACCIONARIOS (con los segundos): 14:03:18 → 843.3.
@@ -69,6 +69,7 @@ export async function construirLote(esquema, rango = null) {
         jornadaDias: r.jornada_dias,
         entradaEsperada: r.entrada_esperada,
         salidaEsperada: r.salida_esperada,
+        almuerzoMin: r.almuerzo_min,
         // numeric de Postgres llega como texto: sin Number() el valor hora
         // saldría de una división entre string y daría NaN silenciosamente.
         salarioMensual: r.salario_mensual == null ? null : Number(r.salario_mensual),

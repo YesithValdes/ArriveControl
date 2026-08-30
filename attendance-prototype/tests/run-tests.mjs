@@ -394,17 +394,27 @@ const HORARIO = {
 // cierre aplica. Fijo, para que la prueba no dependa de cuándo se ejecute.
 const DESPUES = { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS, hoy: '2026-08-10' };
 
-const conHorario = (marcas, jornadaDias = HORARIO) =>
-  new Map([['E1', { cedula: '111', nombre: 'Ana', sede: 'Sede', jornadaSemanal: null, jornadaDias, marcas }]]);
+const conHorario = (marcas, jornadaDias = HORARIO, jornadaSemanal = null) =>
+  new Map([['E1', { cedula: '111', nombre: 'Ana', sede: 'Sede', jornadaSemanal, jornadaDias, marcas }]]);
 /** Suma de horas de todos los tramos extra que salieron. */
 const totalExtra = (regs) => Math.round(regs.reduce((s, r) => s + r.horas, 0) * 10000) / 10000;
+// Jornada pactada CORTA (2 h/día): así el cierre siempre deja horas extra y la
+// prueba puede leer en qué hora exacta cerró, que es lo que se quiere fijar.
+const CORTA = [2, 2, 2, 2, 2, 2];
 
-await test('olvidó marcar la salida: el día se cierra en su horario', () => {
-  // Lunes: entra 09:00 y nunca marca salida. Cierra 17:30 → 8,5 h.
-  // Jornada legal 7 h → 1,5 h extra, que antes eran CERO.
-  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '09:00', 1)]), DESPUES);
-  assert.equal(totalExtra(regs), 1.5);
-  assert.equal(regs[0].horaFin, '17:30', 'debe cerrar en la hora del horario');
+await test('entró en la mañana y no volvió a marcar: cuenta hasta el almuerzo', () => {
+  // Nunca marcó su salida a almorzar, así que solo consta la mañana. Con
+  // 09:00–17:30 y 60 min de almuerzo, el almuerzo cae a las 12:45.
+  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '09:00', 1)], HORARIO, CORTA), DESPUES);
+  assert.equal(regs[regs.length - 1].horaFin, '12:45', 'debe cerrar al almuerzo, no al final del día');
+  assert.equal(totalExtra(regs), 1.75, '3 h 45 trabajadas − 2 h de jornada');
+});
+
+await test('entró DESPUÉS del almuerzo y olvidó la salida: cierra al final', () => {
+  // Ya pasó la hora de almorzar, así que su tope es el final de la jornada.
+  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '14:00', 1)], HORARIO, CORTA), DESPUES);
+  assert.equal(regs[regs.length - 1].horaFin, '17:30');
+  assert.equal(totalExtra(regs), 1.5, '3 h 30 trabajadas − 2 h de jornada');
 });
 
 await test('entró DESPUÉS de su hora de salida: ese día no cuenta', () => {
@@ -465,13 +475,15 @@ await test('turno nocturno: cierra en la madrugada del día siguiente', () => {
 });
 
 await test('la salida del día siguiente NO se empareja con la entrada de ayer', () => {
-  // Antes esto producía un turno de ~32 h. Ahora el lunes se cierra en su
-  // horario y la salida suelta del martes se descarta.
+  // Antes esto producía un turno de ~32 h. Ahora el lunes se cierra solo
+  // —al almuerzo, porque no marcó nada más— y la salida suelta del martes
+  // se descarta.
   const regs = calcularRegistros(conHorario([
     marca('entrada', '2026-08-03', '09:00', 1),
     marca('salida', '2026-08-04', '17:30', 2, 1),
-  ]), DESPUES);
-  assert.equal(totalExtra(regs), 1.5, 'solo el lunes cerrado en 17:30');
+  ], HORARIO, CORTA), DESPUES);
+  assert.equal(regs[regs.length - 1].horaFin, '12:45', 'el lunes cierra al almuerzo');
+  assert.equal(totalExtra(regs), 1.75);
   assert.ok(regs.every((r) => r.fecha === '2026-08-03'), 'nada debe atribuirse al martes');
 });
 
@@ -482,6 +494,18 @@ await test('una salida MARCADA nunca se recorta al horario', () => {
     marca('salida', '2026-08-03', '20:00', 1),
   ]), DESPUES);
   assert.equal(totalExtra(regs), 4, '11 h trabajadas − 7 h de jornada');
+});
+
+await test('dos entradas seguidas no cierran las DOS: nada se cuenta dos veces', () => {
+  // Faltó una salida en medio. Cerrar la de 09:00 en su horario la solaparía
+  // con la de 11:00 y el mismo rato se pagaría dos veces (llegó a dar 8 h de
+  // extra en un día de 6,5 h trabajadas). La primera se descarta.
+  const regs = calcularRegistros(conHorario([
+    marca('entrada', '2026-08-03', '09:00', 1),
+    marca('entrada', '2026-08-03', '11:00', 1),
+  ]), DESPUES);
+  assert.equal(totalExtra(regs), 0, '11:00–17:30 son 6,5 h: por debajo de la jornada');
+  assert.ok(!regs.some((r) => r.horaInicio < '11:00'), 'nada puede empezar antes de la última entrada');
 });
 
 await test('respaldo: empleados viejos sin horario por día', () => {

@@ -330,7 +330,10 @@ function pairedHours(events, nowMs, person = null) {
       // Día terminado: cierra con el horario. Si entró DESPUÉS de su hora de
       // salida, `fin` queda antes que la entrada y no suma nada — que es la
       // regla: quien llega pasada su jornada no abre un día nuevo.
-      const fin = finJornadaMs(person, diaEntrada);
+      // Minutos del día en que entró: deciden si su tope es el almuerzo (si
+      // entró antes) o el final de la jornada.
+      const entradaMin = (inicio - new Date(`${diaEntrada}T00:00:00-05:00`).getTime()) / 60000;
+      const fin = finJornadaMs(person, diaEntrada, entradaMin);
       if (fin != null && fin > inicio) total += (fin - inicio) / 3600000;
     }
   }

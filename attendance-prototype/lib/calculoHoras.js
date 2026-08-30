@@ -84,7 +84,29 @@ const finDeHorario = (empleado, entrada) => {
 
   const inicio = minutosDeHora(usaDias ? delDia.entrada : empleado.entradaEsperada)
   // Turno que cruza la medianoche: su salida pertenece al día siguiente.
-  return inicio != null && fin <= inicio ? fin + 1440 : fin
+  const finReal = inicio != null && fin <= inicio ? fin + 1440 : fin
+
+  // ── El almuerzo también es un momento en que hay que marcar ──────────
+  //
+  // Quien entró en la mañana y no volvió a marcar NUNCA marcó su salida a
+  // almorzar, así que lo único que consta es la mañana: se cierra ahí, no al
+  // final del día. Estirarlo hasta la salida sería pagarle un almuerzo y una
+  // tarde de los que no hay ni rastro —y le saldría MEJOR que a quien marca
+  // bien, que sí se descuenta su hora de almuerzo—.
+  //
+  // A qué hora empieza el almuerzo no se guarda en ninguna parte, y las horas
+  // reales varían demasiado para adivinarlas. Se usa el reparto que el propio
+  // horario implica: las horas de TRABAJO (sin contar el almuerzo) partidas
+  // por la mitad. Un 09:00–17:30 con 60 min da 7 h 30 de trabajo, o sea 3 h 45
+  // antes de almorzar: las 12:45.
+  const almuerzo = Number(usaDias ? delDia.almuerzo_min : empleado.almuerzoMin) || 0
+  if (almuerzo > 0 && inicio != null) {
+    const iniAlmuerzo = inicio + Math.round((finReal - inicio - almuerzo) / 2)
+    // Solo si entró ANTES de esa hora: quien entra por la tarde ya pasó el
+    // almuerzo y su tope es el final de la jornada.
+    if (entrada.minutos < iniAlmuerzo) return iniAlmuerzo
+  }
+  return finReal
 }
 
 /**
@@ -163,17 +185,27 @@ export function calcularRegistros(
       }
     }
 
-    /** Resuelve la entrada abierta, sea cerrándola o descartándola. */
-    const soltarAbierta = () => {
+    /**
+     * Resuelve la entrada abierta, sea cerrándola con su horario o
+     * descartándola.
+     *
+     * `siguiente` es la marcación que la desplaza, si la hay. Cuando es del
+     * MISMO día no se cierra por horario: dos entradas seguidas significan
+     * que faltó una salida en medio, y estirar la primera hasta la hora del
+     * horario la solaparía con la segunda — el mismo rato contado dos veces.
+     * Sin saber cuándo se fue, ese tramo no se cuenta.
+     */
+    const soltarAbierta = (siguiente = null) => {
       if (!abierta) return
-      const p = parAutomatico(abierta)
+      const mismoDia = siguiente != null && siguiente.fecha === abierta.fecha
+      const p = mismoDia ? null : parAutomatico(abierta)
       if (p) pares.push(p)
       abierta = null
     }
 
     for (const m of e.marcas) {
       if (m.tipo === 'entrada') {
-        soltarAbierta() // la anterior se quedó sin cerrar
+        soltarAbierta(m) // la anterior se quedó sin cerrar
         abierta = m
       } else if (m.tipo === 'salida') {
         if (!abierta) continue // salida suelta: no hay turno que cerrar
@@ -186,7 +218,7 @@ export function calcularRegistros(
         // una salida marcada JAMÁS se recorta.
         const horas = (m.epoch - abierta.epoch) / 3600
         if (m.fecha !== abierta.fecha && horas > MAX_TURNO_H) {
-          soltarAbierta()
+          soltarAbierta(m)
           continue
         }
         pares.push(parReal(abierta, m))
