@@ -90,21 +90,21 @@ const finDeHorario = (empleado, entrada) => {
   //
   // Quien entró en la mañana y no volvió a marcar NUNCA marcó su salida a
   // almorzar, así que lo único que consta es la mañana: se cierra ahí, no al
-  // final del día. Estirarlo hasta la salida sería pagarle un almuerzo y una
-  // tarde de los que no hay ni rastro —y le saldría MEJOR que a quien marca
-  // bien, que sí se descuenta su hora de almuerzo—.
+  // final del día. Estirarlo hasta la salida sería pagar un almuerzo y una
+  // tarde de los que no hay ni rastro.
   //
-  // A qué hora empieza el almuerzo no se guarda en ninguna parte, y las horas
-  // reales varían demasiado para adivinarlas. Se usa el reparto que el propio
-  // horario implica: las horas de TRABAJO (sin contar el almuerzo) partidas
-  // por la mitad. Un 09:00–17:30 con 60 min da 7 h 30 de trabajo, o sea 3 h 45
-  // antes de almorzar: las 12:45.
-  const almuerzo = Number(usaDias ? delDia.almuerzo_min : empleado.almuerzoMin) || 0
-  if (almuerzo > 0 && inicio != null) {
-    const iniAlmuerzo = inicio + Math.round((finReal - inicio - almuerzo) / 2)
-    // Solo si entró ANTES de esa hora: quien entra por la tarde ya pasó el
-    // almuerzo y su tope es el final de la jornada.
-    if (entrada.minutos < iniAlmuerzo) return iniAlmuerzo
+  // La hora sale del HORARIO, donde se configura por día. No se deduce: hay
+  // gente con una hora de almuerzo y gente con dos, y cualquier punto medio
+  // calculado caería mal en los dos casos. Un día sin hora configurada —o sin
+  // pausa, como un sábado corrido— no tiene este tope y cierra al final.
+  const iniAlmuerzo = minutosDeHora(usaDias ? delDia.almuerzo_desde : empleado.almuerzoDesde)
+  if (iniAlmuerzo != null) {
+    // Turno que cruza medianoche: el almuerzo de un 22:00–06:00 es de
+    // madrugada, y en minutos absolutos va después de la entrada.
+    const alz = iniAlmuerzo < inicio ? iniAlmuerzo + 1440 : iniAlmuerzo
+    // Solo si entró ANTES de esa hora: quien entra después ya pasó el
+    // almuerzo y su tope vuelve a ser el final de la jornada.
+    if (entrada.minutos < alz) return alz
   }
   return finReal
 }

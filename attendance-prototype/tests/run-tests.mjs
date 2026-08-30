@@ -382,12 +382,10 @@ await test('un factor corrupto cae al de fábrica, no rompe la liquidación', ()
 // y sábado 09:00–13:30.
 console.log('\n🕗 Entrada sin salida: cierre con el horario');
 
+const LV = { entrada: '09:00', salida: '17:30', almuerzo_min: 60, almuerzo_desde: '13:00' };
 const HORARIO = {
-  1: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
-  2: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
-  3: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
-  4: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
-  5: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
+  1: LV, 2: LV, 3: LV, 4: LV, 5: LV,
+  // Sábado corrido: sin pausa, así que tampoco tiene hora de almuerzo.
   6: { entrada: '09:00', salida: '13:30', almuerzo_min: 0 },
 };
 // Un día cualquiera POSTERIOR a las marcaciones: así el día ya terminó y el
@@ -403,11 +401,23 @@ const totalExtra = (regs) => Math.round(regs.reduce((s, r) => s + r.horas, 0) * 
 const CORTA = [2, 2, 2, 2, 2, 2];
 
 await test('entró en la mañana y no volvió a marcar: cuenta hasta el almuerzo', () => {
-  // Nunca marcó su salida a almorzar, así que solo consta la mañana. Con
-  // 09:00–17:30 y 60 min de almuerzo, el almuerzo cae a las 12:45.
+  // Nunca marcó su salida a almorzar, así que solo consta la mañana. La hora
+  // (13:00) sale del HORARIO, no de ningún cálculo.
   const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '09:00', 1)], HORARIO, CORTA), DESPUES);
-  assert.equal(regs[regs.length - 1].horaFin, '12:45', 'debe cerrar al almuerzo, no al final del día');
-  assert.equal(totalExtra(regs), 1.75, '3 h 45 trabajadas − 2 h de jornada');
+  assert.equal(regs[regs.length - 1].horaFin, '13:00', 'debe cerrar al almuerzo, no al final del día');
+  assert.equal(totalExtra(regs), 2, '4 h trabajadas − 2 h de jornada');
+});
+
+await test('la hora de almuerzo se respeta tal cual, no se deduce', () => {
+  // Dos personas con la MISMA franja y distinta hora de almuerzo tienen que
+  // cerrar en horas distintas: es justo lo que no lograba el punto medio.
+  const temprano = { ...LV, almuerzo_desde: '11:30' };
+  const tarde = { ...LV, almuerzo_min: 120, almuerzo_desde: '14:00' };
+  const cierre = (dia) => calcularRegistros(
+    conHorario([marca('entrada', '2026-08-03', '09:00', 1)], { 1: dia }, CORTA), DESPUES,
+  ).at(-1).horaFin;
+  assert.equal(cierre(temprano), '11:30');
+  assert.equal(cierre(tarde), '14:00', 'dos horas de almuerzo y a otra hora: también se respeta');
 });
 
 await test('entró DESPUÉS del almuerzo y olvidó la salida: cierra al final', () => {
@@ -482,8 +492,8 @@ await test('la salida del día siguiente NO se empareja con la entrada de ayer',
     marca('entrada', '2026-08-03', '09:00', 1),
     marca('salida', '2026-08-04', '17:30', 2, 1),
   ], HORARIO, CORTA), DESPUES);
-  assert.equal(regs[regs.length - 1].horaFin, '12:45', 'el lunes cierra al almuerzo');
-  assert.equal(totalExtra(regs), 1.75);
+  assert.equal(regs[regs.length - 1].horaFin, '13:00', 'el lunes cierra al almuerzo');
+  assert.equal(totalExtra(regs), 2);
   assert.ok(regs.every((r) => r.fecha === '2026-08-03'), 'nada debe atribuirse al martes');
 });
 
@@ -517,6 +527,40 @@ await test('respaldo: empleados viejos sin horario por día', () => {
     marcas: [marca('entrada', '2026-08-03', '09:00', 1)],
   }]]);
   assert.equal(totalExtra(calcularRegistros(viejo, DESPUES)), 1.5);
+});
+
+// ── Validación de la hora de almuerzo del horario ───────────────────────
+console.log('\n🍽️  Hora de almuerzo en el horario');
+const { validarDias } = await import('../lib/horariosDias.js');
+const dia = (extra) => ({ 1: { entrada: '09:00', salida: '17:30', almuerzo_min: 60, ...extra } });
+
+await test('una hora válida se guarda', () => {
+  const r = validarDias(dia({ almuerzo_desde: '13:00' }));
+  assert.equal(r.error, undefined);
+  assert.equal(r.dias['1'].almuerzo_desde, '13:00');
+});
+await test('sin hora de almuerzo el horario sigue siendo válido', () => {
+  // Los horarios creados antes de que existiera el campo no se rompen.
+  const r = validarDias(dia({}));
+  assert.equal(r.error, undefined);
+  assert.equal('almuerzo_desde' in r.dias['1'], false, 'no se inventa una hora');
+});
+await test('el almuerzo no puede caer fuera de la jornada', () => {
+  assert.match(validarDias(dia({ almuerzo_desde: '08:00' })).error ?? '', /entre la entrada y la salida/);
+  assert.match(validarDias(dia({ almuerzo_desde: '19:00' })).error ?? '', /entre la entrada y la salida/);
+});
+await test('una hora sin pausa se rechaza', () => {
+  const r = validarDias({ 1: { entrada: '09:00', salida: '17:30', almuerzo_min: 0, almuerzo_desde: '13:00' } });
+  assert.match(r.error ?? '', /0 minutos/);
+});
+await test('turno nocturno: el almuerzo de madrugada es válido', () => {
+  // 22:00–06:00 con pausa a las 02:00. Comparado como TEXTO, "02:00" sería
+  // menor que "22:00" y se rechazaría un horario correcto.
+  const r = validarDias({ 1: { entrada: '22:00', salida: '06:00', almuerzo_min: 60, almuerzo_desde: '02:00' } });
+  assert.equal(r.error, undefined);
+});
+await test('una hora mal escrita se rechaza', () => {
+  assert.match(validarDias(dia({ almuerzo_desde: '13' })).error ?? '', /HH:MM/);
 });
 
 // ── Qué guarda el Service Worker ────────────────────────────────────────

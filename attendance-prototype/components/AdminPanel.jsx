@@ -106,7 +106,7 @@ function AccList({ items }) {
 
 // Mapa de días L–V con la franja de oficina, punto de partida al crear.
 const diasLunesAViernes = () => Object.fromEntries(
-  [1, 2, 3, 4, 5].map((d) => [String(d), { entrada: '08:00', salida: '17:00', almuerzoMin: 60 }]),
+  [1, 2, 3, 4, 5].map((d) => [String(d), { entrada: '08:00', salida: '17:00', almuerzoMin: 60, almuerzoDesde: '12:00' }]),
 );
 
 /**
@@ -132,12 +132,15 @@ const franjasDe = (dias) => [...new Set(
   ORDEN_SEMANA.map((d) => dias?.[String(d)]).filter(Boolean).map((f) => `${f.entrada} – ${f.salida}`),
 )].join(' · ');
 
-/** Almuerzo del horario: minutos únicos, o el rango si varía por día. */
+/** Almuerzo del horario: hora y duración, o el rango si varían por día. */
 const almuerzoDe = (dias) => {
-  const mins = [...new Set(Object.values(dias ?? {}).map((f) => Number(f.almuerzoMin) || 0))];
-  if (mins.length === 0) return '—';
-  if (mins.length === 1) return mins[0] ? `${mins[0]} min` : '—';
-  return `${Math.min(...mins)}–${Math.max(...mins)} min`;
+  const conPausa = Object.values(dias ?? {}).filter((f) => Number(f.almuerzoMin) > 0);
+  if (conPausa.length === 0) return '—';
+  const mins = [...new Set(conPausa.map((f) => Number(f.almuerzoMin)))];
+  const horas = [...new Set(conPausa.map((f) => f.almuerzoDesde).filter(Boolean))];
+  const dur = mins.length === 1 ? `${mins[0]} min` : `${Math.min(...mins)}–${Math.max(...mins)} min`;
+  if (horas.length === 0) return dur;
+  return `${horas.length === 1 ? horas[0] : horas.sort().join(' / ')} · ${dur}`;
 };
 
 /**
@@ -156,7 +159,7 @@ function EditorDias({ dias, onChange }) {
       // Al activar un día arranca con la franja de otro día ya definido: lo
       // normal es que la semana comparta horas y solo cambien excepciones.
       const modelo = ORDEN_SEMANA.map((x) => next[String(x)]).find(Boolean);
-      next[k] = modelo ? { ...modelo } : { entrada: '08:00', salida: '17:00', almuerzoMin: 60 };
+      next[k] = modelo ? { ...modelo } : { entrada: '08:00', salida: '17:00', almuerzoMin: 60, almuerzoDesde: '12:00' };
     }
     onChange(next);
   };
@@ -180,9 +183,25 @@ function EditorDias({ dias, onChange }) {
                 <span className="hd-sep">–</span>
                 <input className="num" type="time" value={f.salida} onChange={(e) => set(d, 'salida', e.target.value)} aria-label={`Salida del ${DIAS_CORTOS[d]}`} />
                 <span className="hd-almuerzo">
+                  <span className="hd-etq">almuerzo</span>
+                  {/* A qué hora empieza la pausa. No es decoración: con ella
+                      se cierra el día de quien entra en la mañana y no vuelve
+                      a marcar. Sin pausa (0 min) la hora se oculta, porque no
+                      hay nada que marcar. */}
+                  <input
+                    className="num" type="time" value={f.almuerzoDesde || ''}
+                    disabled={!(Number(f.almuerzoMin) > 0)}
+                    onChange={(e) => set(d, 'almuerzoDesde', e.target.value)}
+                    aria-label={`Hora del almuerzo del ${DIAS_CORTOS[d]}`}
+                  />
                   <input
                     className="num" type="number" min="0" max="240" step="15" value={f.almuerzoMin}
-                    onChange={(e) => set(d, 'almuerzoMin', e.target.value === '' ? 0 : Math.min(240, Math.max(0, Number(e.target.value))))}
+                    onChange={(e) => {
+                      const v = e.target.value === '' ? 0 : Math.min(240, Math.max(0, Number(e.target.value)));
+                      // Al quitar la pausa se quita también su hora: guardar
+                      // una hora con cero minutos el servidor la rechaza.
+                      onChange({ ...dias, [String(d)]: { ...dias[String(d)], almuerzoMin: v, ...(v === 0 ? { almuerzoDesde: '' } : {}) } });
+                    }}
                     aria-label={`Almuerzo del ${DIAS_CORTOS[d]} en minutos`}
                   />
                   <span>min</span>
@@ -5790,6 +5809,10 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   font: inherit; font-size: 13px; width: 58px; padding: 5px 7px;
   border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink);
 }
+/* La hora necesita más ancho que los minutos: cabe "13:00" y su reloj. */
+.hd-almuerzo input[type="time"] { width: 92px; }
+.hd-almuerzo input:disabled { opacity: .45; cursor: not-allowed; }
+.hd-etq { flex: 0 0 auto; }
 .hd-libre { font-size: 12.5px; color: var(--muted); font-style: italic; }
 .hd-resumen {
   display: flex; align-items: center; gap: 10px; flex: 1 1 100%;

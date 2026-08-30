@@ -51,7 +51,12 @@ const diasACliente = (d) => {
   if (d == null) return null;
   const out = {};
   for (const [k, f] of Object.entries(d)) {
-    out[k] = { entrada: hhmm(f.entrada), salida: hhmm(f.salida), almuerzoMin: f.almuerzo_min ?? 0 };
+    out[k] = {
+      entrada: hhmm(f.entrada), salida: hhmm(f.salida), almuerzoMin: f.almuerzo_min ?? 0,
+      // A qué hora empieza la pausa. Puede faltar (horarios viejos, o días
+      // sin almuerzo); '' es lo que entiende un <input type="time"> vacío.
+      almuerzoDesde: f.almuerzo_desde ? hhmm(f.almuerzo_desde) : '',
+    };
   }
   return out;
 };
@@ -59,7 +64,12 @@ const diasAApi = (d) => {
   const out = {};
   for (const [k, f] of Object.entries(d ?? {})) {
     if (!f) continue;
-    out[k] = { entrada: f.entrada, salida: f.salida, almuerzo_min: Number(f.almuerzoMin) || 0 };
+    const mins = Number(f.almuerzoMin) || 0;
+    out[k] = {
+      entrada: f.entrada, salida: f.salida, almuerzo_min: mins,
+      // Sin pausa no se manda hora: el servidor rechaza una hora con 0 min.
+      almuerzo_desde: mins > 0 && f.almuerzoDesde ? f.almuerzoDesde : null,
+    };
   }
   return out;
 };
@@ -104,12 +114,13 @@ export function finJornadaMs(person, fechaISO, entradaMin = null) {
 
   // El almuerzo también es un momento en que hay que marcar: quien entró en
   // la mañana y no volvió a marcar nunca marcó su salida a almorzar, así que
-  // solo consta la mañana. La hora de almuerzo no se guarda; se usa la que
-  // implica el horario — las horas de trabajo partidas por la mitad.
-  const almuerzo = Number(f.almuerzoMin) || 0;
-  if (almuerzo > 0 && entradaMin != null) {
-    const iniAlmuerzo = inicio + Math.round((finReal - inicio - almuerzo) / 2);
-    if (entradaMin < iniAlmuerzo) return base + iniAlmuerzo * 60000;
+  // solo consta la mañana. La hora sale del horario (Ajustes → Horarios); un
+  // día sin ella cierra al final de la jornada.
+  const [ah, am] = String(f.almuerzoDesde || '').split(':').map(Number);
+  if (entradaMin != null && Number.isFinite(ah) && Number.isFinite(am)) {
+    const alz0 = ah * 60 + am;
+    const alz = alz0 < inicio ? alz0 + 1440 : alz0; // cruza medianoche
+    if (entradaMin < alz) return base + alz * 60000;
   }
   return base + finReal * 60000;
 }
