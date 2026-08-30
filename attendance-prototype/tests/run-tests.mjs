@@ -375,4 +375,89 @@ await test('un factor corrupto cae al de fábrica, no rompe la liquidación', ()
   assert.equal(f.HENDF, 2.65, 'un código ausente se completa');
 });
 
+// ── Qué guarda el Service Worker ────────────────────────────────────────
+// El caché del navegador es COMÚN a todas las cuentas: no se separa por
+// sesión ni se vacía al salir. Si una página renderizada con la identidad de
+// alguien entra ahí, al cambiar de cuenta el navegador se la sirve a la
+// siguiente persona. Pasó: el panel quedaba con el nombre y la empresa del
+// usuario anterior y solo se arreglaba borrando los datos del sitio a mano.
+//
+// Se prueba la DECISIÓN, que es donde estuvo el fallo: para cada URL, si el
+// worker la intercepta (y por tanto la puede guardar) o la deja pasar a la red.
+console.log('\n🗄️  Service Worker: qué se puede guardar');
+const { default: vm } = await import('node:vm');
+const { readFileSync: leerArchivo } = await import('node:fs');
+
+/** Carga public/sw.js en un contexto falso y devuelve su manejador de fetch. */
+const cargarServiceWorker = () => {
+  let alHacerFetch = null;
+  const unCache = { match: async () => null, put: async () => {} };
+  const contexto = {
+    self: {
+      addEventListener: (tipo, fn) => { if (tipo === 'fetch') alHacerFetch = fn; },
+      skipWaiting: () => {},
+      clients: { claim: async () => {} },
+      location: { origin: 'https://app.test' },
+    },
+    caches: { open: async () => unCache, keys: async () => [], delete: async () => true },
+    fetch: async () => ({ ok: true, status: 200, clone: () => ({}) }),
+    URL, console,
+  };
+  vm.createContext(contexto);
+  vm.runInContext(leerArchivo(new URL('../public/sw.js', import.meta.url), 'utf8'), contexto);
+  if (!alHacerFetch) throw new Error('sw.js no registró un manejador de fetch');
+  return alHacerFetch;
+};
+
+const alHacerFetch = cargarServiceWorker();
+
+/** ¿El worker intercepta esta petición? Interceptar = puede guardarla. */
+const seGuarda = (ruta, modo = 'no-cors') => {
+  let interceptada = false;
+  alHacerFetch({
+    request: { method: 'GET', url: `https://app.test${ruta}`, mode: modo },
+    respondWith: () => { interceptada = true; },
+  });
+  return interceptada;
+};
+
+await test('el kiosco SÍ se guarda: debe abrir sin internet', () => {
+  assert.equal(seGuarda('/', 'navigate'), true);
+});
+await test('el panel NO se guarda: lleva la sesión renderizada dentro', () => {
+  assert.equal(seGuarda('/admin', 'navigate'), false);
+});
+await test('ninguna pantalla del panel se guarda', () => {
+  for (const r of ['/admin/empleados', '/admin/ajustes/plan', '/admin/bienvenida', '/admin/registro']) {
+    assert.equal(seGuarda(r, 'navigate'), false, `${r} no debe guardarse`);
+  }
+});
+await test('el login NO se guarda: muestra quién tiene la sesión abierta', () => {
+  assert.equal(seGuarda('/login', 'navigate'), false);
+});
+await test('la plataforma del superadmin NO se guarda', () => {
+  assert.equal(seGuarda('/plataforma', 'navigate'), false);
+});
+await test('las cargas RSC de Next tampoco: son el mismo HTML por otra puerta', () => {
+  assert.equal(seGuarda('/admin?_rsc=1a2b3c'), false);
+  assert.equal(seGuarda('/plataforma?_rsc=9z8y'), false);
+});
+await test('los datos nunca se guardan', () => {
+  assert.equal(seGuarda('/api/marcaciones'), false);
+  assert.equal(seGuarda('/api/auth/get-session'), false);
+});
+await test('lo que el kiosco necesita offline SÍ se guarda', () => {
+  assert.equal(seGuarda('/models/face_recognition_model.bin'), true);
+  assert.equal(seGuarda('/_next/static/chunks/main-abc123.js'), true);
+  assert.equal(seGuarda('/wasm/vision_wasm_internal.wasm'), true);
+  assert.equal(seGuarda('/manifest.webmanifest'), true);
+  assert.equal(seGuarda('/icon-512.png'), true);
+});
+await test('una pantalla nueva queda FUERA por defecto', () => {
+  // La lista es de lo permitido, no de lo prohibido: si mañana alguien agrega
+  // una pantalla con sesión, no entra al caché sin tocar esto a propósito.
+  assert.equal(seGuarda('/reportes-confidenciales', 'navigate'), false);
+  assert.equal(seGuarda('/lo-que-sea'), false);
+});
+
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);

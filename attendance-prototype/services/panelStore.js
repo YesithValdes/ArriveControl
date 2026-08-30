@@ -127,6 +127,17 @@ export function resumenDias(dias) {
 
 async function api(url, opts = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  // Sin sesión no hay nada que reintentar: la sesión se cerró, caducó o el
+  // panel quedó abierto de una cuenta que ya no está. Sin esto el panel se
+  // quedaba pidiendo cada diez segundos contra un 401, llenando la consola de
+  // errores y sin decirle nada a quien lo estaba mirando.
+  if (r.status === 401 && typeof window !== 'undefined'
+      && !window.location.pathname.startsWith('/login')) {
+    window.location.href = `/login?destino=${encodeURIComponent(window.location.pathname)}`;
+    // La navegación no es inmediata: esta promesa no debe resolver mientras
+    // tanto, o quien llamó seguiría trabajando con datos que ya no existen.
+    await new Promise(() => {});
+  }
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false) throw new Error(d.error || `Error ${r.status} en ${url}`);
   return d;
