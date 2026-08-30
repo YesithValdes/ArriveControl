@@ -21,7 +21,7 @@ import {
   NIGHT_WINDOW_MS,
   listPeople, listArchivados, removePerson, updatePerson, expectedDailyHours, jornadaDelDia,
   listarRostros, agregarRostro, quitarRostro,
-  franjaEsperada, horasFranja, horasSemanaDias, resumenDias, DIAS_CORTOS, ORDEN_SEMANA,
+  franjaEsperada, finJornadaMs, horasFranja, horasSemanaDias, resumenDias, DIAS_CORTOS, ORDEN_SEMANA,
   getLaborConfig, saveLaborConfig, getHorasValorizadas, getEventosRango, marcarHorasPagadas,
   getSedes, addSede, updateSede, removeSede,
   getHorarios, addHorario, updateHorario, removeHorario,
@@ -297,7 +297,20 @@ const fmtCOP = (n) =>
 const fmtHoras = (n) => `${(Math.round(n * 100) / 100).toLocaleString('es-CO')} h`;
 
 /** Suma horas de pares entrada→salida; una entrada abierta cuenta hasta ahora (máx. 12 h). */
-function pairedHours(events, nowMs) {
+/**
+ * Horas trabajadas sumando parejas entrada→salida.
+ *
+ * La entrada que queda ABIERTA se trata según el día:
+ *  · día en curso → se cuenta lo corrido hasta ahora (indicador en vivo de
+ *    quién está trabajando);
+ *  · día ya terminado → se cierra en la hora en que terminaba su jornada,
+ *    igual que hace el servidor en lib/calculoHoras.js. Sin `person` no hay
+ *    horario que aplicar y ese tramo no suma — como antes.
+ *
+ * Sin esto, un día pasado sin salida mostraba CERO horas trabajadas aquí
+ * mientras Reportes ya contaba las del cierre: el mismo día con dos cifras.
+ */
+function pairedHours(events, nowMs, person = null) {
   let total = 0;
   let openIn = null;
   for (const e of events) {
@@ -308,8 +321,18 @@ function pairedHours(events, nowMs) {
     }
   }
   if (openIn) {
-    const span = nowMs - new Date(openIn.ts).getTime();
-    if (span < NIGHT_WINDOW_MS) total += span / 3600000;
+    const inicio = new Date(openIn.ts).getTime();
+    const diaEntrada = dayKey(openIn.ts);
+    if (diaEntrada >= dayKey(new Date(nowMs).toISOString())) {
+      const span = nowMs - inicio;
+      if (span < NIGHT_WINDOW_MS) total += span / 3600000;
+    } else {
+      // Día terminado: cierra con el horario. Si entró DESPUÉS de su hora de
+      // salida, `fin` queda antes que la entrada y no suma nada — que es la
+      // regla: quien llega pasada su jornada no abre un día nuevo.
+      const fin = finJornadaMs(person, diaEntrada);
+      if (fin != null && fin > inicio) total += (fin - inicio) / 3600000;
+    }
   }
   return total;
 }
@@ -959,9 +982,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         firstIn,
         lastOut,
         onTime,
-        hoursToday: firstIn ? pairedHours(today, nowMs) : null,
-        weekHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= weekAgo), nowMs),
-        rangoHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= rangoAgo), nowMs),
+        hoursToday: firstIn ? pairedHours(today, nowMs, p) : null,
+        weekHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= weekAgo), nowMs, p),
+        rangoHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= rangoAgo), nowMs, p),
         present: !!firstIn && today[today.length - 1]?.type === 'in',
         corrected,
         // Desde DÓNDE marcó por última vez hoy. La columna se llama «Sede /
@@ -1068,7 +1091,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         name: r.name,
         sede: r.sede || persona?.sede || '',
         days: new Set(r.events.filter((e) => e.type === 'in').map((e) => dayKey(e.ts))).size,
-        hours: pairedHours(r.events, nowMs),
+        hours: pairedHours(r.events, nowMs, persona),
         lateCount: r.events.filter((e) => e.flag === 'late-entry').length,
         horasPorTipo: Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0])),
         extras: 0,
@@ -1309,6 +1332,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       .sort((a, b) => a.ts.localeCompare(b.ts));
   }, [drawer, tick]);
 
+  // La persona del drawer: hace falta su HORARIO para cerrar un día que se
+  // quedó sin marcación de salida, igual que en el resto del panel.
+  const drawerPersona = useMemo(
+    () => (drawer ? listPeople().find((p) => p.id === drawer.personId) ?? null : null),
+    [drawer, tick],
+  );
+
   const drawerDias = useMemo(() => {
     const map = new Map();
     for (const e of drawerEvents) {
@@ -1317,9 +1347,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       map.get(d).push(e);
     }
     return [...map.entries()]
-      .map(([fecha, evs]) => ({ fecha, evs, horas: pairedHours(evs, Date.now()) }))
+      .map(([fecha, evs]) => ({ fecha, evs, horas: pairedHours(evs, Date.now(), drawerPersona) }))
       .sort((a, b) => b.fecha.localeCompare(a.fecha));
-  }, [drawerEvents]);
+  }, [drawerEvents, drawerPersona]);
 
   const saveEvForm = async () => {
     if (!evForm?.time || !evForm.reason.trim()) return;
@@ -1378,7 +1408,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         const mine = delDia.filter((e) => e.personId === r.person.id);
         const firstIn = mine.find((e) => e.type === 'in') || null;
         const lastOut = [...mine].reverse().find((e) => e.type === 'out') || null;
-        return { ...r, firstIn, lastOut, present: false, hoursToday: firstIn ? pairedHours(mine, finDia) : null };
+        return { ...r, firstIn, lastOut, present: false, hoursToday: firstIn ? pairedHours(mine, finDia, r.person) : null };
       });
     }
     const q = search.trim().toLowerCase();
@@ -3867,7 +3897,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 type="date" value={drawer.hasta} min={drawer.desde} max={todayKey()} aria-label="Hasta"
                 onChange={(e) => { setDrawer({ ...drawer, hasta: e.target.value }); setEvForm(null); }}
               />
-              <span className="drawer-hours">{fmtH(pairedHours(drawerEvents, Date.now()))}</span>
+              <span className="drawer-hours">{fmtH(pairedHours(drawerEvents, Date.now(), drawerPersona))}</span>
             </div>
 
             <div className="drawer-body">

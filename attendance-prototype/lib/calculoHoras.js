@@ -38,6 +38,55 @@ const hhmm = (min) => {
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 }
 
+/** Fecha de HOY en Bogotá (UTC-5 fijo, sin horario de verano). */
+const hoyEnBogota = () => new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10)
+
+/**
+ * Tope de un turno para decidir si una salida es del mismo turno o de otro.
+ *
+ * Solo se aplica cuando la salida cae en OTRO día: dentro del mismo día
+ * cualquier salida marcada empareja, por larga que sea la jornada. Doce horas
+ * es la misma ventana que usa el kiosco para alternar entrada/salida
+ * (NIGHT_WINDOW_MS en services/panelStore.js), y deja pasar los turnos
+ * nocturnos de verdad (22:00→06:00 son ocho).
+ */
+const MAX_TURNO_H = 12
+
+/** "17:30:00" | "17:30" → 1050. Null si no es una hora legible. */
+const minutosDeHora = (hora) => {
+  if (!hora) return null
+  const [h, m] = String(hora).split(':').map(Number)
+  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null
+}
+
+/**
+ * Hora en que TERMINA el horario del empleado para el día de esa marcación,
+ * en minutos desde las 0:00 del día en que entró. Null si ese día no tiene
+ * horario pactado.
+ *
+ * Puede pasar de 1440 a propósito: en un turno 22:00–06:00 la salida es del
+ * día siguiente (minuto 1800), y así el cierre automático cruza la medianoche
+ * igual que lo hace un turno marcado de verdad.
+ *
+ * `jornadaDias` manda cuando existe —es el horario POR DÍA de la semana, y un
+ * día ausente es día libre, sin hora que aplicar—. Los campos uniformes son el
+ * respaldo de los empleados registrados antes de que los horarios fueran por
+ * día (ver db/migrations/empresa/006_horarios_por_dia.sql).
+ */
+const finDeHorario = (empleado, entrada) => {
+  const delDia = empleado.jornadaDias?.[String(entrada.dow)]
+  const usaDias = empleado.jornadaDias != null
+  // Con horario por día pero SIN ese día: es día libre, no hay con qué cerrar.
+  if (usaDias && !delDia) return null
+
+  const fin = minutosDeHora(usaDias ? delDia.salida : empleado.salidaEsperada)
+  if (fin == null) return null
+
+  const inicio = minutosDeHora(usaDias ? delDia.entrada : empleado.entradaEsperada)
+  // Turno que cruza la medianoche: su salida pertenece al día siguiente.
+  return inicio != null && fin <= inicio ? fin + 1440 : fin
+}
+
 /**
  * Convierte marcaciones en tramos con recargo.
  *
@@ -52,32 +101,99 @@ const hhmm = (min) => {
  *        vigencias, y un tramo de marzo debe partirse con la franja de marzo.
  * @returns {Array} registros listos para exportar o entregar por API
  */
-export function calcularRegistros(porEmpleado, { festivos, vigencias, nocturno = NOCTURNO_DEFECTO }) {
+export function calcularRegistros(
+  porEmpleado,
+  { festivos, vigencias, nocturno = NOCTURNO_DEFECTO, hoy = hoyEnBogota() },
+) {
   const franjaDe = typeof nocturno === 'function' ? nocturno : () => nocturno
   const registros = []
   for (const [empId, e] of porEmpleado) {
-    // Pares entrada→salida (una entrada sin cerrar no suma).
+    // ── Pares entrada→salida ────────────────────────────────────────
+    //
+    // Una entrada que nadie cerró ya NO se descarta: se cierra en la hora de
+    // salida del horario del empleado. Es lo que pasa de verdad —la persona
+    // trabajó y se le olvidó marcar— y dejar el día en cero le quitaba la
+    // jornada entera por un olvido.
+    //
+    // Solo se cierran días YA TERMINADOS: la jornada de hoy sigue abierta
+    // porque todavía puede llegar a marcar su salida.
     const pares = []
     let abierta = null
+
+    /** Par entre dos marcaciones REALES. Nunca se recorta al horario. */
+    const parReal = (entrada, salida) => {
+      const horas = (salida.epoch - entrada.epoch) / 3600
+      return {
+        fecha: entrada.fecha, // el turno pertenece al día en que ENTRÓ
+        desde: entrada.minutos,
+        // Fin en minutos ABSOLUTOS desde las 0:00 del día de entrada: un
+        // turno 22:00→02:00 termina en el minuto 1560, no en el 120. Sin
+        // esto, restar la extra daba horas negativas (bug de medianoche).
+        // Fraccionario: los segundos viajan (843.3, no 843).
+        hasta: entrada.minutos + horas * 60,
+        horas,
+        dow: entrada.dow,
+        dominical: entrada.dow === 0 || festivos.has(entrada.fecha),
+      }
+    }
+
+    /**
+     * Cierra una entrada que quedó sin salida, en la hora de su horario.
+     *
+     * Devuelve null —y entonces esa entrada NO cuenta— en tres casos:
+     *  · el día todavía no termina: aún puede marcar su salida;
+     *  · ese día no tiene horario (o no tiene ninguno): sin hora pactada no
+     *    hay con qué cerrar, e inventarla sería pagar lo que nadie acordó;
+     *  · la entrada quedó DESPUÉS de su hora de salida: quien llega pasada
+     *    su jornada no abre un día nuevo, y el día se queda con lo que ya
+     *    hubiera marcado antes.
+     */
+    const parAutomatico = (entrada) => {
+      if (entrada.fecha >= hoy) return null
+      const fin = finDeHorario(e, entrada)
+      if (fin == null || fin <= entrada.minutos) return null
+      return {
+        fecha: entrada.fecha,
+        desde: entrada.minutos,
+        hasta: fin,
+        horas: (fin - entrada.minutos) / 60,
+        dow: entrada.dow,
+        dominical: entrada.dow === 0 || festivos.has(entrada.fecha),
+        automatico: true,
+      }
+    }
+
+    /** Resuelve la entrada abierta, sea cerrándola o descartándola. */
+    const soltarAbierta = () => {
+      if (!abierta) return
+      const p = parAutomatico(abierta)
+      if (p) pares.push(p)
+      abierta = null
+    }
+
     for (const m of e.marcas) {
-      if (m.tipo === 'entrada') abierta = m
-      else if (m.tipo === 'salida' && abierta) {
+      if (m.tipo === 'entrada') {
+        soltarAbierta() // la anterior se quedó sin cerrar
+        abierta = m
+      } else if (m.tipo === 'salida') {
+        if (!abierta) continue // salida suelta: no hay turno que cerrar
+        // Una salida que llega en OTRO día y más de MAX_TURNO_H después no
+        // pertenece a este turno: es de una jornada posterior, y la entrada
+        // de en medio quedó abandonada. Sin esto, una entrada del lunes sin
+        // cerrar se emparejaba con la salida del martes y producía un turno
+        // de treinta horas — y el cierre por horario no llegaba a aplicarse.
+        // Mismo día siempre empareja: un 09:00→23:00 es largo pero real, y
+        // una salida marcada JAMÁS se recorta.
         const horas = (m.epoch - abierta.epoch) / 3600
-        pares.push({
-          fecha: abierta.fecha, // el turno pertenece al día en que ENTRÓ
-          desde: abierta.minutos,
-          // Fin en minutos ABSOLUTOS desde las 0:00 del día de entrada: un
-          // turno 22:00→02:00 termina en el minuto 1560, no en el 120. Sin
-          // esto, restar la extra daba horas negativas (bug de medianoche).
-          // Fraccionario: los segundos viajan (843.3, no 843).
-          hasta: abierta.minutos + horas * 60,
-          horas,
-          dow: abierta.dow,
-          dominical: abierta.dow === 0 || festivos.has(abierta.fecha),
-        })
+        if (m.fecha !== abierta.fecha && horas > MAX_TURNO_H) {
+          soltarAbierta()
+          continue
+        }
+        pares.push(parReal(abierta, m))
         abierta = null
       }
     }
+    soltarAbierta() // la última del periodo, si quedó abierta
     if (pares.length === 0) continue
 
     const semana = pares[0].fecha

@@ -82,6 +82,27 @@ export function franjaEsperada(person, fechaISO) {
   return null;
 }
 
+/**
+ * Instante (epoch ms) en que TERMINA la jornada de una persona en una fecha.
+ * Null si ese día no tiene horario.
+ *
+ * Es la hora con la que se cierra una entrada que quedó sin salida: la misma
+ * regla que aplica el servidor en lib/calculoHoras.js, para que Asistencia y
+ * Reportes no muestren números distintos del mismo día. Un turno que cruza la
+ * medianoche (22:00–06:00) termina al día siguiente, y así queda.
+ */
+export function finJornadaMs(person, fechaISO) {
+  const f = franjaEsperada(person, fechaISO);
+  if (!f) return null;
+  const [eh, em] = String(f.entrada).split(':').map(Number);
+  const [xh, xm] = String(f.salida).split(':').map(Number);
+  if (![eh, em, xh, xm].every(Number.isFinite)) return null;
+  const inicio = eh * 60 + em;
+  const fin = xh * 60 + xm;
+  const base = new Date(`${fechaISO}T00:00:00-05:00`).getTime();
+  return base + (fin + (fin <= inicio ? 1440 : 0)) * 60000;
+}
+
 /** Horas de una franja (salida − entrada − almuerzo); null si no hay franja. */
 export function horasFranja(f) {
   if (!f) return null;

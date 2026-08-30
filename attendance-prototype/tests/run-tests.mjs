@@ -375,6 +375,126 @@ await test('un factor corrupto cae al de fábrica, no rompe la liquidación', ()
   assert.equal(f.HENDF, 2.65, 'un código ausente se completa');
 });
 
+// ── Entrada sin salida: se cierra con el horario ────────────────────────
+// Antes, olvidar marcar la salida costaba el día ENTERO: el par no se cerraba
+// y ese día valía cero. Ahora se cierra en la hora en que terminaba su
+// jornada. El horario de las pruebas es el real de un cliente: L–V 09:00–17:30
+// y sábado 09:00–13:30.
+console.log('\n🕗 Entrada sin salida: cierre con el horario');
+
+const HORARIO = {
+  1: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
+  2: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
+  3: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
+  4: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
+  5: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
+  6: { entrada: '09:00', salida: '13:30', almuerzo_min: 0 },
+};
+// Un día cualquiera POSTERIOR a las marcaciones: así el día ya terminó y el
+// cierre aplica. Fijo, para que la prueba no dependa de cuándo se ejecute.
+const DESPUES = { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS, hoy: '2026-08-10' };
+
+const conHorario = (marcas, jornadaDias = HORARIO) =>
+  new Map([['E1', { cedula: '111', nombre: 'Ana', sede: 'Sede', jornadaSemanal: null, jornadaDias, marcas }]]);
+/** Suma de horas de todos los tramos extra que salieron. */
+const totalExtra = (regs) => Math.round(regs.reduce((s, r) => s + r.horas, 0) * 10000) / 10000;
+
+await test('olvidó marcar la salida: el día se cierra en su horario', () => {
+  // Lunes: entra 09:00 y nunca marca salida. Cierra 17:30 → 8,5 h.
+  // Jornada legal 7 h → 1,5 h extra, que antes eran CERO.
+  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '09:00', 1)]), DESPUES);
+  assert.equal(totalExtra(regs), 1.5);
+  assert.equal(regs[0].horaFin, '17:30', 'debe cerrar en la hora del horario');
+});
+
+await test('entró DESPUÉS de su hora de salida: ese día no cuenta', () => {
+  // Su jornada termina 17:30 y marca entrada a las 18:00: no abre día nuevo.
+  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '18:00', 1)]), DESPUES);
+  assert.equal(regs.length, 0);
+});
+
+await test('salió a almorzar y olvidó la salida final', () => {
+  // 09:00–13:00 (4 h) + 14:00 sin cerrar → cierra 17:30 (3,5 h) = 7,5 h.
+  const regs = calcularRegistros(conHorario([
+    marca('entrada', '2026-08-03', '09:00', 1),
+    marca('salida', '2026-08-03', '13:00', 1),
+    marca('entrada', '2026-08-03', '14:00', 1),
+  ]), DESPUES);
+  assert.equal(totalExtra(regs), 0.5, '7,5 h trabajadas − 7 h de jornada');
+});
+
+await test('una entrada tardía suelta no borra lo que ya había marcado', () => {
+  // 09:00–16:00 son 7 h reales; la entrada de las 18:00 se descarta y el día
+  // se queda con esas 7 h, no en cero.
+  const regs = calcularRegistros(conHorario([
+    marca('entrada', '2026-08-03', '09:00', 1),
+    marca('salida', '2026-08-03', '16:00', 1),
+    marca('entrada', '2026-08-03', '18:00', 1),
+  ]), DESPUES);
+  assert.equal(totalExtra(regs), 0, 'trabajó exactamente su jornada: sin extras');
+});
+
+await test('sin horario configurado el día queda en cero', () => {
+  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '09:00', 1)], null), DESPUES);
+  assert.equal(regs.length, 0, 'sin hora pactada no hay con qué cerrar');
+});
+
+await test('día libre (no está en su horario): tampoco se cierra', () => {
+  // El sábado existe en el horario pero el domingo no: es día libre.
+  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-02', '09:00', 0)]), DESPUES);
+  assert.equal(regs.length, 0);
+});
+
+await test('el día EN CURSO no se cierra: todavía puede marcar', () => {
+  const regs = calcularRegistros(
+    conHorario([marca('entrada', '2026-08-03', '09:00', 1)]),
+    { ...DESPUES, hoy: '2026-08-03' },
+  );
+  assert.equal(regs.length, 0, 'la jornada de hoy sigue abierta');
+});
+
+await test('turno nocturno: cierra en la madrugada del día siguiente', () => {
+  // Horario 22:00–06:00: la salida del horario es del día siguiente.
+  const noche = { 1: { entrada: '22:00', salida: '06:00', almuerzo_min: 0 } };
+  const regs = calcularRegistros(
+    conHorario([marca('entrada', '2026-08-03', '22:00', 1)], noche),
+    DESPUES,
+  );
+  assert.equal(totalExtra(regs), 1, '8 h de turno − 7 h de jornada');
+  assert.equal(regs[regs.length - 1].horaFin, '06:00', 'cruza la medianoche');
+});
+
+await test('la salida del día siguiente NO se empareja con la entrada de ayer', () => {
+  // Antes esto producía un turno de ~32 h. Ahora el lunes se cierra en su
+  // horario y la salida suelta del martes se descarta.
+  const regs = calcularRegistros(conHorario([
+    marca('entrada', '2026-08-03', '09:00', 1),
+    marca('salida', '2026-08-04', '17:30', 2, 1),
+  ]), DESPUES);
+  assert.equal(totalExtra(regs), 1.5, 'solo el lunes cerrado en 17:30');
+  assert.ok(regs.every((r) => r.fecha === '2026-08-03'), 'nada debe atribuirse al martes');
+});
+
+await test('una salida MARCADA nunca se recorta al horario', () => {
+  // Se quedó hasta las 20:00 y sí marcó: son 11 h reales, no 8,5.
+  const regs = calcularRegistros(conHorario([
+    marca('entrada', '2026-08-03', '09:00', 1),
+    marca('salida', '2026-08-03', '20:00', 1),
+  ]), DESPUES);
+  assert.equal(totalExtra(regs), 4, '11 h trabajadas − 7 h de jornada');
+});
+
+await test('respaldo: empleados viejos sin horario por día', () => {
+  // Los registrados antes de los horarios por día solo tienen los campos
+  // uniformes; deben cerrarse igual.
+  const viejo = new Map([['E1', {
+    cedula: '111', nombre: 'Ana', sede: 'Sede', jornadaSemanal: null, jornadaDias: null,
+    entradaEsperada: '09:00', salidaEsperada: '17:30',
+    marcas: [marca('entrada', '2026-08-03', '09:00', 1)],
+  }]]);
+  assert.equal(totalExtra(calcularRegistros(viejo, DESPUES)), 1.5);
+});
+
 // ── Qué guarda el Service Worker ────────────────────────────────────────
 // El caché del navegador es COMÚN a todas las cuentas: no se separa por
 // sesión ni se vacía al salir. Si una página renderizada con la identidad de

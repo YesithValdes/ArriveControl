@@ -34,6 +34,10 @@ export async function construirLote(esquema, rango = null) {
   // Todo en hora Bogotá desde SQL: fecha, minutos del día y timestamp.
   const { rows } = await conEmpresa(esquema, (db) => db.query(
     `select m.empleado_id, e.cedula, e.nombre, e.jornada_semanal, e.salario_mensual,
+            -- El HORARIO del empleado: con él se cierra una entrada que quedó
+            -- sin salida, en la hora en que su jornada terminaba. Sin esto el
+            -- olvido de marcar la salida dejaba el día entero en cero.
+            e.jornada_dias, e.entrada_esperada, e.salida_esperada,
             s.nombre as sede_nombre, m.tipo,
             to_char(m.ts at time zone 'America/Bogota', 'YYYY-MM-DD') as fecha,
             -- Minutos FRACCIONARIOS (con los segundos): 14:03:18 → 843.3.
@@ -59,6 +63,12 @@ export async function construirLote(esquema, rango = null) {
       porEmpleado.set(r.empleado_id, {
         cedula: r.cedula, nombre: r.nombre, sede: r.sede_nombre,
         jornadaSemanal: r.jornada_semanal,
+        // Horario por día de la semana (manda cuando existe) y los campos
+        // uniformes de respaldo. De aquí sale la hora con la que se cierra
+        // una entrada sin salida.
+        jornadaDias: r.jornada_dias,
+        entradaEsperada: r.entrada_esperada,
+        salidaEsperada: r.salida_esperada,
         // numeric de Postgres llega como texto: sin Number() el valor hora
         // saldría de una división entre string y daría NaN silenciosamente.
         salarioMensual: r.salario_mensual == null ? null : Number(r.salario_mensual),
