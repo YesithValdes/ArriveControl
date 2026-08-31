@@ -151,6 +151,16 @@ const duracionAlmuerzo = (f) => {
   return n > 0 ? `${n} min` : '';
 };
 
+/**
+ * ¿Este día tiene pausa de almuerzo?
+ *
+ * Basta con una de las dos horas: mientras se escribe el rango hay un momento
+ * en que solo está la primera, y la fila no puede desaparecer a mitad de la
+ * edición. `almuerzoMin` cubre los horarios viejos, que traen la duración
+ * sin rango.
+ */
+const tieneAlmuerzo = (f) => Boolean(f?.almuerzoDesde || f?.almuerzoHasta || Number(f?.almuerzoMin) > 0);
+
 /** Almuerzo del horario: el rango, o los distintos si varían por día. */
 const almuerzoDe = (dias) => {
   const rangos = [...new Set(
@@ -220,28 +230,46 @@ function EditorDias({ dias, onChange }) {
             </label>
             {f ? (
               <>
-                <input className="num" type="time" value={f.entrada} onChange={(e) => set(d, 'entrada', e.target.value)} aria-label={`Entrada del ${DIAS_CORTOS[d]}`} />
-                <span className="hd-sep">–</span>
-                <input className="num" type="time" value={f.salida} onChange={(e) => set(d, 'salida', e.target.value)} aria-label={`Salida del ${DIAS_CORTOS[d]}`} />
-                {/* El almuerzo se escribe como la jornada: de una hora a
-                    otra. La duración sale del rango, no se teclea — así no
-                    pueden contradecirse. Y la hora de INICIO es la que cierra
-                    el día de quien entra en la mañana y no vuelve a marcar. */}
-                <span className="hd-almuerzo">
-                  <span className="hd-etq">almuerzo</span>
-                  <input
-                    className="num" type="time" value={f.almuerzoDesde || ''}
-                    onChange={(e) => setAlmuerzo(d, e.target.value, f.almuerzoHasta)}
-                    aria-label={`El almuerzo del ${DIAS_CORTOS[d]} empieza a las`}
-                  />
+                <span className="hd-franja">
+                  <input className="num" type="time" value={f.entrada} onChange={(e) => set(d, 'entrada', e.target.value)} aria-label={`Entrada del ${DIAS_CORTOS[d]}`} />
                   <span className="hd-sep">–</span>
-                  <input
-                    className="num" type="time" value={f.almuerzoHasta || ''}
-                    onChange={(e) => setAlmuerzo(d, f.almuerzoDesde, e.target.value)}
-                    aria-label={`El almuerzo del ${DIAS_CORTOS[d]} termina a las`}
-                  />
-                  <span className="hd-dur">{duracionAlmuerzo(f)}</span>
+                  <input className="num" type="time" value={f.salida} onChange={(e) => set(d, 'salida', e.target.value)} aria-label={`Salida del ${DIAS_CORTOS[d]}`} />
                 </span>
+                {/* El almuerzo va en su propia línea y solo si el día lo
+                    tiene: son cuatro campos de hora, y en formato de 12 horas
+                    («12:00 p. m.» más su reloj) no caben en una sola fila —
+                    apretados dejaban la jornada en cero ancho. Los días
+                    corridos, como un sábado, se quedan en una línea. */}
+                {tieneAlmuerzo(f) ? (
+                  <span className="hd-almuerzo">
+                    <span className="hd-etq">almuerzo</span>
+                    <input
+                      className="num" type="time" value={f.almuerzoDesde || ''}
+                      onChange={(e) => setAlmuerzo(d, e.target.value, f.almuerzoHasta)}
+                      aria-label={`El almuerzo del ${DIAS_CORTOS[d]} empieza a las`}
+                    />
+                    <span className="hd-sep">–</span>
+                    <input
+                      className="num" type="time" value={f.almuerzoHasta || ''}
+                      onChange={(e) => setAlmuerzo(d, f.almuerzoDesde, e.target.value)}
+                      aria-label={`El almuerzo del ${DIAS_CORTOS[d]} termina a las`}
+                    />
+                    <span className="hd-dur">{duracionAlmuerzo(f)}</span>
+                    <button
+                      type="button" className="hd-quitar" onClick={() => setAlmuerzo(d, '', '')}
+                      aria-label={`Quitar el almuerzo del ${DIAS_CORTOS[d]}`}
+                    >
+                      quitar
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button" className="hd-agregar"
+                    onClick={() => setAlmuerzo(d, '12:00', '13:00')}
+                  >
+                    + almuerzo
+                  </button>
+                )}
               </>
             ) : (
               <span className="hd-libre">día libre</span>
@@ -5824,7 +5852,9 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 /* Editor de jornada POR DÍAS: una fila por día, activable. */
 .hd-editor { display: flex; flex-direction: column; gap: 5px; flex: 1 1 100%; }
 .hd-dia {
-  display: flex; align-items: center; gap: 8px;
+  /* Envuelve a propósito: el almuerzo baja a su propia línea (flex 1 1 100%)
+     en vez de robarle el ancho a las horas de la jornada. */
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
   padding: 5px 8px; border: 1px solid var(--grid); border-radius: 8px;
   background: var(--surface);
 }
@@ -5835,22 +5865,32 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 }
 .hd-dia.hd-off .hd-nombre { color: var(--muted); }
 .hd-nombre input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; flex: 0 0 auto; }
+/* Ancho NATURAL, sin estirar ni encoger: un <input type="time"> se dimensiona
+   solo según el formato del idioma, y en 12 horas («12:00 p. m.» más su
+   reloj) necesita bastante más que en 24. Estirándolos (flex 1 1 0) los de la
+   jornada quedaban en cero ancho cuando el almuerzo compartía fila. */
 .hd-dia input[type="time"] {
-  font: inherit; font-size: 13px; padding: 5px 7px; min-width: 0; flex: 1 1 0;
+  font: inherit; font-size: 13px; padding: 5px 7px; flex: 0 0 auto; width: auto;
   border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink);
 }
 .hd-sep { color: var(--muted); flex: 0 0 auto; }
-.hd-almuerzo { display: flex; align-items: center; gap: 5px; margin-left: auto; font-size: 11.5px; color: var(--muted); }
-.hd-almuerzo input {
-  font: inherit; font-size: 13px; width: 58px; padding: 5px 7px;
-  border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink);
+.hd-franja { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
+/* Segunda línea, alineada bajo las horas de la jornada. */
+.hd-almuerzo {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  flex: 1 1 100%; margin-left: 71px; font-size: 11.5px; color: var(--muted);
 }
-/* Las horas necesitan más ancho que un número: cabe "13:00" y su reloj. */
-.hd-almuerzo input[type="time"] { width: 92px; }
 .hd-etq { flex: 0 0 auto; }
 /* La duración se calcula del rango: se muestra, no se edita. Ancho fijo para
    que las filas de los días no bailen al escribir las horas. */
 .hd-dur { flex: 0 0 auto; min-width: 46px; font-variant-numeric: tabular-nums; }
+.hd-agregar, .hd-quitar {
+  font: inherit; font-size: 11.5px; cursor: pointer; padding: 3px 8px;
+  background: none; border: 1px dashed var(--border); border-radius: 999px; color: var(--muted);
+}
+.hd-agregar { margin-left: auto; }
+.hd-quitar { border-style: solid; }
+.hd-agregar:hover, .hd-quitar:hover { border-color: var(--accent); color: var(--ink-2); }
 .hd-libre { font-size: 12.5px; color: var(--muted); font-style: italic; }
 .hd-resumen {
   display: flex; align-items: center; gap: 10px; flex: 1 1 100%;
@@ -5859,12 +5899,13 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .hd-resumen b { font-family: var(--f-data); font-size: 13.5px; color: var(--ink); }
 .hd-resumen .btn { margin-left: auto; }
 
-/* Pantallas angostas: el almuerzo baja a su propia línea, alineado con las
-   horas, para que la fila del día nunca desborde la hoja inferior. */
+/* Pantallas angostas: el almuerzo ya baja solo a su línea en cualquier ancho,
+   así que aquí solo se recupera la sangría — a 460 px, 71 px de margen no
+   dejan sitio para dos horas seguidas. */
 @media (max-width: 460px) {
-  .hd-dia { flex-wrap: wrap; }
-  .hd-almuerzo { flex: 1 1 100%; margin-left: 71px; justify-content: flex-start; }
-  .hd-almuerzo input { width: 64px; }
+  .hd-almuerzo { margin-left: 0; }
+  .hd-franja { flex: 1 1 100%; }
+  .hd-agregar { margin-left: 0; }
 }
 
 /* ── Tabla Empleados enriquecida ── */
