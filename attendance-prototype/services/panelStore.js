@@ -19,7 +19,13 @@
 import { FACTORES_DEFECTO, DIVISOR_DEFECTO } from '../lib/tiposHora.js';
 
 export const NIGHT_WINDOW_MS = 12 * 60 * 60 * 1000;
-const LATE_TOLERANCE_MIN = 180;
+// Cuánto hay que desviarse del horario para que sea NOVEDAD, no un retraso
+// normal. Son holgadas a propósito: la bandeja de novedades sirve mientras
+// quepa en una pantalla, y una lista con todos los que llegaron cinco minutos
+// tarde no la revisa nadie. La puntualidad del día a día es otra cosa y tiene
+// su propio margen, configurable en Ajustes → Reglamento.
+const LATE_TOLERANCE_MIN = 180;        // 3 h después de su hora de entrada
+const EARLY_EXIT_TOLERANCE_MIN = 90;   // 1½ h antes de su hora de salida
 
 // ── Store en memoria ──────────────────────────────────────────────────
 const store = {
@@ -225,23 +231,75 @@ function construirEventos(marcaciones, correcciones = []) {
     };
   });
 
-  // Flag 'late-entry': primera entrada del día muy tarde vs. la franja
-  // esperada de ESE día de la semana (la jornada puede variar por día).
-  const personaPorId = new Map(store.people.map((p) => [p.id, p]));
-  const porPersonaDia = new Map();
+  return marcarNovedades(eventos, new Map(store.people.map((p) => [p.id, p])));
+}
+
+/** Minutos del día (hora Bogotá) de una marca ISO. */
+const minutosDe = (ts) => {
+  const d = new Date(new Date(ts).getTime() - 5 * 3600000);
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
+};
+/** "17:30" → 1050. Null si no es una hora legible. */
+const minutosDeHora = (h) => {
+  const [a, b] = String(h ?? '').split(':').map(Number);
+  return Number.isFinite(a) && Number.isFinite(b) ? a * 60 + b : null;
+};
+
+/**
+ * Marca en los eventos las NOVEDADES que se deducen del horario.
+ *
+ * Son dos, y las dos comparan contra la franja esperada de ESE día de la
+ * semana, porque la jornada puede variar por día:
+ *
+ *  · 'late-entry'  la primera entrada del día llegó muy tarde;
+ *  · 'early-exit'  la ÚLTIMA marcación del día fue una salida muy anterior a
+ *                  la hora de salida.
+ *
+ * Que sea la última es lo que distingue una salida temprana de la pausa del
+ * almuerzo: si después volvió a entrar, esa salida no era la final y no se
+ * marca nada. Antes esta regla vivía en journeyService.js —el servicio del
+ * prototipo, ya reemplazado por este— así que el panel tenía el filtro
+ * «Salida temprana» pero nunca contaba ni un caso.
+ *
+ * La salida temprana solo se juzga en días TERMINADOS: en el día en curso la
+ * persona todavía puede volver, y sería reportar como incidencia un almuerzo.
+ * Es la misma frontera que usan la salida faltante y el cierre de horas.
+ *
+ * Función aparte y con las personas por parámetro para poder probarla.
+ *
+ * @param {Array} eventos  se marcan EN EL SITIO y se devuelven
+ * @param {Map} personaPorId
+ * @param {string} hoy  día Bogotá (YYYY-MM-DD); parámetro para las pruebas
+ */
+export function marcarNovedades(eventos, personaPorId, hoy = bogotaDay(new Date().toISOString())) {
+  const porDia = new Map();
   for (const e of eventos) {
-    if (e.type !== 'in') continue;
     const k = `${e.personId}|${bogotaDay(e.ts)}`;
-    if (!porPersonaDia.has(k) || e.ts < porPersonaDia.get(k).ts) porPersonaDia.set(k, e);
+    if (!porDia.has(k)) porDia.set(k, []);
+    porDia.get(k).push(e);
   }
-  for (const primera of porPersonaDia.values()) {
-    const franja = franjaEsperada(personaPorId.get(primera.personId), bogotaDay(primera.ts));
-    const esperado = franja?.entrada;
-    if (!/^\d{2}:\d{2}$/.test(esperado || '')) continue;
-    const d = new Date(new Date(primera.ts).getTime() - 5 * 3600000); // hora Bogotá
-    const min = d.getUTCHours() * 60 + d.getUTCMinutes();
-    const [h, m] = esperado.split(':').map(Number);
-    if (min >= h * 60 + m + LATE_TOLERANCE_MIN && !primera.flag) primera.flag = 'late-entry';
+  for (const [clave, delDia] of porDia) {
+    const dia = clave.slice(clave.indexOf('|') + 1);
+    const franja = franjaEsperada(personaPorId.get(delDia[0].personId), dia);
+    if (!franja) continue; // día libre o sin horario: no hay contra qué comparar
+    const entrada = minutosDeHora(franja.entrada);
+    const salida = minutosDeHora(franja.salida);
+    delDia.sort((a, b) => a.ts.localeCompare(b.ts));
+
+    const primera = delDia.find((e) => e.type === 'in');
+    if (primera && entrada != null && !primera.flag
+        && minutosDe(primera.ts) >= entrada + LATE_TOLERANCE_MIN) {
+      primera.flag = 'late-entry';
+    }
+
+    // Turno que cruza la medianoche: su salida cae en el día siguiente y
+    // compararla con los minutos de ESTE día daría siempre «temprana».
+    if (dia >= hoy || entrada == null || salida == null || salida <= entrada) continue;
+    const ultima = delDia[delDia.length - 1];
+    if (ultima.type === 'out' && !ultima.flag
+        && minutosDe(ultima.ts) < salida - EARLY_EXIT_TOLERANCE_MIN) {
+      ultima.flag = 'early-exit';
+    }
   }
   return eventos;
 }
