@@ -1029,19 +1029,25 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           const next = mine[i + 1];
           const closed = next && next.type === 'out';
           if (!closed) {
-            // Salida faltante: con FRANJA del día, la entrada abierta se marca
-            // 3 h después de la salida esperada (quedarse un rato más es hora
-            // extra normal, no incidencia). Sin franja, respaldo de 12 h desde
-            // la entrada — que era la única regla antes y llegaba tardísimo.
-            const entradaMs = new Date(e.ts).getTime();
-            let topeMs = entradaMs + NIGHT_WINDOW_MS;
-            const franja = franjaEsperada(p, dayKey(e.ts));
+            // Salida faltante: se avisa cuando el DÍA TERMINÓ, no unas horas
+            // después de la jornada. Mientras el día siga en curso la persona
+            // todavía puede marcar su salida, y avisar antes convierte en
+            // incidencia lo que casi siempre es hora extra.
+            //
+            // Es además la misma frontera que usa el cierre automático de
+            // horas (lib/calculoHoras.js): el día que se cierra solo es el
+            // mismo que aquí se reporta, y no aparecen desfasados.
+            const diaEntrada = dayKey(e.ts);
+            let topeMs = new Date(`${diaEntrada}T23:59:59-05:00`).getTime();
+            const franja = franjaEsperada(p, diaEntrada);
             if (franja) {
+              const [eh, em] = franja.entrada.split(':').map(Number);
               const [sh, sm] = franja.salida.split(':').map(Number);
-              const sal = new Date(e.ts);
-              sal.setHours(sh, sm, 0, 0);
-              if (sal.getTime() <= entradaMs) sal.setDate(sal.getDate() + 1); // turno que cruza medianoche
-              topeMs = Math.min(topeMs, sal.getTime() + 3 * 3600000);
+              // Turno que cruza la medianoche: el día de esa persona no
+              // termina a las 12 sino cuando acaba su jornada, de madrugada.
+              if (sh * 60 + sm <= eh * 60 + em) {
+                topeMs = new Date(`${diaEntrada}T00:00:00-05:00`).getTime() + (sh * 60 + sm + 1440) * 60000;
+              }
             }
             if (nowMs > topeMs) anomalies.push({ kind: 'missing-exit', person: p, event: e });
           }
