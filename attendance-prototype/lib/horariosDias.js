@@ -27,34 +27,51 @@ export function validarDias(v) {
     if (!HHMM.test(entrada) || !HHMM.test(salida)) {
       return { error: `Día ${k}: entrada y salida deben ser horas HH:MM válidas.` }
     }
-    const alm = Number(f.almuerzo_min ?? 0)
+    // ── El almuerzo, como RANGO ──────────────────────────────────────
+    //
+    // Se escribe igual que la jornada —«de 13:00 a 14:00»— y de ahí sale su
+    // duración. Antes se pedían la hora y los minutos por separado, que es el
+    // mismo dato dicho de dos formas y una manera fácil de dejarlos peleados.
+    //
+    // El rango es OPCIONAL: los horarios creados antes de que existiera solo
+    // tienen `almuerzo_min` y se respetan tal cual.
+    //
+    // En minutos y no como texto: un turno nocturno (22:00–06:00) termina al
+    // día siguiente, y ahí "02:00" va DESPUÉS de "22:00" aunque el texto diga
+    // lo contrario.
+    const min = (h) => Number(h.slice(0, 2)) * 60 + Number(h.slice(3, 5))
+    const hora = (x) => (x == null || x === '' ? null : String(x))
+    const desde = hora(f.almuerzo_desde)
+    const hasta = hora(f.almuerzo_hasta)
+
+    if ((desde !== null && !HHMM.test(desde)) || (hasta !== null && !HHMM.test(hasta))) {
+      return { error: `Día ${k}: el almuerzo debe ir de una hora HH:MM a otra.` }
+    }
+    if ((desde === null) !== (hasta === null)) {
+      return { error: `Día ${k}: el almuerzo necesita las dos horas, la de inicio y la de fin.` }
+    }
+
+    let alm = Number(f.almuerzo_min ?? 0)
+    if (desde !== null) {
+      const ini = min(entrada)
+      const fin = min(salida) <= ini ? min(salida) + 1440 : min(salida)
+      const a1 = min(desde) < ini ? min(desde) + 1440 : min(desde)
+      const a2 = min(hasta) <= a1 ? min(hasta) + 1440 : min(hasta)
+      if (!(ini < a1 && a2 < fin)) {
+        return { error: `Día ${k}: el almuerzo (${desde}–${hasta}) debe quedar dentro de la jornada.` }
+      }
+      // La duración SALE del rango: es el único sitio donde se decide, para
+      // que no puedan contradecirse.
+      alm = a2 - a1
+      if (alm > 240) return { error: `Día ${k}: el almuerzo no puede pasar de 4 horas.` }
+    }
     if (!Number.isInteger(alm) || alm < 0 || alm > 240) {
       return { error: `Día ${k}: almuerzo inválido (0 a 240 minutos).` }
     }
-    // A qué hora empieza el almuerzo. Es OPCIONAL —un horario viejo puede no
-    // tenerla— y solo tiene sentido si hay almuerzo: sin pausa no hay hora que
-    // guardar. Se usa para cerrar el día de quien entró en la mañana y no
-    // volvió a marcar, así que no puede caer fuera de la jornada.
-    const desde = f.almuerzo_desde == null || f.almuerzo_desde === '' ? null : String(f.almuerzo_desde)
-    if (desde !== null && !HHMM.test(desde)) {
-      return { error: `Día ${k}: la hora de almuerzo debe ser HH:MM.` }
+    dias[k] = {
+      entrada, salida, almuerzo_min: alm,
+      ...(desde ? { almuerzo_desde: desde, almuerzo_hasta: hasta } : {}),
     }
-    if (desde !== null && alm === 0) {
-      return { error: `Día ${k}: hay hora de almuerzo pero la pausa dura 0 minutos.` }
-    }
-    if (desde !== null) {
-      // En minutos y no como texto: un turno nocturno (22:00–06:00) termina
-      // al día siguiente, y ahí "02:00" es mayor que "22:00" aunque el texto
-      // diga lo contrario.
-      const min = (h) => Number(h.slice(0, 2)) * 60 + Number(h.slice(3, 5))
-      const ini = min(entrada)
-      const fin = min(salida) <= ini ? min(salida) + 1440 : min(salida)
-      const alz = min(desde) < ini ? min(desde) + 1440 : min(desde)
-      if (!(ini < alz && alz < fin)) {
-        return { error: `Día ${k}: el almuerzo (${desde}) debe quedar entre la entrada y la salida.` }
-      }
-    }
-    dias[k] = { entrada, salida, almuerzo_min: alm, ...(desde ? { almuerzo_desde: desde } : {}) }
   }
   if (Object.keys(dias).length === 0) return { error: 'El horario necesita al menos un día laborable.' }
   return { dias }

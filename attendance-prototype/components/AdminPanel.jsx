@@ -106,7 +106,7 @@ function AccList({ items }) {
 
 // Mapa de días L–V con la franja de oficina, punto de partida al crear.
 const diasLunesAViernes = () => Object.fromEntries(
-  [1, 2, 3, 4, 5].map((d) => [String(d), { entrada: '08:00', salida: '17:00', almuerzoMin: 60, almuerzoDesde: '12:00' }]),
+  [1, 2, 3, 4, 5].map((d) => [String(d), { entrada: '08:00', salida: '17:00', almuerzoMin: 60, almuerzoDesde: '12:00', almuerzoHasta: '13:00' }]),
 );
 
 /**
@@ -132,15 +132,37 @@ const franjasDe = (dias) => [...new Set(
   ORDEN_SEMANA.map((d) => dias?.[String(d)]).filter(Boolean).map((f) => `${f.entrada} – ${f.salida}`),
 )].join(' · ');
 
-/** Almuerzo del horario: hora y duración, o el rango si varían por día. */
+/**
+ * Minutos entre dos horas HH:MM. 0 si falta alguna o no son válidas.
+ * Cruza la medianoche (23:30 → 00:30 son 60), para los turnos de noche.
+ */
+const minutosEntre = (desde, hasta) => {
+  const HHMM = /^\d{2}:\d{2}$/;
+  if (!HHMM.test(desde || '') || !HHMM.test(hasta || '')) return 0;
+  const m = (h) => Number(h.slice(0, 2)) * 60 + Number(h.slice(3, 5));
+  const d = m(desde);
+  const h = m(hasta) <= d ? m(hasta) + 1440 : m(hasta);
+  return h - d;
+};
+
+/** «60 min» al lado del rango; vacío mientras el rango esté a medias. */
+const duracionAlmuerzo = (f) => {
+  const n = minutosEntre(f?.almuerzoDesde, f?.almuerzoHasta);
+  return n > 0 ? `${n} min` : '';
+};
+
+/** Almuerzo del horario: el rango, o los distintos si varían por día. */
 const almuerzoDe = (dias) => {
-  const conPausa = Object.values(dias ?? {}).filter((f) => Number(f.almuerzoMin) > 0);
-  if (conPausa.length === 0) return '—';
-  const mins = [...new Set(conPausa.map((f) => Number(f.almuerzoMin)))];
-  const horas = [...new Set(conPausa.map((f) => f.almuerzoDesde).filter(Boolean))];
-  const dur = mins.length === 1 ? `${mins[0]} min` : `${Math.min(...mins)}–${Math.max(...mins)} min`;
-  if (horas.length === 0) return dur;
-  return `${horas.length === 1 ? horas[0] : horas.sort().join(' / ')} · ${dur}`;
+  const rangos = [...new Set(
+    Object.values(dias ?? {})
+      .filter((f) => f.almuerzoDesde && f.almuerzoHasta)
+      .map((f) => `${f.almuerzoDesde} – ${f.almuerzoHasta}`),
+  )];
+  if (rangos.length > 0) return rangos.join(' · ');
+  // Horarios viejos: solo tienen la duración, sin rango.
+  const mins = [...new Set(Object.values(dias ?? {}).map((f) => Number(f.almuerzoMin) || 0).filter(Boolean))];
+  if (mins.length === 0) return '—';
+  return mins.length === 1 ? `${mins[0]} min` : `${Math.min(...mins)}–${Math.max(...mins)} min`;
 };
 
 /**
@@ -159,13 +181,32 @@ function EditorDias({ dias, onChange }) {
       // Al activar un día arranca con la franja de otro día ya definido: lo
       // normal es que la semana comparta horas y solo cambien excepciones.
       const modelo = ORDEN_SEMANA.map((x) => next[String(x)]).find(Boolean);
-      next[k] = modelo ? { ...modelo } : { entrada: '08:00', salida: '17:00', almuerzoMin: 60, almuerzoDesde: '12:00' };
+      next[k] = modelo ? { ...modelo } : { entrada: '08:00', salida: '17:00', almuerzoMin: 60, almuerzoDesde: '12:00', almuerzoHasta: '13:00' };
     }
     onChange(next);
   };
   const set = (d, campo, v) => {
     const k = String(d);
     onChange({ ...dias, [k]: { ...dias[k], [campo]: v } });
+  };
+  /**
+   * Guarda el rango del almuerzo y recalcula su duración.
+   *
+   * La duración no se teclea: sale del rango. Así no puede quedar diciendo
+   * «60 min» al lado de un «13:00 – 14:30». Con el rango a medias (todavía
+   * escribiendo la segunda hora) la duración queda en 0 y no se guarda nada.
+   */
+  const setAlmuerzo = (d, desde, hasta) => {
+    const k = String(d);
+    onChange({
+      ...dias,
+      [k]: {
+        ...dias[k],
+        almuerzoDesde: desde || '',
+        almuerzoHasta: hasta || '',
+        almuerzoMin: minutosEntre(desde, hasta),
+      },
+    });
   };
   return (
     <div className="hd-editor">
@@ -182,29 +223,24 @@ function EditorDias({ dias, onChange }) {
                 <input className="num" type="time" value={f.entrada} onChange={(e) => set(d, 'entrada', e.target.value)} aria-label={`Entrada del ${DIAS_CORTOS[d]}`} />
                 <span className="hd-sep">–</span>
                 <input className="num" type="time" value={f.salida} onChange={(e) => set(d, 'salida', e.target.value)} aria-label={`Salida del ${DIAS_CORTOS[d]}`} />
+                {/* El almuerzo se escribe como la jornada: de una hora a
+                    otra. La duración sale del rango, no se teclea — así no
+                    pueden contradecirse. Y la hora de INICIO es la que cierra
+                    el día de quien entra en la mañana y no vuelve a marcar. */}
                 <span className="hd-almuerzo">
                   <span className="hd-etq">almuerzo</span>
-                  {/* A qué hora empieza la pausa. No es decoración: con ella
-                      se cierra el día de quien entra en la mañana y no vuelve
-                      a marcar. Sin pausa (0 min) la hora se oculta, porque no
-                      hay nada que marcar. */}
                   <input
                     className="num" type="time" value={f.almuerzoDesde || ''}
-                    disabled={!(Number(f.almuerzoMin) > 0)}
-                    onChange={(e) => set(d, 'almuerzoDesde', e.target.value)}
-                    aria-label={`Hora del almuerzo del ${DIAS_CORTOS[d]}`}
+                    onChange={(e) => setAlmuerzo(d, e.target.value, f.almuerzoHasta)}
+                    aria-label={`El almuerzo del ${DIAS_CORTOS[d]} empieza a las`}
                   />
+                  <span className="hd-sep">–</span>
                   <input
-                    className="num" type="number" min="0" max="240" step="15" value={f.almuerzoMin}
-                    onChange={(e) => {
-                      const v = e.target.value === '' ? 0 : Math.min(240, Math.max(0, Number(e.target.value)));
-                      // Al quitar la pausa se quita también su hora: guardar
-                      // una hora con cero minutos el servidor la rechaza.
-                      onChange({ ...dias, [String(d)]: { ...dias[String(d)], almuerzoMin: v, ...(v === 0 ? { almuerzoDesde: '' } : {}) } });
-                    }}
-                    aria-label={`Almuerzo del ${DIAS_CORTOS[d]} en minutos`}
+                    className="num" type="time" value={f.almuerzoHasta || ''}
+                    onChange={(e) => setAlmuerzo(d, f.almuerzoDesde, e.target.value)}
+                    aria-label={`El almuerzo del ${DIAS_CORTOS[d]} termina a las`}
                   />
-                  <span>min</span>
+                  <span className="hd-dur">{duracionAlmuerzo(f)}</span>
                 </span>
               </>
             ) : (
@@ -5809,10 +5845,12 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   font: inherit; font-size: 13px; width: 58px; padding: 5px 7px;
   border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink);
 }
-/* La hora necesita más ancho que los minutos: cabe "13:00" y su reloj. */
+/* Las horas necesitan más ancho que un número: cabe "13:00" y su reloj. */
 .hd-almuerzo input[type="time"] { width: 92px; }
-.hd-almuerzo input:disabled { opacity: .45; cursor: not-allowed; }
 .hd-etq { flex: 0 0 auto; }
+/* La duración se calcula del rango: se muestra, no se edita. Ancho fijo para
+   que las filas de los días no bailen al escribir las horas. */
+.hd-dur { flex: 0 0 auto; min-width: 46px; font-variant-numeric: tabular-nums; }
 .hd-libre { font-size: 12.5px; color: var(--muted); font-style: italic; }
 .hd-resumen {
   display: flex; align-items: center; gap: 10px; flex: 1 1 100%;

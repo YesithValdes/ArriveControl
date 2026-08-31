@@ -382,7 +382,7 @@ await test('un factor corrupto cae al de fábrica, no rompe la liquidación', ()
 // y sábado 09:00–13:30.
 console.log('\n🕗 Entrada sin salida: cierre con el horario');
 
-const LV = { entrada: '09:00', salida: '17:30', almuerzo_min: 60, almuerzo_desde: '13:00' };
+const LV = { entrada: '09:00', salida: '17:30', almuerzo_min: 60, almuerzo_desde: '13:00', almuerzo_hasta: '14:00' };
 const HORARIO = {
   1: LV, 2: LV, 3: LV, 4: LV, 5: LV,
   // Sábado corrido: sin pausa, así que tampoco tiene hora de almuerzo.
@@ -534,33 +534,45 @@ console.log('\n🍽️  Hora de almuerzo en el horario');
 const { validarDias } = await import('../lib/horariosDias.js');
 const dia = (extra) => ({ 1: { entrada: '09:00', salida: '17:30', almuerzo_min: 60, ...extra } });
 
-await test('una hora válida se guarda', () => {
-  const r = validarDias(dia({ almuerzo_desde: '13:00' }));
+await test('el rango se guarda y de ÉL sale la duración', () => {
+  // La duración no se teclea: si el rango dice 90 minutos, mandar 60 no
+  // cambia nada. Es lo que impide que los dos datos se contradigan.
+  const r = validarDias(dia({ almuerzo_desde: '13:00', almuerzo_hasta: '14:30' }));
   assert.equal(r.error, undefined);
-  assert.equal(r.dias['1'].almuerzo_desde, '13:00');
+  assert.deepEqual(
+    [r.dias['1'].almuerzo_desde, r.dias['1'].almuerzo_hasta, r.dias['1'].almuerzo_min],
+    ['13:00', '14:30', 90],
+  );
 });
-await test('sin hora de almuerzo el horario sigue siendo válido', () => {
-  // Los horarios creados antes de que existiera el campo no se rompen.
+await test('dos horas de almuerzo se respetan', () => {
+  const r = validarDias(dia({ almuerzo_desde: '12:00', almuerzo_hasta: '14:00' }));
+  assert.equal(r.dias['1'].almuerzo_min, 120);
+});
+await test('sin rango el horario sigue siendo válido', () => {
+  // Los horarios creados antes de que existiera no se rompen: conservan su
+  // duración y no se les inventa un rango.
   const r = validarDias(dia({}));
   assert.equal(r.error, undefined);
-  assert.equal('almuerzo_desde' in r.dias['1'], false, 'no se inventa una hora');
+  assert.equal(r.dias['1'].almuerzo_min, 60);
+  assert.equal('almuerzo_desde' in r.dias['1'], false);
 });
-await test('el almuerzo no puede caer fuera de la jornada', () => {
-  assert.match(validarDias(dia({ almuerzo_desde: '08:00' })).error ?? '', /entre la entrada y la salida/);
-  assert.match(validarDias(dia({ almuerzo_desde: '19:00' })).error ?? '', /entre la entrada y la salida/);
+await test('media pareja se rechaza', () => {
+  assert.match(validarDias(dia({ almuerzo_desde: '13:00' })).error ?? '', /las dos horas/);
+  assert.match(validarDias(dia({ almuerzo_hasta: '14:00' })).error ?? '', /las dos horas/);
 });
-await test('una hora sin pausa se rechaza', () => {
-  const r = validarDias({ 1: { entrada: '09:00', salida: '17:30', almuerzo_min: 0, almuerzo_desde: '13:00' } });
-  assert.match(r.error ?? '', /0 minutos/);
+await test('el almuerzo no puede salirse de la jornada', () => {
+  assert.match(validarDias(dia({ almuerzo_desde: '08:00', almuerzo_hasta: '09:30' })).error ?? '', /dentro de la jornada/);
+  assert.match(validarDias(dia({ almuerzo_desde: '17:00', almuerzo_hasta: '18:00' })).error ?? '', /dentro de la jornada/);
 });
 await test('turno nocturno: el almuerzo de madrugada es válido', () => {
-  // 22:00–06:00 con pausa a las 02:00. Comparado como TEXTO, "02:00" sería
-  // menor que "22:00" y se rechazaría un horario correcto.
-  const r = validarDias({ 1: { entrada: '22:00', salida: '06:00', almuerzo_min: 60, almuerzo_desde: '02:00' } });
+  // 22:00–06:00 con pausa de 02:00 a 03:00. Comparado como TEXTO, "02:00"
+  // sería menor que "22:00" y se rechazaría un horario correcto.
+  const r = validarDias({ 1: { entrada: '22:00', salida: '06:00', almuerzo_desde: '02:00', almuerzo_hasta: '03:00' } });
   assert.equal(r.error, undefined);
+  assert.equal(r.dias['1'].almuerzo_min, 60);
 });
 await test('una hora mal escrita se rechaza', () => {
-  assert.match(validarDias(dia({ almuerzo_desde: '13' })).error ?? '', /HH:MM/);
+  assert.match(validarDias(dia({ almuerzo_desde: '13', almuerzo_hasta: '14:00' })).error ?? '', /HH:MM/);
 });
 
 // ── Qué guarda el Service Worker ────────────────────────────────────────

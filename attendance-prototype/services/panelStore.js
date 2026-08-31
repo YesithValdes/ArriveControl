@@ -53,9 +53,10 @@ const diasACliente = (d) => {
   for (const [k, f] of Object.entries(d)) {
     out[k] = {
       entrada: hhmm(f.entrada), salida: hhmm(f.salida), almuerzoMin: f.almuerzo_min ?? 0,
-      // A qué hora empieza la pausa. Puede faltar (horarios viejos, o días
-      // sin almuerzo); '' es lo que entiende un <input type="time"> vacío.
+      // El almuerzo como rango. Puede faltar (horarios viejos, o días sin
+      // pausa); '' es lo que entiende un <input type="time"> vacío.
       almuerzoDesde: f.almuerzo_desde ? hhmm(f.almuerzo_desde) : '',
+      almuerzoHasta: f.almuerzo_hasta ? hhmm(f.almuerzo_hasta) : '',
     };
   }
   return out;
@@ -64,11 +65,14 @@ const diasAApi = (d) => {
   const out = {};
   for (const [k, f] of Object.entries(d ?? {})) {
     if (!f) continue;
-    const mins = Number(f.almuerzoMin) || 0;
+    // El rango manda: de él sale la duración, que el servidor recalcula. Se
+    // mandan las dos horas o ninguna — media pareja el servidor la rechaza.
+    const rango = f.almuerzoDesde && f.almuerzoHasta;
     out[k] = {
-      entrada: f.entrada, salida: f.salida, almuerzo_min: mins,
-      // Sin pausa no se manda hora: el servidor rechaza una hora con 0 min.
-      almuerzo_desde: mins > 0 && f.almuerzoDesde ? f.almuerzoDesde : null,
+      entrada: f.entrada, salida: f.salida,
+      almuerzo_min: Number(f.almuerzoMin) || 0,
+      almuerzo_desde: rango ? f.almuerzoDesde : null,
+      almuerzo_hasta: rango ? f.almuerzoHasta : null,
     };
   }
   return out;
