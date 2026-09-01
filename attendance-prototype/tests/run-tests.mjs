@@ -678,8 +678,11 @@ const seGuarda = (ruta, modo = 'no-cors') => {
   return interceptada;
 };
 
-await test('el kiosco SÍ se guarda: debe abrir sin internet', () => {
-  assert.equal(seGuarda('/', 'navigate'), true);
+await test('el HTML del kiosco NO se guarda: así se auto-actualiza', () => {
+  // El worker existe para que los ~16 MB de modelos no se vuelvan a bajar en
+  // cada arranque, no para servir la página sin red. Dejar el HTML fuera es
+  // lo que permite que un despliegue nuevo llegue solo al kiosco.
+  assert.equal(seGuarda('/', 'navigate'), false);
 });
 await test('el panel NO se guarda: lleva la sesión renderizada dentro', () => {
   assert.equal(seGuarda('/admin', 'navigate'), false);
@@ -703,12 +706,17 @@ await test('los datos nunca se guardan', () => {
   assert.equal(seGuarda('/api/marcaciones'), false);
   assert.equal(seGuarda('/api/auth/get-session'), false);
 });
-await test('lo que el kiosco necesita offline SÍ se guarda', () => {
+await test('los archivos pesados e inmutables SÍ se guardan', () => {
+  // Los tres únicos: modelos faciales, wasm de MediaPipe y los chunks con
+  // hash de Next. Inmutables los tres, así que el caché nunca puede servir
+  // una versión vieja de un archivo nuevo.
   assert.equal(seGuarda('/models/face_recognition_model.bin'), true);
-  assert.equal(seGuarda('/_next/static/chunks/main-abc123.js'), true);
   assert.equal(seGuarda('/wasm/vision_wasm_internal.wasm'), true);
-  assert.equal(seGuarda('/manifest.webmanifest'), true);
-  assert.equal(seGuarda('/icon-512.png'), true);
+  assert.equal(seGuarda('/_next/static/chunks/main-abc123.js'), true);
+});
+await test('lo demás va a la red, sin guardarse', () => {
+  assert.equal(seGuarda('/manifest.webmanifest'), false);
+  assert.equal(seGuarda('/icon-512.png'), false);
 });
 await test('una pantalla nueva queda FUERA por defecto', () => {
   // La lista es de lo permitido, no de lo prohibido: si mañana alguien agrega

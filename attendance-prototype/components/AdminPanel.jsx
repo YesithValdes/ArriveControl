@@ -521,6 +521,23 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     return () => window.removeEventListener('popstate', alVolver);
   }, []);
   const [collapsed, setCollapsed] = useState(false); // menú lateral escondido (solo PC)
+
+  /**
+   * Las tres líneas de la barra superior. Un solo botón para los dos tamaños:
+   * en PC encoge el menú a un riel de iconos (el menú sigue ahí), y en móvil
+   * lo abre encima del contenido, que es donde no cabe al lado.
+   *
+   * El ancho se consulta al pulsar y no con un estado: así no hay que
+   * escuchar el redimensionado ni arriesgar que el servidor y el navegador
+   * pinten cosas distintas en el primer render.
+   */
+  const alternarMenu = () => {
+    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 900px)').matches) {
+      setCollapsed((c) => !c);
+    } else {
+      setNavOpen((o) => !o);
+    }
+  };
   const [navOpen, setNavOpen] = useState(false); // menú off-canvas abierto (solo móvil)
   const [sesionAbierta, setSesionAbierta] = useState(false); // detalle de quién entró
   const [sedeFilter, setSedeFilter] = useState('all'); // 'all' | nombre de sede
@@ -1851,6 +1868,20 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       )}
 
       <header className="app-header">
+        {/* Las tres líneas SIEMPRE a la izquierda del todo, en cualquier
+            tamaño de pantalla: en PC encogen el menú a un riel de iconos y en
+            móvil lo abren encima. Es el mismo gesto en los dos sitios. */}
+        <button className="menu-btn" onClick={alternarMenu} aria-label="Mostrar u ocultar el menú" title="Menú">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+        {/* La marca vive AQUÍ y no en el menú lateral: la barra superior nunca
+            se esconde, así que el nombre no desaparece al encoger el menú. */}
+        <span className="head-marca">
+          <span className="head-logo" aria-hidden="true"><MarcaCDial size={22} /></span>
+          <span className="head-brand">CONTROL<b>REGISTRO</b></span>
+        </span>
         {/* Regresar a la ÚLTIMA pantalla visitada dentro del panel (como la
             flecha de la Configuración de Windows). Aparece solo cuando hay
             a dónde volver, y nunca saca del panel. */}
@@ -1861,20 +1892,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             </svg>
           </button>
         )}
-        <button className="menu-btn" onClick={() => setNavOpen(true)} aria-label="Abrir menú">
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-            <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
-          </svg>
-        </button>
-        {/* Marca en móvil: en PC vive en el menú lateral. */}
-        <span className="head-logo" aria-hidden="true"><MarcaCDial size={20} /></span>
-        {/* El nombre COMPLETO del sistema manda en la barra (en el menú
-            lateral se truncaba); la pestaña y la fecha van de subtítulo. */}
+        {/* Ahora que la marca es fija, el título dice DÓNDE ESTÁS, que es la
+            información que cambia y la que hacía falta. */}
         <div className="head-titles">
-          <span className="head-tab">Control Registro</span>
+          <span className="head-tab">{tabs.find((t) => t.id === tab)?.label || 'Ajustes'}</span>
           <span className="date-note">
-            {tabs.find((t) => t.id === tab)?.label || 'Ajustes'}
-            {' · '}
             {new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}
             {sedeFilter !== 'all' ? ` · ${sedeFilter}` : ''}
           </span>
@@ -1975,7 +1997,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <Icon name="file" size={16} /> Simulador
             </button>
             <h4>Herramientas</h4>
-            <Link className="cfg-item" href="/"><Icon name="monitor" size={16} /> Ir al kiosco</Link>
+            <Link className="cfg-item" href="/?prueba=1"><Icon name="monitor" size={16} /> Probar reconocimiento</Link>
             <button className={`cfg-item${tab === 'cfg-gps' ? ' on' : ''}`} onClick={() => setTab('cfg-gps')}>
               <Icon name="pin" size={16} /> Diagnóstico GPS
             </button>
@@ -3007,9 +3029,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
               <div className="tools-grupo">
                 <h3>Herramientas</h3>
-                <Link className="tool" href="/">
+                <Link className="tool" href="/?prueba=1">
                   <span className="icon"><Icon name="monitor" size={19} /></span>
-                  <span className="tool-txt"><b>Ir al kiosco</b><small>Pantalla de marcación</small></span>
+                  <span className="tool-txt"><b>Probar reconocimiento</b><small>Ambiente de ensayo: identifica el rostro pero NO registra marcaciones</small></span>
                   <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
                 </Link>
                 <button className="tool" onClick={() => setTab('cfg-gps')}>
@@ -3976,22 +3998,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
       {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} />}
       <nav className="tabbar" aria-label="Navegación del panel">
-        {/* Cabecera del menú lateral (solo PC): logo + nombre + botón esconder */}
-        <div className="side-top">
-          <span className="logo" aria-hidden="true"><MarcaCDial size={22} /></span>
-          <span className="side-brand">
-            CONTROL<b>REGISTRO</b>
-            <small>Panel de administración</small>
-          </span>
-          <button
-            className="collapse-btn"
-            onClick={() => setCollapsed((c) => !c)}
-            aria-label={collapsed ? 'Mostrar menú' : 'Esconder menú'}
-            title={collapsed ? 'Mostrar menú' : 'Esconder menú'}
-          >
-            <Icon name={collapsed ? 'chevronRight' : 'chevronLeft'} size={15} />
-          </button>
-        </div>
+        {/* Sin cabecera propia: el logo, el nombre y el botón de esconder se
+            fueron a la barra superior. Tenerlos aquí significaba que al
+            encoger el menú desaparecía la marca, y que el nombre se repetía
+            en dos sitios de la misma pantalla. */}
 
         {/* Filtro global de sede (arriba del menú): aplica a todas las vistas */}
         {sedeChips}
@@ -4767,12 +4777,29 @@ const CSS = `
   display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
   background: var(--btn-primary); color: #fff; border-radius: 12px; padding: 8px 12px;
 }
+/* Las tres líneas. Sin marco y redondas, como el resto de barras superiores
+   que la gente ya usa a diario: el marco las hacía parecer un botón más de
+   la fila en vez del control del menú. */
 .menu-btn {
-  flex: 0 0 auto; width: 38px; height: 38px; border-radius: 9px;
-  border: 1px solid rgba(255,255,255,.25); background: transparent; color: #fff;
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
+  border: none; background: transparent; color: #fff;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.menu-btn:active { background: rgba(255,255,255,.12); }
+.menu-btn:hover { background: rgba(255,255,255,.14); }
+.menu-btn:active { background: rgba(255,255,255,.22); }
+
+/* Marca fija de la barra: logo + nombre, siempre visibles. */
+.head-marca { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; }
+.head-brand {
+  font-family: var(--f-display); font-size: 13px; font-weight: 400;
+  letter-spacing: .13em; color: rgba(255,255,255,.72); white-space: nowrap;
+}
+.head-brand b { font-weight: 800; color: #fff; }
+/* Teléfono angosto: se queda el logo, que ya identifica, y el nombre cede el
+   espacio a la pantalla en la que estás. */
+@media (max-width: 430px) {
+  .head-brand { display: none; }
+}
 /* Flecha de regresar (historial interno del panel), sobre la barra acero. */
 .head-back {
   flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%;
@@ -5304,7 +5331,6 @@ const CSS = `
 .tabbar .badge { position: static; margin-left: auto; min-width: 18px; height: 18px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 5px; }
 
 /* Cabecera del menú (logo + marca): visible también en móvil */
-.side-top { display: flex; align-items: center; gap: 10px; padding: 2px 6px 14px; border-bottom: 1px solid var(--grid); margin-bottom: 6px; }
 .side-foot { display: block; padding: 10px 12px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
 
 /* Onboarding (dashboard sin empleados) */
@@ -5424,16 +5450,6 @@ img.sesion-avatar { object-fit: cover; display: block; }
 .nav-collapsed .sesion-detalle { padding: 4px 2px 6px; align-items: center; }
 .nav-collapsed .sesion-detalle span { display: none; }
 .nav-collapsed .sesion-detalle .lock-btn { padding: 7px; }
-.logo {
-  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--f-display); font-size: 13px; font-weight: 800; letter-spacing: .04em;
-  background: var(--accent); color: var(--accent-ink);
-}
-.side-brand { font-family: var(--f-display); font-size: 12px; font-weight: 400; letter-spacing: .14em; color: var(--ink); line-height: 1.3; }
-.side-brand b { font-weight: 800; color: var(--accent); }
-.side-brand small { display: block; font-family: var(--f-body); font-weight: 400; font-size: 10px; letter-spacing: .02em; text-transform: none; color: var(--muted); }
-.side-top .collapse-btn { display: none; } /* colapsar solo existe en PC */
 
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
 .dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--grid); border-radius: 10px; padding: 18px 20px; max-width: 400px; width: 100%; box-shadow: 0 12px 40px rgba(16,24,40,0.18); }
@@ -5633,8 +5649,9 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
     gap: 0;
     padding: 0;
   }
-  .app-header { grid-column: 2; grid-row: 1; padding: 12px 24px; background: var(--btn-primary); border-bottom: none; border-radius: 0; }
-  .head-logo { display: none; } /* en PC la marca vive en el menú lateral */
+  /* La barra superior cruza TODO el ancho, por encima del menú lateral: es
+     lo que hace que la marca no se mueva ni desaparezca al encoger el menú. */
+  .app-header { grid-column: 1 / -1; grid-row: 1; padding: 10px 20px; background: var(--btn-primary); border-bottom: none; border-radius: 0; }
   .head-sede {
     display: block; max-width: 210px; font-size: 13px; padding: 7px 10px;
     background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.25);
@@ -5651,19 +5668,18 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 
   /* menú lateral: panel completo pegado al borde, unido a la vista por un
      único borde divisorio (sin esquinas redondeadas ni flotación) */
+  /* El menú arranca DEBAJO de la barra (fila 2), no a su lado. */
   .tabbar {
     position: static; transform: none; width: auto; z-index: auto;
-    grid-column: 1; grid-row: 1 / 3;
+    grid-column: 1; grid-row: 2;
     display: flex; flex-direction: column; gap: 4px;
     align-self: stretch; height: 100%;
-    padding: 18px 14px 14px;
+    padding: 14px 14px;
     border-radius: 0; border: none; border-right: 1px solid var(--grid);
     box-shadow: none;
   }
   .nav-scrim { display: none; }
-  .menu-btn { display: none; }
-  .head-tab { font-size: 17px; }
-  .side-top .collapse-btn { display: flex; }
+  .head-tab { font-size: 16px; }
 
   /* PC: la fila de resumen del dashboard se abre en tres tarjetas */
   .fila-resumen { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
@@ -5681,25 +5697,11 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   }
   .tabbar > button .icon { font-size: 18px; }
   .tabbar .badge { position: static; margin-left: auto; }
-
-  /* cabecera del menú: logo + nombre + botón esconder */
-  .side-top { display: flex; align-items: center; gap: 10px; padding: 4px 6px 14px; border-bottom: 1px solid var(--grid); margin-bottom: 10px; }
-  .logo {
-    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    font-family: var(--f-display); font-size: 13px; font-weight: 800; letter-spacing: .04em;
-    background: var(--accent); color: var(--accent-ink);
-  }
-  .side-brand { font-family: var(--f-display); font-size: 12px; font-weight: 400; letter-spacing: .14em; color: var(--ink); line-height: 1.3; }
-  .side-brand b { font-weight: 800; color: var(--accent); }
-  .side-brand small { display: block; font-family: var(--f-body); font-weight: 400; font-size: 10px; letter-spacing: .02em; text-transform: none; color: var(--muted); }
-  .side-top .collapse-btn {
     margin-left: auto; flex: 0 0 auto; width: 26px; height: 26px; border-radius: 8px;
     border: 1px solid var(--border); background: transparent; color: var(--accent);
     font-size: 14px; line-height: 1; cursor: pointer; padding: 0;
     display: flex; align-items: center; justify-content: center;
   }
-  .side-top .collapse-btn:hover { background: var(--accent-soft); }
   .side-foot { display: block; padding: 10px 6px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
 
   /* PC: bloquear como fila del menú, anclado al fondo sobre el pie */
@@ -5713,13 +5715,11 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   /* estado escondido: riel de iconos */
   .nav-collapsed { grid-template-columns: 74px minmax(0, 1fr); }
   .nav-collapsed .tabbar { padding: 18px 8px 14px; }
-  .nav-collapsed .side-top { flex-direction: column; gap: 8px; padding-bottom: 12px; }
-  .nav-collapsed .side-brand, .nav-collapsed .lbl, .nav-collapsed .side-foot { display: none; }
+  .nav-collapsed .lbl, .nav-collapsed .side-foot { display: none; }
   /* riel colapsado: el select se compacta (muestra solo el emoji al cerrar) */
   .nav-collapsed .side-sede { padding: 0 2px 10px; }
   .nav-collapsed .side-sede-lbl { display: none; }
   .nav-collapsed .sede-select { padding: 8px 4px; font-size: 12px; }
-  .nav-collapsed .side-top .collapse-btn { margin-left: 0; }
   .nav-collapsed .tabbar > button { justify-content: center; padding: 10px 0; }
   .nav-collapsed .tabbar .badge { position: absolute; top: 2px; right: 4px; margin-left: 0; }
 
@@ -5741,9 +5741,10 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   /* Móvil: la barra es angosta — todo se compacta y el logo CR se oculta
      (la marca completa vive en el menú); sin esto el avatar se salía del
      borde redondeado de la barra. */
-  .app-header { gap: 8px; padding: 8px 10px; }
+  .app-header { gap: 6px; padding: 8px 8px; }
+  .menu-btn { width: 36px; height: 36px; }
+  .head-marca { gap: 7px; }
   .head-right { gap: 8px; }
-  .head-logo { display: none; }
   .head-guia { font-size: 11px; padding: 5px 9px; }
   /* En móvil el subtítulo (pestaña · fecha) SÍ se muestra: es la única señal
      de en qué pantalla estás ahora que el título es la marca. */
@@ -6078,22 +6079,6 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .tabbar > button:hover { background: rgba(255,255,255,.08); }
 .tabbar > button[aria-pressed="true"] { color: #fff; background: rgba(255,255,255,.15); }
 .tabbar .badge { background: var(--crit); }
-.side-top { border-bottom-color: rgba(255,255,255,.12); }
-.logo { background: rgba(255,255,255,.14); color: #fff; }
-.side-brand { color: #fff; }
-.side-brand b { color: #8fb0f7; }
-.side-brand small { color: rgba(255,255,255,.55); }
-.side-top .collapse-btn { border-color: rgba(255,255,255,.25); color: #fff; }
-.side-top .collapse-btn:hover { background: rgba(255,255,255,.12); }
-/* La marca cede espacio (se recorta con elipsis) para que el botón de
-   esconder no quede aplastado contra el borde del menú. */
-.side-brand { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; letter-spacing: .08em; }
-.side-top .collapse-btn { flex: 0 0 auto; margin-left: 6px; }
-.side-sede { border-bottom-color: rgba(255,255,255,.12); }
-.side-sede-lbl { color: rgba(255,255,255,.55); }
-.side-sede .sede-select {
-  background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.25);
-}
 .side-sede .sede-select:hover { background: rgba(255,255,255,.18); }
 .side-sede .sede-select option { background: var(--surface); color: var(--ink); }
 .side-foot { color: rgba(255,255,255,.4); }

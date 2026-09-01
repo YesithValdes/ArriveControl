@@ -133,6 +133,11 @@ export default function KioskMode() {
     // a nadie, sin avisar. Ahora se comprueba contra el servidor.
     // La clave es lo único indispensable: un dispositivo SIN sede es válido
     // (celular/kiosco móvil que registra desde cualquier lugar).
+    // MODO PRUEBA: no exige dispositivo activado — el roster facial baja con
+    // la SESIÓN del administrador (el navegador del panel la trae), y como
+    // nunca registra, la clave de aparato no pinta nada aquí.
+    if (esPrueba) return;
+
     if (!getDeviceKey()) {
       setConfigurado(false);
       return;
@@ -221,6 +226,13 @@ export default function KioskMode() {
   useEffect(() => {
     navigator.serviceWorker?.register?.('/sw.js').catch(() => { /* sin SW el kiosco funciona igual */ });
   }, []);
+
+  // MODO PRUEBA (/?prueba=1): el mismo flujo completo de reconocimiento
+  // (parpadeo, captura, decisión v2), pero al confirmar identidad SOLO dice
+  // quién es — nunca registra marcaciones ni alimenta la telemetría. Es el
+  // ambiente de ensayo del panel («Probar reconocimiento» en Ajustes).
+  const [esPrueba] = useState(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('prueba') === '1');
 
   // Modelo v2 listo (se comprueba en caliente dentro del bucle de captura).
   const v2ListoRef = useRef(false);
@@ -503,6 +515,14 @@ export default function KioskMode() {
       // es un fallo pasajero: hay que reactivarlo, así que se vuelve a la
       // pantalla de activación en vez de dejar un kiosco que no puede marcar.
       if (e instanceof ClaveRechazada) {
+        if (esPrueba) {
+          // Sin sesión del panel no hay roster que probar; aquí no se
+          // desactiva nada — este navegador no es un kiosco.
+          setStatusNote('Para el modo prueba, inicia sesión en el panel en esta misma pestaña.');
+          setArranqueFallo(true);
+          soltarCamara();
+          return;
+        }
         olvidarActivacion();
         setConfigurado(false);
         setCfgError('Este dispositivo ya no está autorizado. Pide un código nuevo en el panel y vuelve a registrarlo.');
@@ -897,15 +917,19 @@ export default function KioskMode() {
     st.phase = 'result';
     st.autoDismiss = true; // todo resultado se cierra solo (kiosco sin botones)
     st.until = performance.now() + RESULT_SHOW_MS;
-    logIntento({
-      empleadoId: person?.id ?? null,
-      aceptado: ok,
-      distancia: distance,
-      livenessOk: !failReason?.includes('parpadeo'),
-      // Mediciones para calibrar v2 en el servidor (los logs de la tablet se
-      // pierden; estos números no — son la base del ajuste de umbrales).
-      metricas,
-    });
+    // Los ensayos del modo prueba NO alimentan la telemetría: contaminarían
+    // la calibración con intentos que no son marcaciones reales.
+    if (!esPrueba) {
+      logIntento({
+        empleadoId: person?.id ?? null,
+        aceptado: ok,
+        distancia: distance,
+        livenessOk: !failReason?.includes('parpadeo'),
+        // Mediciones para calibrar v2 en el servidor (los logs de la tablet se
+        // pierden; estos números no — son la base del ajuste de umbrales).
+        metricas,
+      });
+    }
 
     const time = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 
@@ -913,6 +937,15 @@ export default function KioskMode() {
       sonar('error');
       setResult({ kind: 'no', name: person?.name, time, distance, reason: failReason });
       setUi('no');
+      return;
+    }
+
+    // MODO PRUEBA: aquí se acaba — se dice QUIÉN es y nada más. Ni una fila
+    // en marcaciones: es un ensayo, no una jornada.
+    if (esPrueba) {
+      sonar('aviso');
+      setResult({ kind: 'prueba', name: person.name, time, distance });
+      setUi('ok');
       return;
     }
 
@@ -991,6 +1024,7 @@ export default function KioskMode() {
     in:      { emoji: '👍', anim: 'ac-pop',   velo: 'rgba(21,128,61,0.55)',  circulo: 'var(--k-in)',     borde: 'var(--k-in)' },
     out:     { emoji: '👋', anim: 'ac-wave',  velo: 'rgba(180,83,9,0.55)',   circulo: 'var(--k-out)',    borde: 'var(--k-out)' },
     dup:     { emoji: 'ℹ',  anim: '',         velo: 'rgba(85,125,158,0.55)', circulo: 'var(--accent-2)', borde: 'var(--accent)' },
+    prueba:  { emoji: '🧪', anim: 'ac-pop',   velo: 'rgba(110,150,184,0.55)', circulo: 'var(--accent-2)', borde: 'var(--accent)' },
     pending: { emoji: '📶', anim: 'ac-float', velo: 'rgba(85,125,158,0.55)', circulo: 'var(--accent-2)', borde: 'var(--accent)' },
     no:      { emoji: '✕',  anim: 'ac-shake', velo: 'rgba(179,64,58,0.55)',  circulo: 'var(--k-no)',     borde: 'var(--k-no)' },
   };
@@ -1015,6 +1049,9 @@ export default function KioskMode() {
         {/* Detener es la ÚNICA vía al reposo: marca la parada como manual
             para que el auto-arranque no vuelva a encender la cámara solo. */}
         <button style={s.hudDetener} onClick={() => { setDetenido(true); setStatusNote('Kiosco en pausa.'); stopAll(); }}>⏹ Detener</button>
+        {/* Insignia permanente del modo prueba: que NADIE lo confunda con el
+            kiosco real — aquí no queda registrada ninguna marcación. */}
+        {esPrueba && <span style={s.hudPrueba}>🧪 MODO PRUEBA — no registra marcaciones</span>}
 
         {/* Zona de mensaje, SIEMPRE arriba del cuadro */}
         <div style={s.hudMensaje}>
@@ -1023,6 +1060,7 @@ export default function KioskMode() {
               {result.kind === 'in' && <div style={{ ...s.hudTag, color: 'var(--k-in)' }}>🟢 ENTRADA</div>}
               {result.kind === 'out' && <div style={{ ...s.hudTag, color: 'var(--k-out)' }}>🟠 SALIDA</div>}
               {result.kind === 'dup' && <div style={{ ...s.hudTag, color: 'var(--accent-2)' }}>ℹ YA REGISTRADA</div>}
+              {result.kind === 'prueba' && <div style={{ ...s.hudTag, color: 'var(--accent-2)' }}>🧪 MODO PRUEBA · RECONOCIDO</div>}
               {result.kind === 'pending' && <div style={{ ...s.hudTag, color: 'var(--accent-2)' }}>📶 SIN CONEXIÓN</div>}
               {result.kind === 'no' && <div style={{ ...s.hudTag, color: 'var(--k-no)' }}>✕ NO RECONOCIDO</div>}
 
@@ -1030,6 +1068,7 @@ export default function KioskMode() {
                 {result.kind === 'in' && <>¡Bienvenido/a, {result.name}!</>}
                 {result.kind === 'out' && <>¡Hasta pronto, {result.name}!</>}
                 {result.kind === 'dup' && result.name}
+                {result.kind === 'prueba' && <>Sí, es {result.name}</>}
                 {result.kind === 'pending' && result.name}
                 {result.kind === 'saving' && 'Registrando…'}
                 {result.kind === 'no' && 'Intenta de nuevo'}
@@ -1038,6 +1077,7 @@ export default function KioskMode() {
               {result.kind === 'in' && <div style={{ ...s.hudHora, color: 'var(--k-in)' }}>{result.time}</div>}
               {result.kind === 'out' && <div style={{ ...s.hudHora, color: 'var(--k-out)' }}>{result.time}</div>}
               {result.kind === 'dup' && <div style={s.hudDetalle}>{result.lastLabel} registrada: {result.lastTime}</div>}
+              {result.kind === 'prueba' && <div style={s.hudDetalle}>No se registró ninguna marcación{result.distance != null ? ` · medida ${result.distance}` : ''}</div>}
               {result.kind === 'pending' && <div style={s.hudDetalle}>Guardada; se enviará sola</div>}
               {result.kind === 'saving' && <div style={s.hudDetalle}>{result.name}</div>}
               {result.kind === 'no' && <div style={s.hudDetalle}>{result.reason}</div>}
@@ -1313,6 +1353,14 @@ const s = {
     position: 'absolute', top: 'calc(12px + env(safe-area-inset-top, 0px))', right: 16,
     background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)',
     borderRadius: 8, fontSize: 13, padding: '6px 12px', cursor: 'pointer', fontFamily: 'inherit',
+  },
+  // Insignia del modo prueba: centrada abajo, sobre el cuadro de la cámara.
+  hudPrueba: {
+    position: 'absolute', bottom: 'calc(14px + env(safe-area-inset-bottom, 0px))', left: '50%',
+    transform: 'translateX(-50%)', zIndex: 5, whiteSpace: 'nowrap',
+    background: 'var(--accent-2)', color: '#fff', borderRadius: 999,
+    fontSize: 12.5, fontWeight: 700, letterSpacing: '0.04em', padding: '7px 16px',
+    boxShadow: '0 2px 10px rgba(16,24,40,0.25)',
   },
   hudReloj: {
     position: 'relative', fontSize: 'clamp(28px, 9vw, 40px)', fontWeight: 800,

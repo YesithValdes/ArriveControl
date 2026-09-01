@@ -13,7 +13,14 @@
 import sharp from 'sharp'
 import { writeFileSync } from 'node:fs'
 
-const AZUL = '#3a5570'
+// Degradado de marca: acero oscuro abajo que se difumina hacia aero arriba.
+const DEGRADADO = `
+  <defs>
+    <linearGradient id="fondo" x1="0" y1="64" x2="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#223347"/>
+      <stop offset="1" stop-color="#6e96b8"/>
+    </linearGradient>
+  </defs>`
 
 /** El símbolo C-dial en blanco, escala `s` centrada en un lienzo 64×64. */
 const simbolo = (s) => {
@@ -29,10 +36,11 @@ const simbolo = (s) => {
   </g>`
 }
 
-/** Lienzo 64×64 con fondo azul (rx=0 → sangrado completo para maskable). */
+/** Lienzo 64×64 con fondo en degradado (rx=0 → sangrado completo para maskable). */
 const svg = ({ escala, rx }) => `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="${rx}" fill="${AZUL}"/>
+  ${DEGRADADO}
+  <rect width="64" height="64" rx="${rx}" fill="url(#fondo)"/>
   ${simbolo(escala)}
 </svg>`
 
@@ -43,10 +51,11 @@ const png = (contenido, px, salida) =>
     .toFile(`public/${salida}`)
     .then(() => console.log(`  + public/${salida} (${px}px)`))
 
-// Íconos normales: esquinas redondeadas propias, símbolo al 80%.
-const normal = svg({ escala: 0.8, rx: 14 })
-// Maskable e iOS: fondo a sangre (el sistema pone la forma), símbolo al 60%.
-const pleno = svg({ escala: 0.6, rx: 0 })
+// Íconos normales: esquinas redondeadas propias, símbolo al 90% (más grande).
+const normal = svg({ escala: 0.9, rx: 14 })
+// Maskable e iOS: fondo a sangre (el sistema recorta), símbolo al 68% para
+// que crezca sin salirse de la zona segura del recorte circular de Android.
+const pleno = svg({ escala: 0.68, rx: 0 })
 
 await png(normal, 192, 'icon-192.png')
 await png(normal, 512, 'icon-512.png')
