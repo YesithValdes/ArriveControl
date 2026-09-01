@@ -73,7 +73,7 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
       <style>{CSS}</style>
 
       <header className="bv-top">
-        <span className="bv-marca">CONTROL <span>REGISTRO</span></span>
+        <span className="bv-marca">ASISTENC<span>IA</span></span>
         <button className="bv-omitir" onClick={omitir} disabled={ocupado}>Omitir</button>
       </header>
 

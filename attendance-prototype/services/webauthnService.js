@@ -145,7 +145,7 @@ export async function registerDevice(employeeId, employeeName = employeeId) {
   const credential = await navigator.credentials.create({
     publicKey: {
       challenge: randomChallenge(),
-      rp: { name: 'Control Registro' }, // rp.id se infiere del dominio (localhost en dev)
+      rp: { name: 'AsistencIA' }, // rp.id se infiere del dominio (localhost en dev)
       user: {
         id: stringToBuffer(employeeId),
         name: employeeId,

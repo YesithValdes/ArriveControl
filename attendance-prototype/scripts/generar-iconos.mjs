@@ -22,17 +22,15 @@ const DEGRADADO = `
     </linearGradient>
   </defs>`
 
-/** El símbolo C-dial en blanco, escala `s` centrada en un lienzo 64×64. */
+/** El símbolo «Presente ✓» (rostro + chulo), escala `s` centrada en 64×64. */
 const simbolo = (s) => {
   const t = 32 - 32 * s
   return `
-  <g transform="translate(${t} ${t}) scale(${s})" stroke="#fff" stroke-linecap="round" fill="none">
-    <path d="M 51 17.5 A 24 24 0 1 0 51 46.5" stroke-width="7.5"/>
-    <line x1="32" y1="10" x2="32" y2="15" stroke-width="3.4"/>
-    <line x1="10" y1="32" x2="15" y2="32" stroke-width="3.4"/>
-    <line x1="32" y1="49" x2="32" y2="54" stroke-width="3.4"/>
-    <circle cx="32" cy="32" r="3" fill="#fff" stroke="none"/>
-    <line x1="32" y1="32" x2="41" y2="23" stroke-width="4.4"/>
+  <g transform="translate(${t} ${t}) scale(${s})" fill="none">
+    <circle cx="32" cy="31" r="20" stroke="#fff" stroke-width="4.6"/>
+    <circle cx="25.4" cy="27" r="2.2" fill="#fff"/>
+    <circle cx="38.6" cy="27" r="2.2" fill="#fff"/>
+    <path d="M 24 37 l 6 6 l 12 -12" stroke="#9fdcca" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
   </g>`
 }
 
@@ -62,4 +60,4 @@ await png(normal, 512, 'icon-512.png')
 await png(pleno, 512, 'icon-512-maskable.png')
 await png(pleno, 180, 'apple-touch-icon.png')
 await png(pleno, 1024, 'splash.png')
-console.log('Íconos regenerados desde la opción B (C-dial).')
+console.log('Íconos regenerados desde el logo «Presente ✓» (AsistencIA).')

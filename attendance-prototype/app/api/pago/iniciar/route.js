@@ -71,7 +71,7 @@ export async function POST(req) {
     // A dónde vuelve la persona tras pagar. Es solo cortesía visual: la
     // activación la hace el webhook.
     urlRetorno: `${origen}/admin/ajustes/plan?pago=listo`,
-    descripcion: `Control Registro · plan ${plan.nombre} · ${meses} mes${meses === 1 ? '' : 'es'}`,
+    descripcion: `AsistencIA · plan ${plan.nombre} · ${meses} mes${meses === 1 ? '' : 'es'}`,
   })
 
   await control(

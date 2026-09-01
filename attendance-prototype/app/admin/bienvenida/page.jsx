@@ -19,7 +19,7 @@ import { boldActivo } from '../../../lib/bold.js'
 import { control, conEmpresa } from '../../../lib/db.js'
 import Bienvenida from '../../../components/Bienvenida.jsx'
 
-export const metadata = { title: 'Tu plan — Control Registro', robots: { index: false, follow: false } }
+export const metadata = { title: 'Tu plan — AsistencIA', robots: { index: false, follow: false } }
 export const dynamic = 'force-dynamic'
 
 export default async function BienvenidaPage() {

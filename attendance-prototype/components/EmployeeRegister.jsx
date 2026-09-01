@@ -709,7 +709,7 @@ export default function EmployeeRegister() {
       <header className="app-header">
         <Link href="/admin/empleados" className="back">‹ Panel</Link>
         <div>
-          <div className="brand">Control Registro</div>
+          <div className="brand">AsistencIA</div>
           <h1>Registrar empleado</h1>
         </div>
       </header>

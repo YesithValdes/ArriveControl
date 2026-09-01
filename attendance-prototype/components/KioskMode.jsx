@@ -1045,7 +1045,7 @@ export default function KioskMode() {
         // toques y bloqueaba el botón "Iniciar kiosco" debajo.
         pointerEvents: running ? 'auto' : 'none',
       }}>
-        <span style={s.hudMarca}>CONTROL <span style={{ color: 'var(--accent)' }}>REGISTRO</span></span>
+        <span style={s.hudMarca}>ASISTENC<span style={{ color: 'var(--accent)' }}>IA</span></span>
         {/* Detener es la ÚNICA vía al reposo: marca la parada como manual
             para que el auto-arranque no vuelva a encender la cámara solo. */}
         <button style={s.hudDetener} onClick={() => { setDetenido(true); setStatusNote('Kiosco en pausa.'); stopAll(); }}>⏹ Detener</button>
@@ -1147,7 +1147,7 @@ export default function KioskMode() {
           es la pantalla de cámara de arriba) */}
       {(ui === 'idle' && !running) && (
         <div className="kiosk-idle" style={s.idle}>
-          <div style={s.brand}>CONTROL <span style={{ color: 'var(--accent)' }}>REGISTRO</span></div>
+          <div style={s.brand}>ASISTENC<span style={{ color: 'var(--accent)' }}>IA</span></div>
           <div style={s.clock}>{clock.time}</div>
           <div style={s.date}>{clock.date}</div>
           <div style={s.idleOval}>

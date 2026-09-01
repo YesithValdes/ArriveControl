@@ -1,6 +1,6 @@
 {
-  "name": "Control Registro — Control de Asistencia",
-  "short_name": "Control Registro",
+  "name": "AsistencIA — Asistencia con inteligencia facial",
+  "short_name": "AsistencIA",
   "description": "Kiosco de marcación facial y panel de asistencia",
   "start_url": "/",
   "scope": "/",

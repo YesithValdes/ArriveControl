@@ -4868,10 +4868,11 @@ const CSS = `
     color: var(--muted); font-weight: 700; margin: 14px 0 4px; padding: 0 12px;
   }
   .cfg-item {
-    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; text-align: left;
     padding: 8px 12px; border: 0; border-radius: 9px; background: transparent;
     font: inherit; font-size: 13px; font-weight: 500; color: var(--ink-2);
     cursor: pointer; text-decoration: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .cfg-item:hover { background: var(--accent-soft); }
   .cfg-item.on { background: var(--accent-soft); color: var(--btn-primary); font-weight: 600; }
@@ -4882,7 +4883,11 @@ const CSS = `
 .card.grow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .card h2 { font-family: var(--f-display); font-size: 13.5px; font-weight: 700; letter-spacing: .02em; margin-bottom: 2px; color: var(--ink); }
 .card .hint { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
-.scrollable { overflow-y: auto; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; padding-right: 2px; }
+/* En MÓVIL las listas NO capturan el gesto: hay un solo scroll (la página) y
+   tocar sobre una fila también desplaza la pantalla. El scroll interno con
+   overscroll-behavior contain que atrapaba el dedo vive solo en PC (abajo,
+   en el bloque de 900px o más), donde cada tarjeta sí scrollea por su cuenta. */
+.scrollable { flex: 1 1 auto; min-height: 0; padding-right: 2px; }
 .axis-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
 .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
 
@@ -4965,7 +4970,7 @@ const CSS = `
 /* Filtro global de sede (select en el menú lateral, móvil y PC) */
 .side-sede { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 4px 6px 12px; border-bottom: 1px solid var(--grid); margin-bottom: 8px; }
 .side-sede-lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
-.sede-select { flex: 1; font: inherit; font-size: 13px; font-weight: 600; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
+.sede-select { flex: 1; min-width: 0; max-width: 100%; font: inherit; font-size: 13px; font-weight: 600; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
 .sede-select:hover { background: var(--accent-soft); }
 .sede-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -5319,13 +5324,16 @@ const CSS = `
   position: relative; border: 0; background: transparent; color: var(--ink-2);
   font-family: var(--f-body); font-size: 13.5px; font-weight: 600; cursor: pointer;
   display: flex; flex-direction: row; align-items: center; gap: 12px;
-  width: 100%; text-align: left; padding: 11px 12px; border-radius: 9px;
+  width: 100%; min-width: 0; text-align: left; padding: 11px 12px; border-radius: 9px;
 }
 .tabbar > button .icon, .tabbar .lock-btn .icon { display: flex; line-height: 1; flex: 0 0 auto; }
+/* La etiqueta de cada ítem puede ENCOGERSE con elipsis: nada se sale del
+   menú aunque el nombre sea largo o el ancho apriete. */
+.tabbar .lbl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabbar > button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
 .tabbar .lock-btn { color: var(--muted); margin-top: auto; }
 .tabbar .lock-btn:hover { background: var(--crit-soft); color: var(--crit-text); }
-.tabbar .badge { position: static; margin-left: auto; min-width: 18px; height: 18px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 5px; }
+.tabbar .badge { position: static; margin-left: auto; flex: 0 0 auto; min-width: 18px; height: 18px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 5px; }
 
 /* Cabecera del menú (logo + marca): visible también en móvil */
 .side-foot { display: block; padding: 10px 12px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
@@ -5587,10 +5595,12 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .btn.small { font-size: 12px; padding: 4px 10px; }
 .ev-form { border: 1px solid var(--grid); border-radius: 8px; padding: 12px; background: var(--surface-blanca); display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
 .ev-form h4 { font-size: 13px; font-weight: 700; }
-.ev-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
-.ev-form-row { display: flex; gap: 10px; }
-.ev-form-row label { flex: 1; }
-.ev-form input, .ev-form select { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
+.ev-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); min-width: 0; }
+/* La fila ENVUELVE: en pantallas angostas los campos caen uno debajo del
+   otro en vez de salirse del borde (el NIT se veía cortado en el celular). */
+.ev-form-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.ev-form-row label { flex: 1 1 140px; }
+.ev-form input, .ev-form select { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 
 /* ─── Acordeón (móvil): reemplaza a las tablas para evitar scroll lateral ─── */
 .att-tablewrap { display: none; }
@@ -5730,14 +5740,17 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   /* sidebar y encabezado separados por línea divisoria sobria */
   .tabbar { background: var(--surface); border-right: 1px solid var(--grid); box-shadow: none; }
   .app-header { box-shadow: none; position: relative; z-index: 2; }
-  /* Móvil: la barra es angosta — todo se compacta y el logo CR se oculta
+  /* Móvil: la barra es angosta — todo se compacta y el logo se oculta
      (la marca completa vive en el menú); sin esto el avatar se salía del
      borde redondeado de la barra. */
   .app-header { gap: 6px; padding: 8px 8px; }
+  .head-logo { display: none; }
   .menu-btn { width: 36px; height: 36px; }
+  .head-back { width: 34px; height: 34px; }
   .head-marca { gap: 7px; }
-  .head-right { gap: 8px; }
-  .head-guia { font-size: 11px; padding: 5px 9px; }
+  /* La derecha puede ENCOGERSE (la guía cede con elipsis): nada se sale. */
+  .head-right { gap: 8px; min-width: 0; flex: 0 1 auto; }
+  .head-guia { font-size: 11px; padding: 5px 9px; max-width: 36vw; overflow: hidden; text-overflow: ellipsis; }
   /* En móvil el subtítulo (pestaña · fecha) SÍ se muestra: es la única señal
      de en qué pantalla estás ahora que el título es la marca. */
   .app-header .date-note { font-size: 10.5px; }
@@ -5775,11 +5788,14 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
    altura que la asistencia de al lado. */
 .dash-lado > .card:last-child { flex: 1 1 auto; }
 .asistencia-card { min-width: 0; display: flex; flex-direction: column; }
-.asistencia-card .scrollable { flex: 1 1 auto; min-height: 0; max-height: 470px; overflow-y: auto; }
 /* Las tarjetas de la fila 2 (horas y costos) se estiran a la misma altura. */
 .dash-grid .card.grow { min-height: 0; }
-.dash-grid .card.grow .scrollable { flex: 1 1 auto; min-height: 0; max-height: 360px; overflow-y: auto; }
 @media (min-width: 900px) {
+  /* Scroll INTERNO de las tarjetas: solo en PC. En móvil estas alturas
+     creaban scrolls anidados que atrapaban el dedo sobre las filas. */
+  .scrollable { overflow-y: auto; overscroll-behavior: contain; }
+  .asistencia-card .scrollable { max-height: 470px; }
+  .dash-grid .card.grow .scrollable { max-height: 360px; }
   /* Dos columnas compartidas por ambas filas, con el MISMO ancho por columna.
      Fila 1: horas + costos (compactas). Fila 2: asistencia + indicadores.
      En móvil se conserva el orden del DOM (asistencia primero). */

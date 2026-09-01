@@ -15,7 +15,7 @@ const montserrat = Montserrat({
 });
 
 export const metadata = {
-  title: 'Control Registro',
+  title: 'AsistencIA',
   // PWA instalable: sin manifest con íconos 192/512, Chrome ofrece "agregar
   // a inicio" pero RECHAZA la instalación real como app.
   manifest: '/manifest.webmanifest',
@@ -29,7 +29,7 @@ export const metadata = {
   },
   appleWebApp: {
     capable: true,
-    title: 'Control Registro',
+    title: 'AsistencIA',
     statusBarStyle: 'default',
   },
 };

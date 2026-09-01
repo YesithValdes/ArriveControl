@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Control Registro</string>
-    <string name="title_activity_main">Control Registro</string>
+    <string name="app_name">AsistencIA</string>
+    <string name="title_activity_main">AsistencIA</string>
     <string name="package_name">com.kupocell.arrivecontrol</string>
     <string name="custom_url_scheme">com.kupocell.arrivecontrol</string>
 </resources>

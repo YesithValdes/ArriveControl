@@ -529,6 +529,45 @@ await test('respaldo: empleados viejos sin horario por día', () => {
   assert.equal(totalExtra(calcularRegistros(viejo, DESPUES)), 1.5);
 });
 
+// ── Modelos empaquetados en el APK ──────────────────────────────────────
+// La app Android es un cascarón que carga la web remota, así que la primera
+// arrancada bajaba ~25 MB de modelos. Ahora viajan dentro del APK y
+// ModelosLocales.java intercepta `/models/` y `/wasm/` para servirlos del
+// disco. Tres cosas pueden romperlo en silencio, y las tres se prueban aquí.
+console.log('\n📦 Modelos dentro del APK');
+const { readFileSync: leerTxt, existsSync: hay } = await import('node:fs');
+const leerRel = (r) => leerTxt(new URL(r, import.meta.url), 'utf8');
+
+// Prefijos que ModelosLocales.java atiende, sacados del propio Java para que
+// no puedan quedar diciendo cosas distintas.
+const javaModelos = leerRel('../android/app/src/main/java/com/kupocell/arrivecontrol/ModelosLocales.java');
+const PREFIJOS = [...javaModelos.matchAll(/startsWith\("([^"]+)"\)/g)].map((m) => m[1]);
+
+await test('el Java intercepta /models/ y /wasm/', () => {
+  assert.deepEqual([...PREFIJOS].sort(), ['/models/', '/wasm/']);
+});
+
+await test('todo lo que el código pide cae dentro de esos prefijos', () => {
+  // Si alguien publica un modelo en otra carpeta, se bajaría de la red para
+  // siempre sin que nadie se entere: aquí se entera.
+  const fuentes = ['../components/KioskMode.jsx', '../lib/rostroV2.js', '../components/EmployeeRegister.jsx'];
+  const rutas = new Set();
+  for (const f of fuentes) {
+    for (const m of leerRel(f).matchAll(/'(\/(?:models|wasm|assets|modelos)[^']*)'/g)) rutas.add(m[1]);
+  }
+  assert.ok(rutas.size >= 4, `se esperaban varias rutas de modelos, se hallaron ${rutas.size}`);
+  const fuera = [...rutas].filter((r) => !PREFIJOS.some((p) => (r + '/').startsWith(p)));
+  assert.deepEqual(fuera, [], `estas rutas no se empaquetarían: ${fuera.join(', ')}`);
+});
+
+await test('la lista de empaquetado apunta a archivos que existen', () => {
+  const script = leerRel('../scripts/empaquetar-modelos.mjs');
+  const lista = [...script.matchAll(/^\s*'((?:models|wasm)\/[^']+)',/gm)].map((m) => m[1]);
+  assert.ok(lista.length >= 10, `la lista parece vacía (${lista.length} archivos)`);
+  const perdidos = lista.filter((r) => !hay(new URL(`../public/${r}`, import.meta.url)));
+  assert.deepEqual(perdidos, [], `la lista nombra archivos que no están en public/: ${perdidos.join(', ')}`);
+});
+
 // ── El CSS del panel está bien formado ──────────────────────────────────
 // Los estilos viven en una plantilla de texto dentro del componente, así que
 // nadie los valida: ni el compilador ni el navegador se quejan. Una llave de

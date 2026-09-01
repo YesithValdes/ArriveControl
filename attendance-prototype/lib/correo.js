@@ -78,7 +78,7 @@ export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede,
   const html = `
   <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:480px;margin:0 auto;border:1px solid #d8e2ee;border-radius:14px;overflow:hidden">
     <div style="background:#3a5570;color:#fff;padding:14px 20px;font-weight:800;letter-spacing:.08em;font-size:13px">
-      CONTROL <span style="color:#9fc0da">REGISTRO</span>
+      ASISTENC<span style="color:#9fdcca">IA</span>
     </div>
     <div style="padding:22px 20px;color:#233240">
       <div style="font-size:15px;font-weight:800;color:${color}">${titulo}</div>
@@ -98,7 +98,7 @@ export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede,
 
   try {
     await t.sendMail({
-      from: `Control Registro <${conf().from}>`,
+      from: `AsistencIA <${conf().from}>`,
       to: para,
       subject: `${esEntrada ? 'Entrada' : 'Salida'} registrada — ${hora}`,
       html,

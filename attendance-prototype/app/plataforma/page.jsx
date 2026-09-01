@@ -13,7 +13,7 @@ import { obtenerSesion } from '../../lib/sesion';
 import { esSuperadmin } from '../../lib/roles.js';
 
 export const metadata = {
-  title: 'Plataforma — Control Registro',
+  title: 'Plataforma — AsistencIA',
   robots: { index: false, follow: false },
 };
 

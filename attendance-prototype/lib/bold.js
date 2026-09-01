@@ -122,7 +122,7 @@ export function datosDeCheckout({ empresaId, monto, urlRetorno, descripcion }) {
         moneda: cfg.moneda,
         secreto: cfg.secreto,
       }),
-      description: descripcion ?? 'Plan Empresa · Control Registro',
+      description: descripcion ?? 'Plan Empresa · AsistencIA',
       ...(urlRetorno ? { redirectionUrl: urlRetorno } : {}),
     },
   }

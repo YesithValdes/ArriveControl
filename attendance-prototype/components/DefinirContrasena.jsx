@@ -58,10 +58,10 @@ export default function DefinirContrasena({ correo, alTerminar }) {
       <style>{CSS}</style>
 
       <form className="dc-card" onSubmit={guardar}>
-        <p className="dc-brand">CONTROL <span>REGISTRO</span></p>
+        <p className="dc-brand">ASISTENC<span>IA</span></p>
         <h1>Crea tu contraseña</h1>
         <p className="dc-sub">
-          Ya entraste con Google. Ponle ahora una contraseña a Control Registro para poder
+          Ya entraste con Google. Ponle ahora una contraseña a AsistencIA para poder
           entrar <b>desde el celular</b>, donde Google no funciona.
         </p>
 

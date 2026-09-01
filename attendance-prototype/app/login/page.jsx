@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * app/login/page.jsx — Inicio de sesión de Control Registro.
+ * app/login/page.jsx — Inicio de sesión de AsistencIA.
  *
  * Pantalla dividida: a la izquierda la marca e información del sistema, a la
  * derecha el formulario. Usuarios PROPIOS del sistema (esquema `asistencia`).
@@ -20,19 +20,15 @@ export default function LoginPage() {
   )
 }
 
-/* Logotipo oficial «C-dial»: la C como carátula de reloj con marcas de hora
-   y una manecilla. El mismo arte de public/icon.svg, en blanco. */
-function LogoControlRegistro({ size = 72 }) {
+/* Logotipo oficial «Presente ✓»: un rostro cuya mandíbula es un chulo de
+   verificación. El mismo arte de public/icon.svg, en blanco y aguamarina. */
+function LogoAsistencia({ size = 72 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
-      <g stroke="#fff" strokeLinecap="round" fill="none">
-        <path d="M 51 17.5 A 24 24 0 1 0 51 46.5" strokeWidth="7.5" />
-        <line x1="32" y1="10" x2="32" y2="15" strokeWidth="3.4" />
-        <line x1="10" y1="32" x2="15" y2="32" strokeWidth="3.4" />
-        <line x1="32" y1="49" x2="32" y2="54" strokeWidth="3.4" />
-        <circle cx="32" cy="32" r="3" fill="#fff" stroke="none" />
-        <line x1="32" y1="32" x2="41" y2="23" strokeWidth="4.4" />
-      </g>
+      <circle cx="32" cy="31" r="20" stroke="#fff" strokeWidth="4.6" fill="none" />
+      <circle cx="25.4" cy="27" r="2.2" fill="#fff" />
+      <circle cx="38.6" cy="27" r="2.2" fill="#fff" />
+      <path d="M 24 37 l 6 6 l 12 -12" stroke="#9fdcca" strokeWidth="4.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   )
 }
@@ -162,10 +158,10 @@ function LoginForm() {
           color: '#fff',
         }}
       >
-        <LogoControlRegistro />
+        <LogoAsistencia />
         <div>
           <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800, letterSpacing: -0.5 }}>
-            Control Registro
+            Asistenc<span style={{ color: '#9fdcca' }}>IA</span>
           </h1>
           <p style={{ margin: '8px 0 0', fontSize: 16, opacity: 0.85, maxWidth: 420 }}>
             Registro y control de asistencia para tu empresa: entradas, salidas
