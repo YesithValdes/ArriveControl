@@ -529,6 +529,93 @@ await test('respaldo: empleados viejos sin horario por día', () => {
   assert.equal(totalExtra(calcularRegistros(viejo, DESPUES)), 1.5);
 });
 
+// ── Resumen diario que se envía por correo ──────────────────────────────
+// Un correo al terminar el día, en vez de uno por marcación. Cuenta lo que
+// pasó de verdad, así que tiene que cuadrar con lo que la nómina pagará: si
+// el correo dice 7 h y el reporte dice 4, la gente deja de creerle a los dos.
+console.log('\n📧 Resumen diario');
+const { resumenDelDia, hhmmss, horasCortas, enDoce } = await import('../lib/resumenDiario.js');
+
+const JUAN = {
+  nombre: 'Juan',
+  correo: 'juan@ejemplo.com',
+  jornada_dias: {
+    1: { entrada: '09:00', salida: '17:30', almuerzo_min: 60, almuerzo_desde: '13:00' },
+    6: { entrada: '09:00', salida: '13:30', almuerzo_min: 0 },
+  },
+};
+const LUNES = 1;
+const mk = (tipo, hora, sede = 'Principal') => {
+  const [h, m] = hora.split(':').map(Number);
+  return { tipo, minutos: h * 60 + m, sede };
+};
+
+await test('día completo: suma las dos parejas, sin avisos', () => {
+  const r = resumenDelDia(JUAN, [mk('entrada', '09:03'), mk('salida', '13:00'), mk('entrada', '14:00'), mk('salida', '17:30')], LUNES);
+  assert.equal(hhmmss(r.trabajadoSeg), '7:27:00');
+  assert.equal(r.marcas.length, 4);
+  assert.deepEqual(r.avisos, []);
+});
+
+await test('sin marcaciones no hay resumen que enviar', () => {
+  // Quien no trabajó no recibe correo: un «no marcaste» diario es ruido.
+  assert.equal(resumenDelDia(JUAN, [], LUNES), null);
+});
+
+await test('olvidó la salida final: cierra en su horario y lo AVISA', () => {
+  const r = resumenDelDia(JUAN, [mk('entrada', '09:00'), mk('salida', '13:00'), mk('entrada', '14:00')], LUNES);
+  assert.equal(hhmmss(r.trabajadoSeg), '7:30:00');
+  const ultima = r.marcas[r.marcas.length - 1];
+  assert.equal(ultima.automatica, true);
+  assert.equal(enDoce(ultima.minutos), '05:30 p. m.');
+  assert.match(r.avisos[0].texto, /No marcaste tu salida/);
+});
+
+await test('solo marcó al llegar: cuenta hasta el almuerzo', () => {
+  // La misma regla que el cálculo de nómina, para que los dos números cuadren.
+  const r = resumenDelDia(JUAN, [mk('entrada', '09:00')], LUNES);
+  assert.equal(hhmmss(r.trabajadoSeg), '4:00:00');
+  assert.match(r.avisos[0].texto, /empieza tu almuerzo/);
+});
+
+await test('entró pasada su salida y no cerró: no se inventa nada', () => {
+  const r = resumenDelDia(JUAN, [mk('entrada', '18:00')], LUNES);
+  assert.equal(r.trabajadoSeg, 0);
+  assert.match(r.avisos[0].texto, /no se pudo contar/);
+});
+
+await test('entrada tardía: avisa con las dos horas', () => {
+  const r = resumenDelDia(JUAN, [mk('entrada', '12:30'), mk('salida', '17:30')], LUNES);
+  const tarde = r.avisos.find((a) => a.clase === 'tarde');
+  assert.ok(tarde, 'debía avisar de la entrada tardía');
+  assert.match(tarde.texto, /12:30 p\. m\..*09:00 a\. m\./);
+});
+
+await test('salir a almorzar NO es salida temprana', () => {
+  const r = resumenDelDia(JUAN, [mk('entrada', '09:00'), mk('salida', '13:00'), mk('entrada', '14:00'), mk('salida', '17:30')], LUNES);
+  assert.equal(r.avisos.filter((a) => a.clase === 'temprano').length, 0);
+});
+
+await test('irse a media tarde SÍ es salida temprana', () => {
+  const r = resumenDelDia(JUAN, [mk('entrada', '09:00'), mk('salida', '15:00')], LUNES);
+  assert.ok(r.avisos.some((a) => a.clase === 'temprano'));
+});
+
+await test('un día sin horario se resume igual, sin comparaciones', () => {
+  const suelto = { nombre: 'Ana', correo: 'a@b.c', jornada_dias: null, entrada_esperada: null, salida_esperada: null };
+  const r = resumenDelDia(suelto, [mk('entrada', '08:00'), mk('salida', '12:00')], LUNES);
+  assert.equal(hhmmss(r.trabajadoSeg), '4:00:00');
+  assert.deepEqual(r.avisos, [], 'sin horario no hay contra qué comparar');
+});
+
+await test('las horas se muestran como la gente las lee', () => {
+  assert.equal(enDoce(0), '12:00 a. m.');
+  assert.equal(enDoce(12 * 60), '12:00 p. m.');
+  assert.equal(enDoce(17 * 60 + 30), '05:30 p. m.');
+  assert.equal(horasCortas(7.5 * 3600), '7h 30m');
+  assert.equal(horasCortas(45 * 60), '45 min');
+});
+
 // ── Modelos empaquetados en el APK ──────────────────────────────────────
 // La app Android es un cascarón que carga la web remota, así que la primera
 // arrancada bajaba ~25 MB de modelos. Ahora viajan dentro del APK y
@@ -584,17 +671,42 @@ const cssDelPanel = (archivo) => {
   return t.slice(i + 13, t.lastIndexOf('`'));
 };
 
-await test('las llaves del CSS están balanceadas', () => {
-  const css = cssDelPanel('../components/AdminPanel.jsx');
-  assert.ok(css, 'no se encontró el bloque de estilos');
-  let abren = 0;
-  let cierran = 0;
-  for (const c of css) {
-    if (c === '{') abren++;
-    else if (c === '}') cierran++;
-  }
-  assert.equal(cierran, abren, `sobran ${Math.abs(abren - cierran)} llaves`);
-});
+// Los dos paneles llevan su CSS en una plantilla de texto, y los dos se
+// editan a mano: la revisión vale para ambos.
+const PANELES = ['../components/AdminPanel.jsx', '../components/PlataformaPanel.jsx'];
+
+for (const panel of PANELES) {
+  const nombre = panel.split('/').pop();
+  await test(`llaves balanceadas — ${nombre}`, () => {
+    const css = cssDelPanel(panel);
+    assert.ok(css, 'no se encontró el bloque de estilos');
+    let abren = 0;
+    let cierran = 0;
+    for (const c of css) {
+      if (c === '{') abren++;
+      else if (c === '}') cierran++;
+    }
+    assert.equal(cierran, abren, `sobran ${Math.abs(abren - cierran)} llaves`);
+  });
+
+  await test(`sin propiedades fuera de toda regla — ${nombre}`, () => {
+    const css = cssDelPanel(panel);
+    const pila = [];
+    const huerfanas = [];
+    for (const [n, cruda] of css.split('\n').entries()) {
+      const linea = cruda.replace(/\/\*.*?\*\//g, '').trim();
+      if (!linea) continue;
+      if (pila[pila.length - 1] !== 'regla' && /^[a-z-]+\s*:\s*[^;{]+;$/.test(linea) && !linea.startsWith('--')) {
+        huerfanas.push(`línea ${n + 1}: ${linea.slice(0, 60)}`);
+      }
+      for (const c of linea) {
+        if (c === '{') pila.push(linea.trimStart().startsWith('@') ? 'grupo' : 'regla');
+        else if (c === '}') pila.pop();
+      }
+    }
+    assert.deepEqual(huerfanas, [], `hay propiedades fuera de toda regla:\n     ${huerfanas.join('\n     ')}`);
+  });
+}
 
 await test('no quedan bloques huérfanos (cuerpo sin selector)', () => {
   // Al borrar la línea del selector queda su cuerpo suelto: propiedades

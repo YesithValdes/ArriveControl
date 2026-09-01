@@ -13,6 +13,7 @@
  * fallo de correo jamás debe convertirse en un error del kiosco.
  */
 import nodemailer from 'nodemailer'
+import { hhmmss, horasCortas, enDoce } from './resumenDiario.js'
 
 const conf = () => {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM } = process.env
@@ -109,4 +110,106 @@ export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede,
     console.error('Comprobante de marcación NO enviado:', e?.message || e)
     return false
   }
+}
+
+/**
+ * Resumen del día de un empleado: UN correo al terminar la jornada, en vez de
+ * uno por cada marcación.
+ *
+ * Cuatro marcaciones al día eran cuatro correos, y la gente los filtraba o los
+ * ignoraba — lo que anulaba la razón de mandarlos, que es que cada quien pueda
+ * revisar su propio registro. Uno al día sí se lee, y además puede decir cosas
+ * que una marcación suelta no sabe: cuánto trabajó en total y qué quedó raro.
+ *
+ * Nunca lanza: devuelve true/false.
+ *
+ * @param {object} p
+ * @param {string} p.para      correo del empleado
+ * @param {string} p.nombre    nombre del empleado
+ * @param {string} p.fechaISO  día resumido (YYYY-MM-DD, hora Bogotá)
+ * @param {object} p.resumen   lo que devuelve resumenDelDia()
+ * @param {string=} p.empresa  nombre de la empresa
+ */
+export async function enviarResumenDiario({ para, nombre, fechaISO, resumen, empresa }) {
+  const t = transporte()
+  if (!t || !para || !resumen) return false
+
+  // Mediodía para nombrar el día: evita que el desfase horario lo corra al
+  // anterior al formatear en zona Bogotá.
+  const dia = new Date(`${fechaISO}T12:00:00-05:00`).toLocaleDateString('es-CO', FECHA_CO)
+  const total = hhmmss(resumen.trabajadoSeg)
+  const corto = horasCortas(resumen.trabajadoSeg)
+
+  const filas = resumen.marcas.map((m) => {
+    const entrada = m.tipo === 'entrada'
+    return `<tr>
+      <td style="padding:6px 12px 6px 0;font-size:15px">${entrada ? '🟢' : '🟠'}</td>
+      <td style="padding:6px 14px 6px 0;font-size:13px;color:#46586a">${entrada ? 'Entrada' : 'Salida'}</td>
+      <td style="padding:6px 0;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums">${enDoce(m.minutos)}</td>
+      <td style="padding:6px 0 6px 10px;font-size:11.5px;color:#7b8ca0">${m.automatica ? 'automática' : ''}</td>
+    </tr>`
+  }).join('')
+
+  const avisos = resumen.avisos.map((a) => `
+    <div style="margin-top:12px;font-size:12.5px;line-height:1.55;color:#7a6432;background:#f3ecd9;border-radius:10px;padding:10px 13px">
+      ⚠ ${a.texto}
+    </div>`).join('')
+
+  const detalle = [
+    resumen.franja ? ['Tu horario', `${enDoce(hhmmAMin(resumen.franja.entrada))} – ${enDoce(hhmmAMin(resumen.franja.salida))}`] : null,
+    resumen.sede ? ['Sede', resumen.sede] : null,
+    empresa ? ['Empresa', empresa] : null,
+  ].filter(Boolean).map(([k, v]) => `
+    <tr><td style="padding:3px 14px 3px 0;color:#7b8ca0">${k}</td><td style="font-weight:600">${v}</td></tr>`).join('')
+
+  const html = `
+  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:480px;margin:0 auto;border:1px solid #d8e2ee;border-radius:14px;overflow:hidden">
+    <div style="background:#3a5570;color:#fff;padding:14px 20px;font-weight:800;letter-spacing:.08em;font-size:13px">
+      ASISTENC<span style="color:#9fdcca">IA</span>
+    </div>
+    <div style="padding:22px 20px;color:#233240">
+      <div style="font-size:13px;color:#7b8ca0">Resumen de tu jornada</div>
+      <div style="font-size:21px;font-weight:800;margin-top:2px">${nombre}</div>
+      <div style="font-size:13px;color:#7b8ca0;text-transform:capitalize">${dia}</div>
+
+      <div style="margin:20px 0 4px;text-align:center">
+        <div style="font-size:34px;font-weight:800;color:#3a5570;font-variant-numeric:tabular-nums;line-height:1.1">${total}</div>
+        <div style="font-size:12px;color:#7b8ca0;letter-spacing:.06em;text-transform:uppercase">trabajado</div>
+      </div>
+      ${avisos}
+
+      <div style="margin-top:20px;font-size:11px;color:#7b8ca0;letter-spacing:.08em;text-transform:uppercase">Tus marcaciones</div>
+      <table style="margin-top:6px;border-collapse:collapse;width:100%">${filas}</table>
+
+      ${detalle ? `<div style="margin-top:18px;font-size:11px;color:#7b8ca0;letter-spacing:.08em;text-transform:uppercase">Detalle</div>
+      <table style="margin-top:6px;font-size:13px;color:#46586a;border-collapse:collapse">${detalle}</table>` : ''}
+
+      <div style="margin-top:20px;font-size:11px;color:#7b8ca0">Resumen automático de tu asistencia. No respondas a este correo.</div>
+    </div>
+  </div>`
+
+  const textoMarcas = resumen.marcas
+    .map((m) => `  ${m.tipo === 'entrada' ? 'Entrada' : 'Salida '}  ${enDoce(m.minutos)}${m.automatica ? '  (automática)' : ''}`)
+    .join('\n')
+
+  try {
+    await t.sendMail({
+      from: `AsistencIA <${conf().from}>`,
+      to: para,
+      subject: `Tu jornada del ${dia.replace(/ de \d{4}$/, '')} — ${corto}`,
+      html,
+      text: `Resumen de tu jornada\n${nombre}\n${dia}\n\nTrabajado: ${total}\n\n${textoMarcas}${
+        resumen.avisos.length ? `\n\n${resumen.avisos.map((a) => `! ${a.texto}`).join('\n')}` : ''}`,
+    })
+    return true
+  } catch (e) {
+    console.error('Resumen diario NO enviado:', e?.message || e)
+    return false
+  }
+}
+
+/** "17:30" → 1050, para reusar el formateador de 12 horas. */
+const hhmmAMin = (h) => {
+  const [a, b] = String(h ?? '').split(':').map(Number)
+  return Number.isFinite(a) && Number.isFinite(b) ? a * 60 + b : 0
 }

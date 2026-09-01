@@ -9,8 +9,7 @@
  *        permiso VER.
  */
 import { NextResponse, after } from 'next/server'
-import { registrarPaso, listarMarcaciones, guardarDireccion, acumuladoDelDia } from '../../../lib/marcaciones'
-import { enviarComprobanteMarcacion } from '../../../lib/correo.js'
+import { registrarPaso, listarMarcaciones, guardarDireccion } from '../../../lib/marcaciones'
 import { direccionDesdeCoordenadas } from '../../../lib/geocodificar.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
 import { puedeEscribir } from '../../../lib/empresas.js'
@@ -77,30 +76,19 @@ export async function POST(req) {
   if (r.duplicado) return NextResponse.json({ ok: true, duplicado: true, ultima: r.ultima })
 
   // DESPUÉS de responder (after), mejor esfuerzo: resolver la dirección
-  // legible del punto GPS (queda guardada para el panel) y enviar el
-  // comprobante. La marcación ya está guardada; nada de esto toca al kiosco.
+  // legible del punto GPS, que queda guardada para el panel. La marcación ya
+  // está guardada; esto no toca al kiosco.
+  //
+  // Aquí ya NO se manda correo. Antes salía un comprobante por cada
+  // marcación: con la salida a almorzar son cuatro al día por persona, y a
+  // ese ritmo la gente los filtra o los ignora — que anula la razón de
+  // mandarlos. Ahora sale UNO al terminar el día, con la jornada completa y
+  // lo que haya quedado raro (lib/enviosDiarios.js, disparado por la tarea
+  // de las 11 p. m.).
   after(async () => {
-    let direccion = null
     if (r.marcacion.lat != null && r.marcacion.lon != null) {
-      direccion = await direccionDesdeCoordenadas(r.marcacion.lat, r.marcacion.lon)
+      const direccion = await direccionDesdeCoordenadas(r.marcacion.lat, r.marcacion.lon)
       await guardarDireccion(ctx.esquema, r.marcacion.id, direccion).catch(() => {})
-    }
-    if (r.empleado?.correo) {
-      // Acumulado del día (mejor esfuerzo: si falla, el correo sale sin él).
-      const acumuladoSeg = await acumuladoDelDia(ctx.esquema, empleadoId, r.marcacion.ts).catch(() => null)
-      await enviarComprobanteMarcacion({
-        para: r.empleado.correo,
-        nombre: r.empleado.nombre,
-        tipo: r.tipo,
-        ts: r.marcacion.ts,
-        sede: r.sedeNombre,
-        lat: r.marcacion.lat,
-        lon: r.marcacion.lon,
-        direccion,
-        acumuladoSeg,
-        diferido: !!diferido,
-        empresa: ctx.empresa?.nombre,
-      })
     }
   })
   return NextResponse.json({ ok: true, tipo: r.tipo, marcacion: r.marcacion })

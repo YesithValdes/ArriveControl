@@ -41,6 +41,30 @@ const haceCuanto = (dias) => {
   return dias < 730 ? 'hace un año' : `hace ${Math.floor(dias / 365)} años`;
 };
 
+/**
+ * Estado de la SUSCRIPCIÓN, que es distinto del uso: una empresa puede estar
+ * marcando todos los días con la suscripción vencida, y al revés.
+ *
+ * La consola no lo mostraba —se veía el plan, no si estaba vigente— así que
+ * para saber a quién había que cobrarle tocaba entrar a la base de datos.
+ */
+function suscripcion(e) {
+  const dias = (f) => Math.ceil((new Date(f).getTime() - Date.now()) / 86400000);
+  if (e.venceEn && new Date(e.venceEn) > new Date()) {
+    const d = dias(e.venceEn);
+    return { etiqueta: `Paga · ${d} d`, tono: d <= 7 ? 'warn' : 'good', detalle: `Vence el ${fmtFecha(e.venceEn)}` };
+  }
+  if (e.pruebaHasta && new Date(e.pruebaHasta) > new Date()) {
+    const d = dias(e.pruebaHasta);
+    return { etiqueta: `Prueba · ${d} d`, tono: d <= 1 ? 'warn' : 'info', detalle: `La prueba termina el ${fmtFecha(e.pruebaHasta)}` };
+  }
+  if (e.venceEn || e.pruebaHasta) {
+    const cuando = e.venceEn ?? e.pruebaHasta;
+    return { etiqueta: 'Vencida', tono: 'crit', detalle: `Sin acceso desde el ${fmtFecha(cuando)}` };
+  }
+  return { etiqueta: 'Sin plan', tono: 'crit', detalle: 'Nunca tuvo prueba ni suscripción' };
+}
+
 /** Los tres estados que importan, en orden de urgencia para quien limpia. */
 function salud(e) {
   if (e.esquemaRoto) return { clave: 'rota', etiqueta: 'Esquema roto', tono: 'crit' };
@@ -63,6 +87,7 @@ export default function PlataformaPanel({ sesion }) {
   const [filtro, setFiltro] = useState('');
   const [segmento, setSegmento] = useState('todas');
   const [borrando, setBorrando] = useState(null); // { empresa, confirmacion }
+  const [regalando, setRegalando] = useState(null); // { empresa, dias, que }
   const [toast, setToast] = useState(null);
 
   const showToast = (m) => { setToast(m); setTimeout(() => setToast(null), 2800); };
@@ -87,6 +112,22 @@ export default function PlataformaPanel({ sesion }) {
     cargar();
   };
 
+  /** Regala días de prueba o de suscripción. Suma sobre lo que ya tenía. */
+  const darDias = async () => {
+    const { empresa, dias, que } = regalando;
+    const r = await fetch(`/api/plataforma/empresas/${empresa.id}/dias`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dias: Number(dias), que }),
+    });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
+    const hasta = que === 'prueba' ? d.empresa?.pruebaHasta : d.empresa?.venceEn;
+    setRegalando(null);
+    showToast(`${empresa.nombre}: ${dias} días más${hasta ? `, hasta el ${fmtFecha(hasta)}` : ''}`);
+    cargar();
+  };
+
   const eliminar = async () => {
     const { empresa, confirmacion } = borrando;
     const r = await fetch(`/api/plataforma/empresas/${empresa.id}`, {
@@ -108,12 +149,27 @@ export default function PlataformaPanel({ sesion }) {
     const cuenta = { activa: 0, inactiva: 0, rota: 0 };
     let empleados = 0;
     let marcaciones = 0;
+    // Del negocio, no del uso: cuántas pagan, cuántas están probando, cuántas
+    // se cayeron, y cuánto dinero entró.
+    let pagando = 0;
+    let enPrueba = 0;
+    let vencidas = 0;
+    let pendientes = 0;
+    let ingresos = 0;
+    let moneda = '';
     for (const e of empresas) {
       cuenta[salud(e).clave]++;
       empleados += e.empleados ?? 0;
       marcaciones += e.marcaciones ?? 0;
+      const s = suscripcion(e).etiqueta;
+      if (s.startsWith('Paga')) pagando++;
+      else if (s.startsWith('Prueba')) enPrueba++;
+      else vencidas++;
+      pendientes += e.pagosPendientes ?? 0;
+      ingresos += e.totalPagado ?? 0;
+      if (e.moneda) moneda = e.moneda;
     }
-    return { total: empresas.length, ...cuenta, empleados, marcaciones };
+    return { total: empresas.length, ...cuenta, empleados, marcaciones, pagando, enPrueba, vencidas, pendientes, ingresos, moneda };
   }, [empresas]);
 
   const lista = useMemo(() => {
@@ -183,6 +239,35 @@ export default function PlataformaPanel({ sesion }) {
         </section>
       )}
 
+      {/* El NEGOCIO, aparte del uso: son preguntas distintas y se miran en
+          momentos distintos. Arriba «quién usa esto»; aquí «quién paga». */}
+      {resumen && (
+        <section className="resumen negocio" aria-label="Resumen de suscripciones">
+          <div className="metrica">
+            <span className="m-label">Pagando</span>
+            <span className="m-valor good">{nf.format(resumen.pagando)}</span>
+          </div>
+          <div className="metrica">
+            <span className="m-label">En prueba</span>
+            <span className="m-valor info">{nf.format(resumen.enPrueba)}</span>
+          </div>
+          <div className="metrica">
+            <span className="m-label">Sin acceso</span>
+            <span className={`m-valor${resumen.vencidas > 0 ? ' crit' : ''}`}>{nf.format(resumen.vencidas)}</span>
+          </div>
+          <div className="metrica">
+            {/* Un pago pendiente viejo casi siempre es un webhook que no llegó:
+                el cliente pagó y su plan no se activó. Duele no verlo. */}
+            <span className="m-label">Pagos sin resolver</span>
+            <span className={`m-valor${resumen.pendientes > 0 ? ' warn' : ''}`}>{nf.format(resumen.pendientes)}</span>
+          </div>
+          <div className="metrica ancha">
+            <span className="m-label">Recaudado</span>
+            <span className="m-valor">{nf.format(resumen.ingresos)} {resumen.moneda}</span>
+          </div>
+        </section>
+      )}
+
       <div className="plat-controls">
         <div className="segmentos" role="tablist" aria-label="Filtrar por estado">
           {FILTROS.map((f) => (
@@ -219,12 +304,14 @@ export default function PlataformaPanel({ sesion }) {
             <span className="num">Empleados</span>
             <span className="num">Marcaciones</span>
             <span>Actividad</span>
+            <span>Suscripción</span>
             <span>Plan</span>
             <span />
           </div>
 
           {lista.map((e) => {
             const s = salud(e);
+            const sus = suscripcion(e);
             const dias = diasSinUso(e);
             return (
               <div className={`fila dato tono-${s.tono}`} role="row" key={e.id}>
@@ -251,6 +338,24 @@ export default function PlataformaPanel({ sesion }) {
                   </small>
                 </div>
 
+                <div className="actividad" data-etq="Suscripción">
+                  <span className={`chip ${sus.tono}`} title={sus.detalle}>{sus.etiqueta}</span>
+                  <small>
+                    {e.planId ? `plan ${e.planId}` : 'sin plan contratado'}
+                    {e.pagosPendientes > 0 ? ` · ${e.pagosPendientes} pago sin resolver` : ''}
+                  </small>
+                  {/* Configuración a medias: una empresa sin rostros ni horarios
+                      no llegó a usarse, por más que la suscripción esté al día.
+                      Es la señal de que hay que llamarla, no cobrarle. */}
+                  {!e.esquemaRoto && (e.empleados === 0 || e.conRostro === 0 || e.horarios === 0) && (
+                    <small className="falta">
+                      {e.empleados === 0 ? 'sin empleados'
+                        : e.conRostro === 0 ? 'nadie con rostro registrado'
+                          : 'sin horarios'}
+                    </small>
+                  )}
+                </div>
+
                 <div className="plan">
                   <select
                     aria-label={`Plan de ${e.nombre}`}
@@ -274,15 +379,64 @@ export default function PlataformaPanel({ sesion }) {
                   )}
                 </div>
 
-                <button
-                  className="btn ghost-danger"
-                  onClick={() => setBorrando({ empresa: e, confirmacion: '' })}
-                >
-                  Eliminar
-                </button>
+                <div className="acciones">
+                  {/* Regalar días: cerrando una venta es lo más pedido, y
+                      hasta ahora obligaba a entrar a la base a mano. */}
+                  <button className="btn" onClick={() => setRegalando({ empresa: e, dias: 7, que: 'suscripcion' })}>
+                    + Días
+                  </button>
+                  <button
+                    className="btn ghost-danger"
+                    onClick={() => setBorrando({ empresa: e, confirmacion: '' })}
+                  >
+                    Eliminar
+                  </button>
+                </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Regalar días de servicio */}
+      {regalando && (
+        <div className="velo" onClick={(ev) => ev.target === ev.currentTarget && setRegalando(null)}>
+          <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="dlg-dias">
+            <h3 id="dlg-dias">Días para «{regalando.empresa.nombre}»</h3>
+            <p className="dlg-cuerpo">
+              {suscripcion(regalando.empresa).detalle}. Los días se SUMAN a lo que ya
+              tiene, así que regalar nunca le quita los que le quedaban.
+            </p>
+            <div className="dlg-campos">
+              <label>
+                Cuántos días
+                <input
+                  type="number" min="1" max="365" value={regalando.dias}
+                  onChange={(ev) => setRegalando({ ...regalando, dias: ev.target.value })}
+                />
+              </label>
+              <label>
+                A qué
+                <select
+                  value={regalando.que}
+                  onChange={(ev) => setRegalando({ ...regalando, que: ev.target.value })}
+                >
+                  <option value="suscripcion">Suscripción (le da acceso pago)</option>
+                  <option value="prueba">Prueba gratuita</option>
+                </select>
+              </label>
+            </div>
+            <div className="dlg-botones">
+              <button className="btn" onClick={() => setRegalando(null)}>Cancelar</button>
+              <button
+                className="btn primary"
+                disabled={!(Number(regalando.dias) >= 1 && Number(regalando.dias) <= 365)}
+                onClick={darDias}
+              >
+                Regalar {regalando.dias} días
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -412,7 +566,7 @@ const CSS = `
 .tabla { display: flex; flex-direction: column; }
 .fila {
   display: grid;
-  grid-template-columns: minmax(0, 2.1fr) 5.5rem 5.5rem 7rem 8.5rem 11rem 6rem;
+  grid-template-columns: minmax(0, 1.9fr) 4.6rem 5rem 6.2rem 7.5rem 9.5rem 9.5rem 8.5rem;
   gap: 14px; align-items: center;
 }
 .fila.cabecera {
@@ -451,6 +605,24 @@ const CSS = `
 .chip.good { background: var(--good-soft); color: var(--good-text); }
 .chip.warn { background: var(--warn-soft); color: var(--warn-text); }
 .chip.crit { background: var(--crit-soft); color: var(--crit-text); }
+/* Azul para «en prueba»: no es bueno ni malo, es un estado en curso. Pintarlo
+   de verde diría que ya está resuelto y de rojo que algo falla. */
+.chip.info { background: var(--accent-soft); color: var(--accent-2); }
+
+/* La suscripción trae dos o tres renglones, así que la celda no centra. */
+.actividad .falta { color: var(--warn-text); }
+.acciones { display: flex; gap: 6px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+
+/* Los dos resúmenes son la misma rejilla; el de negocio va pegado al de
+   arriba y con una línea que los separa sin gritar. */
+.resumen.negocio { margin-top: -12px; padding-top: 16px; border-top: 1px solid var(--grid); }
+
+.dlg-campos { display: flex; gap: 14px; flex-wrap: wrap; margin: 16px 0 4px; }
+.dlg-campos label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); flex: 1 1 140px; }
+.dlg-campos input, .dlg-campos select {
+  font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+}
 
 .plan { display: flex; flex-direction: column; gap: 5px; }
 .plan select {

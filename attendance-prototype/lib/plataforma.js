@@ -27,8 +27,28 @@ export async function listarEmpresas() {
   const { rows: empresas } = await control(
     `select e.id, e.nombre, e.esquema, e.nit, e.dominio, e.plan, e.estado,
             e.limite_empleados as "limiteEmpleados", e.creada_en as "creadaEn",
+            -- La SUSCRIPCIÓN. Existe desde que se montaron los pagos, pero
+            -- esta consola no la miraba: se veía el plan y no si estaba
+            -- vigente, que es la pregunta que uno se hace de verdad.
+            e.plan_id as "planId", e.vence_en as "venceEn",
+            e.prueba_hasta as "pruebaHasta", e.bienvenida_en as "bienvenidaEn",
             (select count(*)::int from control."user" u where u.empresa_id = e.id) as usuarios,
-            (select max(u.ultimo_acceso) from control."user" u where u.empresa_id = e.id) as "ultimoAcceso"
+            (select max(u.ultimo_acceso) from control."user" u where u.empresa_id = e.id) as "ultimoAcceso",
+            (select count(*)::int from control.dispositivos d where d.empresa_id = e.id and d.activo) as kioscos,
+            -- Lo pagado y lo que quedó a medias. Un pago PENDIENTE viejo casi
+            -- siempre significa que el webhook no llegó, y hasta hoy eso solo
+            -- se descubría entrando a la base a mano.
+            (select count(*)::int from control.pagos p
+              where p.empresa_id = e.id and p.estado = 'APROBADA') as "pagosOk",
+            (select count(*)::int from control.pagos p
+              where p.empresa_id = e.id and p.estado = 'PENDIENTE') as "pagosPendientes",
+            (select coalesce(sum(p.monto), 0)::float from control.pagos p
+              where p.empresa_id = e.id and p.estado = 'APROBADA') as "totalPagado",
+            (select p.moneda from control.pagos p
+              where p.empresa_id = e.id and p.estado = 'APROBADA'
+              order by p.creado_en desc limit 1) as moneda,
+            (select max(p.creado_en) from control.pagos p
+              where p.empresa_id = e.id and p.estado = 'APROBADA') as "ultimoPago"
        from control.empresas e
       order by e.creada_en desc`,
   )
@@ -36,18 +56,63 @@ export async function listarEmpresas() {
   return Promise.all(empresas.map(async (e) => {
     try {
       const datos = await conEmpresa(e.esquema, async (db) => ({
-        empleados: Number((await db.query(`select count(*)::int as n from empleados`)).rows[0].n),
+        empleados: Number((await db.query(`select count(*)::int as n from empleados where activo`)).rows[0].n),
         marcaciones: Number((await db.query(`select count(*)::int as n from marcaciones`)).rows[0].n),
         ultimaMarcacion: (await db.query(`select max(ts) as ts from marcaciones`)).rows[0].ts,
+        // Salud de la cuenta: sin rostros el kiosco no reconoce a nadie, y sin
+        // horarios no se calculan horas. Son las dos cosas que hacen que una
+        // empresa dada de alta no llegue a usarse nunca.
+        conRostro: Number((await db.query(`select count(distinct empleado_id)::int as n from rostros`)).rows[0].n),
+        sedes: Number((await db.query(`select count(*)::int as n from sedes`)).rows[0].n),
+        horarios: Number((await db.query(`select count(*)::int as n from horarios`)).rows[0].n),
       }))
       return { ...e, ...datos, esquemaRoto: false }
     } catch {
       // Un esquema que no responde (alta a medias, borrado a mano) no puede
       // tumbar la pantalla: se marca y se sigue. Justamente es la clase de
       // basura que esta pantalla existe para poder limpiar.
-      return { ...e, empleados: null, marcaciones: null, ultimaMarcacion: null, esquemaRoto: true }
+      return {
+        ...e, empleados: null, marcaciones: null, ultimaMarcacion: null,
+        conRostro: null, sedes: null, horarios: null, esquemaRoto: true,
+      }
     }
   }))
+}
+
+/**
+ * Regala días de servicio a una empresa: extiende la prueba o la suscripción.
+ *
+ * Existe porque hasta ahora darle una semana más a un cliente —lo más normal
+ * del mundo cerrando una venta— obligaba a entrar a la base de datos a mano.
+ *
+ * Se extiende desde donde YA vence si todavía está vigente, y desde hoy si ya
+ * venció: así regalar días nunca le quita los que le quedaban.
+ *
+ * @param {string} id
+ * @param {number} dias  entre 1 y 365
+ * @param {'prueba'|'suscripcion'} que
+ */
+export async function regalarDias(id, dias, que = 'suscripcion') {
+  const n = Number(dias)
+  if (!Number.isInteger(n) || n < 1 || n > 365) {
+    return { error: 'Los días deben ser un número entero entre 1 y 365.' }
+  }
+  if (que !== 'prueba' && que !== 'suscripcion') {
+    return { error: 'Solo se puede extender la prueba o la suscripción.' }
+  }
+
+  const campo = que === 'prueba' ? 'prueba_hasta' : 'vence_en'
+  const { rows } = await control(
+    `update control.empresas
+        set ${campo} = greatest(coalesce(${campo}, now()), now()) + ($2 || ' days')::interval
+            ${que === 'suscripcion' ? `, estado = case when estado = 'activa' then estado else 'activa' end` : ''}
+      where id = $1
+      returning nombre, prueba_hasta as "pruebaHasta", vence_en as "venceEn", estado`,
+    [id, String(n)],
+  )
+  if (rows.length === 0) return { error: 'Esa empresa no existe.' }
+  olvidarEmpresas()
+  return { empresa: rows[0] }
 }
 
 /**
