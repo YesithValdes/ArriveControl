@@ -16,6 +16,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { euclideanDistance, MATCH_THRESHOLD, MARGEN_MINIMO } from '../utils/faceMath.js';
+// Modelo v2 (ArcFace 512-D, similitud coseno): decide la identidad cuando la
+// captura viva y la persona lo tienen; v1 queda de respaldo del resto.
+import { cargarV2, descriptorV2, puntos5DeFaceApi, similitudV2, promedioV2, V2_UMBRAL_SIM, V2_MARGEN_SIM } from '../lib/rostroV2.js';
 import {
   cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
   getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
@@ -69,12 +72,24 @@ export default function KioskMode() {
   const peopleRef = useRef([]);
 
   // Máquina de estados: idle | challenge | result | cooldown
-  const stateRef = useRef({ phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], lastCapture: 0, captures: 0 });
+  const stateRef = useRef({ phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], descsV2: [], lastCapture: 0, captures: 0 });
 
-  const [ready, setReady] = useState(false);
+  // Modelos listos: informativo (los refs son la verdad; ver modelosListos()).
+  const [, setReady] = useState(false);
   const [running, setRunning] = useState(false);
   const [loadError, setLoadError] = useState(null);
-  const [statusNote, setStatusNote] = useState('Preparando la cámara…');
+  // Espejo del error de modelos para leerlo dentro de esperas async.
+  const loadErrorRef = useRef(null);
+  const [statusNote, setStatusNote] = useState('Espere un momento…');
+  // El kiosco ARRANCA SOLO al abrir la app: la pantalla de reposo con su botón
+  // únicamente existe después de que alguien presione «Detener».
+  const [detenido, setDetenido] = useState(false);
+  // Arranque EN CURSO (roster + cámara): en ese lapso no hay botón — antes se
+  // asomaba «Iniciar kiosco» unos segundos y parecía que había que tocarlo.
+  const [iniciando, setIniciando] = useState(false);
+  // El arranque automático FALLÓ (sin cámara, sin roster): solo entonces el
+  // botón vuelve, como reintento manual.
+  const [arranqueFallo, setArranqueFallo] = useState(false);
 
   // Estado visual (espejo de la máquina, para render): idle | challenge | ok | no
   const [ui, setUi] = useState('idle');
@@ -198,9 +213,26 @@ export default function KioskMode() {
     return () => clearInterval(id);
   }, []);
 
+  // ── Caché persistente de los archivos pesados ─────────────────────────
+  // El service worker guarda modelos/wasm/chunks en Cache Storage (cuota de
+  // disco real): el caché HTTP del WebView los desalojaba al cerrar la app y
+  // cada arranque en frío volvía a bajar ~16 MB. Con esto solo se bajan la
+  // primera vez. No toca HTML ni APIs, así que la auto-actualización sigue.
+  useEffect(() => {
+    navigator.serviceWorker?.register?.('/sw.js').catch(() => { /* sin SW el kiosco funciona igual */ });
+  }, []);
+
+  // Modelo v2 listo (se comprueba en caliente dentro del bucle de captura).
+  const v2ListoRef = useRef(false);
+
   // ── Carga de modelos (paralela, GPU→CPU) ──────────────────────────────
   useEffect(() => {
     let cancelled = false;
+    // El v2 carga EN PARALELO y es opcional: si falla (sin red la primera
+    // vez, tablet sin memoria), el kiosco sigue decidiendo con v1.
+    cargarV2()
+      .then(() => { v2ListoRef.current = true; console.log('[Kiosco⏱] modelo v2 (ArcFace) listo'); })
+      .catch((e) => console.warn('[Kiosco] modelo v2 no disponible; se sigue con v1:', e?.message || e));
     (async () => {
       try {
         const loadMp = (async () => {
@@ -231,27 +263,33 @@ export default function KioskMode() {
         })();
         const [landmarker, faceapi] = await Promise.all([loadMp, loadFa]);
         if (cancelled) return;
-        // CALENTAMIENTO: la primera inferencia real compila los kernels del
-        // backend (~2-3 s en teléfono) y la pagaba el PRIMER empleado — por
-        // eso el cronómetro daba ROSTRO ~2950 ms la primera vez y ~600 ms
-        // después. Se paga aquí, contra lienzos vacíos, mientras la pantalla
-        // todavía dice "Cargando…". Mejor esfuerzo: si falla, no bloquea.
-        try {
-          const c = document.createElement('canvas');
-          c.width = 224; c.height = 224;
-          await faceapi.detectSingleFace(c, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECTOR_INPUT, scoreThreshold: 0.5 }));
-          const c2 = document.createElement('canvas');
-          c2.width = 150; c2.height = 150;
-          await faceapi.nets.faceLandmark68Net.detectLandmarks(c2);
-          await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(c2);
-        } catch { /* sin calentamiento se paga en la primera marcación, como antes */ }
-        if (cancelled) return;
+        // Los refs se ponen DE UNA: el kiosco puede empezar a validar ya.
         landmarkerRef.current = landmarker;
         faceapiRef.current = faceapi;
         setReady(true);
-        setStatusNote('Listo para iniciar.');
+        setStatusNote('Espere un momento…');
+        // CALENTAMIENTO en SEGUNDO PLANO: la primera inferencia compila los
+        // kernels (~2-3 s en tablet). Antes bloqueaba el arranque entero; ahora
+        // corre de fondo. Si alguien marca antes de que termine, su primera
+        // detección paga esa compilación (más lenta, no fallida) — a cambio,
+        // el kiosco queda operativo esos segundos antes en TODOS los arranques.
+        ;(async () => {
+          try {
+            const c = document.createElement('canvas');
+            c.width = 224; c.height = 224;
+            await faceapi.detectSingleFace(c, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECTOR_INPUT, scoreThreshold: 0.5 }));
+            const c2 = document.createElement('canvas');
+            c2.width = 150; c2.height = 150;
+            await faceapi.nets.faceLandmark68Net.detectLandmarks(c2);
+            await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(c2);
+          } catch { /* sin calentamiento se paga en la primera marcación, como antes */ }
+        })();
       } catch (err) {
-        if (!cancelled) { setLoadError(`${err?.name}: ${err?.message || err}`); setStatusNote('No se pudo preparar la cámara.'); }
+        if (!cancelled) {
+          loadErrorRef.current = `${err?.name}: ${err?.message || err}`;
+          setLoadError(loadErrorRef.current);
+          setStatusNote('No se pudo preparar la cámara.');
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -394,7 +432,7 @@ export default function KioskMode() {
       streamRef.current = stream;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
-      stateRef.current = { phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], lastCapture: 0, captures: 0 };
+      stateRef.current = { phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], descsV2: [], lastCapture: 0, captures: 0 };
       setResult(null);
       ponerProgreso(0);
       ponerEncuadre('ok');
@@ -427,10 +465,32 @@ export default function KioskMode() {
   useEffect(() => stopAll, [stopAll]);
 
   // ── Arranque ──────────────────────────────────────────────────────────
+  /**
+   * Espera a que los modelos faciales (que cargan en paralelo desde el
+   * montaje) estén listos. Si su carga falló, revienta con ese motivo.
+   */
+  const modelosListos = async () => {
+    while (!(faceapiRef.current && landmarkerRef.current)) {
+      if (loadErrorRef.current) throw new Error(loadErrorRef.current);
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  };
+
   const handleStart = async () => {
     // LO PRIMERO, sin ningún `await` antes: el permiso de audio solo se
     // concede dentro del gesto que lo pidió.
     abrirAudio();
+    setIniciando(true);
+    setArranqueFallo(false);
+    try {
+
+    // La CÁMARA se pide de una, en PARALELO con el roster (y con los modelos,
+    // que vienen cargando desde el montaje): son las tres esperas largas del
+    // arranque y no dependen entre sí. Antes iban en fila y el primer arranque
+    // sumaba modelos + roster + cámara; ahora cuesta lo que tarde la más lenta.
+    const camProm = navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    camProm.catch(() => { /* el rechazo real se atiende más abajo */ });
+    const soltarCamara = () => camProm.then((s) => s.getTracks().forEach((t) => t.stop())).catch(() => {});
 
     // Roster desde la BASE DE DATOS (con caché local para cortes de red).
     let all = [];
@@ -445,11 +505,13 @@ export default function KioskMode() {
       if (e instanceof ClaveRechazada) {
         olvidarActivacion();
         setConfigurado(false);
-        setCfgError('Este dispositivo ya no está autorizado. Vuelve a registrarlo.');
-        cargarSedes().then(setCfgSedes).catch(() => { /* sin red: se reintenta al reactivar */ });
+        setCfgError('Este dispositivo ya no está autorizado. Pide un código nuevo en el panel y vuelve a registrarlo.');
+        soltarCamara();
         return;
       }
       setStatusNote(`No se pudo cargar el roster: ${e.message}`);
+      setArranqueFallo(true);
+      soltarCamara();
       return;
     }
     // Solo personas con descriptor VÁLIDO: un registro corrupto en el roster
@@ -469,6 +531,8 @@ export default function KioskMode() {
       setStatusNote(all.length > 0
         ? 'Ningún empleado tiene rostro registrado.'
         : 'No hay empleados registrados.');
+      setArranqueFallo(true);
+      soltarCamara();
       return;
     }
     // Aprovechar el arranque para vaciar la cola offline pendiente.
@@ -477,7 +541,7 @@ export default function KioskMode() {
       setSyncMotivo(motivo);
     }).catch(() => {});
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      const stream = await camProm;
       // Si el sistema mata el track SIN ocultar la app (llamada en burbuja,
       // otra app pidiendo la cámara), se recupera igual que al volver del
       // segundo plano. Oculta, no: el visibilitychange lo hará al volver.
@@ -488,15 +552,67 @@ export default function KioskMode() {
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
       await acquireWakeLock();
-      stateRef.current = { phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], lastCapture: 0, captures: 0 };
+      stateRef.current = { phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], descsV2: [], lastCapture: 0, captures: 0 };
+      // La cámara se MUESTRA ya (la persona se ve al instante); si los modelos
+      // aún terminan de cargar, el análisis empieza en cuanto estén.
       setRunning(true);
       setResult(null);
       setUi('idle');
+      await modelosListos();
       startLoop();
     } catch (err) {
+      stopAll();
       setStatusNote(`No se pudo abrir la cámara: ${err?.message || err}`);
+      setArranqueFallo(true);
+    }
+
+    } finally {
+      setIniciando(false);
     }
   };
+
+  // ── Auto-actualización ────────────────────────────────────────────────
+  // Una tablet en la pared nunca recarga la página, así que cada deploy la
+  // dejaba corriendo la versión vieja para siempre. Cada 10 minutos se
+  // pregunta al servidor qué versión sirve; si cambió, la página se recarga
+  // sola — pero SOLO con el kiosco tranquilo (sin un reto de rostro en curso),
+  // para no cortarle la marcación a nadie. Al recargar, el auto-arranque
+  // vuelve a encender la cámara.
+  const versionRef = useRef(null);
+  useEffect(() => {
+    let recargando = false;
+    const revisar = async () => {
+      if (recargando || document.visibilityState !== 'visible') return;
+      try {
+        const r = await fetch('/api/version', { cache: 'no-store' });
+        const d = await r.json();
+        if (!d?.version) return;
+        if (versionRef.current === null) { versionRef.current = d.version; return; }
+        if (d.version !== versionRef.current && stateRef.current.phase === 'idle') {
+          recargando = true;
+          window.location.reload();
+        }
+      } catch { /* sin red: se intentará en el próximo ciclo */ }
+    };
+    revisar();
+    const id = setInterval(revisar, 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── Auto-arranque ─────────────────────────────────────────────────────
+  // Al abrir la app (con el dispositivo ya activado y los modelos listos) el
+  // kiosco pasa DIRECTO a detectar rostros, sin pantalla de inicio. El reposo
+  // con botón solo aparece tras presionar «Detener», o si el arranque falla
+  // (sin cámara, sin roster): ahí se queda el error y el botón para reintentar.
+  const autoIniciando = useRef(false);
+  useEffect(() => {
+    // Sin esperar `ready`: el arranque corre en paralelo con los modelos y
+    // handleStart los espera internamente justo antes de analizar.
+    if (!configurado || running || detenido || autoIniciando.current) return;
+    autoIniciando.current = true;
+    Promise.resolve(handleStart()).finally(() => { autoIniciando.current = false; });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configurado, running, detenido]);
 
   // ── Bucle principal ───────────────────────────────────────────────────
   const startLoop = () => {
@@ -538,8 +654,8 @@ export default function KioskMode() {
             st.phase = 'challenge';
             st.deadline = now + CHALLENGE_TIMEOUT_MS;
             st.sawOpen = false; st.sawClosed = false;
-            st.descs = []; st.captures = 0; st.lastCapture = 0;
-            st.reintento = false; st.mejor = null; // reintento silencioso por distancia
+            st.descs = []; st.descsV2 = []; st.captures = 0; st.lastCapture = 0;
+            st.reintento = false; // reintento silencioso por identidad
             // Cronómetro del reto: cuánto tarda cada validación (se lee en el
             // logcat de Android como mensajes de consola del WebView).
             st.t0 = now; st.tParpadeo = null; st.tCaptura = null;
@@ -607,6 +723,13 @@ export default function KioskMode() {
                     st.tCaptura = performance.now() - st.t0;
                     console.log(`[Kiosco⏱] ROSTRO listo a los ${Math.round(st.tCaptura)} ms (primera captura de identidad)`);
                   }
+                  // Mismo cuadro, descriptor v2 (ArcFace) con los landmarks ya
+                  // detectados. Best-effort: si falla, la captura v1 queda.
+                  if (v2ListoRef.current) {
+                    descriptorV2(video, puntos5DeFaceApi(det.landmarks))
+                      .then((v) => st.descsV2.push(v))
+                      .catch(() => {});
+                  }
                 } else {
                   console.log('[Kiosco⏱] captura de rostro sin resultado (face-api no vio la cara en ese cuadro)');
                 }
@@ -621,15 +744,13 @@ export default function KioskMode() {
           // se toma en los cuadros previos con los ojos abiertos.
           if (st.sawOpen && st.sawClosed && st.descs.length > 0) {
             const live = averageDescriptors(st.descs);
+            // ── Ranking v1 (euclidiano): existe para TODOS los rostros ──
             // Los DOS más parecidos, no solo el ganador: sin el segundo no se
             // puede saber si la decisión fue clara o un empate a los pelos.
+            // Por persona gana su rostro MÁS parecido (nunca el promedio).
             let best = { distance: Infinity, person: null };
             let segundo = { distance: Infinity, person: null };
             for (const p of peopleRef.current) {
-              // Distancia al rostro MÁS PARECIDO de esa persona: con varias
-              // fotos (distinta luz, con y sin gafas) gana la que se parezca,
-              // sin promediarlas — un promedio de fotos distintas cae en un
-              // punto que no representa a ninguna.
               let d = Infinity;
               for (const desc of p.descriptores) {
                 const dd = euclideanDistance(desc, live);
@@ -640,53 +761,99 @@ export default function KioskMode() {
             }
             const margen = segundo.distance - best.distance; // Infinity con un solo empleado
 
-            // MARGEN DE DECISIÓN: no basta parecerse al primero; hay que
-            // parecerse CLARAMENTE más que al segundo. Con rostros vecinos
-            // (Tatiana/Hanny a 0.548) una cara podía caer a 0.494 de la
-            // persona equivocada y ganar por milésimas: el sistema lo daba
-            // por certeza. Ahora un empate es "no sé quién eres" y se
-            // rechaza, que es el error barato — el caro es marcar por otro.
-            //
-            // Bajar el umbral global NO era la solución: con las fotos
-            // actuales (rostros apiñados) 0.45 habría rechazado el 38% de
-            // las marcaciones buenas. El margen solo frena los empates.
-            const ambiguo = margen < MARGEN_MINIMO;
+            // ── Ranking v2 (similitud coseno): solo re-registrados ──
+            const liveV2 = st.descsV2.length > 0 ? promedioV2(st.descsV2) : null;
+            let bestV2 = { sim: -1, person: null };
+            let segundoV2 = { sim: -1, person: null };
+            let conV2 = 0;
+            if (liveV2) {
+              for (const p of peopleRef.current) {
+                const dvs = p.descriptoresV2 ?? [];
+                if (dvs.length === 0) continue;
+                conV2 += 1;
+                let s = -1;
+                for (const dv of dvs) { const ss = similitudV2(dv, liveV2); if (ss > s) s = ss; }
+                if (s > bestV2.sim) { segundoV2 = bestV2; bestV2 = { sim: s, person: p }; }
+                else if (s > segundoV2.sim) segundoV2 = { sim: s, person: p };
+              }
+            }
 
-            // REINTENTO SILENCIOSO: si la identidad no alcanzó el umbral, o
-            // quedó ambigua, no se muestra el rechazo — se descartan las
-            // capturas (pudieron salir movidas o en mal ángulo) y se toman
-            // frescas para medir de nuevo. La prueba de vida ya está hecha y
-            // no se repite; un reconocido con sede ajena no reintenta.
-            if ((best.distance >= MATCH_THRESHOLD || ambiguo) && !st.reintento) {
+            // MODO: con TODO el roster re-registrado (y captura v2 viva),
+            // decide v2 y el modelo viejo queda RETIRADO de la decisión.
+            // Mientras quede gente sin v2, decide v1 — pero si el ganador v1
+            // ya tiene v2, v2 tiene que estar de acuerdo (VETO): es lo que
+            // separa a las parejas que v1 confunde (Tatiana/Hanny, Óscar/Edwin).
+            const modoV2 = liveV2 !== null && conV2 > 0 && conV2 === peopleRef.current.length;
+
+            let reconocido, ambiguo, ganador, distanciaMostrada;
+            if (modoV2) {
+              ambiguo = segundoV2.person !== null && (bestV2.sim - segundoV2.sim) < V2_MARGEN_SIM;
+              reconocido = bestV2.sim >= V2_UMBRAL_SIM && !ambiguo;
+              ganador = bestV2.person;
+              // Para pantalla/logs se reporta 1−similitud (0 = idéntico).
+              distanciaMostrada = Math.round((1 - bestV2.sim) * 1000) / 1000;
+            } else {
+              // El MARGEN v1 frena los empates: parecerse al primero no basta,
+              // hay que parecerse claramente MÁS que al segundo.
+              ambiguo = margen < MARGEN_MINIMO;
+              let simGanador = null;
+              if (liveV2 && best.person?.descriptoresV2?.length > 0) {
+                simGanador = -1;
+                for (const dv of best.person.descriptoresV2) {
+                  const ss = similitudV2(dv, liveV2);
+                  if (ss > simGanador) simGanador = ss;
+                }
+              }
+              const vetadoPorV2 = simGanador !== null && simGanador < V2_UMBRAL_SIM;
+              if (vetadoPorV2) {
+                console.log(`[Kiosco⏱] VETO v2: ${best.person?.name} ganó por v1 (${best.distance.toFixed(3)}) pero v2 lo niega (sim ${simGanador.toFixed(3)} < ${V2_UMBRAL_SIM})`);
+              }
+              reconocido = best.distance < MATCH_THRESHOLD && !ambiguo && !vetadoPorV2;
+              ganador = best.person;
+              distanciaMostrada = Math.round(best.distance * 1000) / 1000;
+            }
+
+            // REINTENTO SILENCIOSO: si la identidad no alcanzó, o quedó
+            // ambigua, no se muestra el rechazo — se descartan las capturas
+            // (pudieron salir movidas) y se toman frescas para medir de nuevo.
+            // La prueba de vida ya está hecha y no se repite. El reintento
+            // decide DE CERO: mezclar mediciones v1/v2 entre intentos confunde.
+            if (!reconocido && !st.reintento) {
               st.reintento = true;
-              // El mejor de los dos intentos solo se guarda si fue LIMPIO:
-              // quedarse con una medición ambigua sería reciclar la duda.
-              st.mejor = ambiguo ? null : best;
-              st.descs = []; st.captures = 0; st.lastCapture = 0;
+              st.descs = []; st.descsV2 = []; st.captures = 0; st.lastCapture = 0;
               st.deadline = Math.max(st.deadline, now + 4000); // aire para las capturas nuevas
-              console.log(`[Kiosco⏱] ${ambiguo ? `AMBIGUO: ${best.person?.name} (${best.distance.toFixed(3)}) vs ${segundo.person?.name} (${segundo.distance.toFixed(3)}), margen ${margen.toFixed(3)}` : `identidad no coincidió (distancia ${best.distance.toFixed(3)})`}; reintento silencioso con capturas frescas`);
+              console.log(`[Kiosco⏱] ${ambiguo ? 'AMBIGUO' : 'identidad no coincidió'} (modo ${modoV2 ? 'v2' : 'v1'}); reintento silencioso con capturas frescas`);
               break;
             }
-            // Tras un reintento, vale el MEJOR de los dos intentos limpios.
-            if (st.mejor && st.mejor.distance < best.distance) best = st.mejor;
 
             const total = Math.round(now - st.t0);
             const primero = (st.tParpadeo ?? Infinity) <= (st.tCaptura ?? Infinity) ? 'OJOS' : 'ROSTRO';
-            console.log(`[Kiosco⏱] CONCLUYE a los ${total} ms — primero terminó: ${primero} (ojos: ${Math.round(st.tParpadeo ?? -1)} ms, rostro: ${Math.round(st.tCaptura ?? -1)} ms${st.reintento ? ', con reintento' : ''}) · 1º ${best.person?.name} ${best.distance.toFixed(3)} · 2º ${segundo.person?.name ?? '—'} ${Number.isFinite(segundo.distance) ? segundo.distance.toFixed(3) : '—'} · margen ${Number.isFinite(margen) ? margen.toFixed(3) : '∞'}`);
-            const distance = Math.round(best.distance * 1000) / 1000;
-            const reconocido = distance < MATCH_THRESHOLD && !ambiguo;
+            // El log CONCLUYE lleva SIEMPRE ambas mediciones: es la materia
+            // prima para calibrar los umbrales v2 con datos reales.
+            const logV2 = liveV2
+              ? `v2(${conV2}/${peopleRef.current.length}) 1º ${bestV2.person?.name ?? '—'} sim ${bestV2.sim >= 0 ? bestV2.sim.toFixed(3) : '—'} · 2º ${segundoV2.sim >= 0 ? `${segundoV2.person?.name} ${segundoV2.sim.toFixed(3)}` : '—'}`
+              : 'v2 sin captura';
+            console.log(`[Kiosco⏱] CONCLUYE a los ${total} ms — modo ${modoV2 ? 'V2' : 'V1'} · primero terminó: ${primero} (ojos: ${Math.round(st.tParpadeo ?? -1)} ms, rostro: ${Math.round(st.tCaptura ?? -1)} ms${st.reintento ? ', con reintento' : ''}) · v1 1º ${best.person?.name} ${best.distance.toFixed(3)} · 2º ${segundo.person?.name ?? '—'} ${Number.isFinite(segundo.distance) ? segundo.distance.toFixed(3) : '—'} · margen ${Number.isFinite(margen) ? margen.toFixed(3) : '∞'} · ${logV2}`);
+
             // Sede exigida: si el empleado tiene el flag, solo puede marcar en
             // un kiosco de SU sede. La sede asignada sin flag es informativa.
-            const sedeAjena = reconocido && best.person.validarSede
-              && best.person.sedeId && best.person.sedeId !== getSedeId();
+            const sedeAjena = reconocido && ganador.validarSede
+              && ganador.sedeId && ganador.sedeId !== getSedeId();
             const ok = reconocido && !sedeAjena;
             concludeResult(
               ok,
-              reconocido ? best.person : null, // con sede ajena el rechazo dice a QUIÉN
-              distance,
+              reconocido ? ganador : null, // con sede ajena el rechazo dice a QUIÉN
+              distanciaMostrada,
               ok ? null : sedeAjena ? 'Debes marcar en el kiosco de tu sede asignada.'
                 : ambiguo ? 'No pudimos distinguirte con seguridad. Acércate un poco más e intenta de nuevo.'
                   : 'Intenta de nuevo mirando de frente.',
+              {
+                v1_mejor: Number.isFinite(best.distance) ? best.distance : null,
+                v1_segundo: Number.isFinite(segundo.distance) ? segundo.distance : null,
+                v2_mejor: bestV2.sim >= 0 ? bestV2.sim : null,
+                v2_segundo: segundoV2.sim >= 0 ? segundoV2.sim : null,
+                modo: modoV2 ? 'v2' : liveV2 ? 'v1+veto' : 'v1',
+              },
             );
           }
           break;
@@ -722,7 +889,7 @@ export default function KioskMode() {
     rafRef.current = requestAnimationFrame(tick);
   };
 
-  function concludeResult(ok, person, distance, failReason) {
+  function concludeResult(ok, person, distance, failReason, metricas = null) {
     ponerEncuadre('ok'); // que la guía no se quede pegada en el resultado
     ponerProgreso(100); // fase final: coincidencia resuelta
     const st = stateRef.current;
@@ -735,6 +902,9 @@ export default function KioskMode() {
       aceptado: ok,
       distancia: distance,
       livenessOk: !failReason?.includes('parpadeo'),
+      // Mediciones para calibrar v2 en el servidor (los logs de la tablet se
+      // pierden; estos números no — son la base del ajuste de umbrales).
+      metricas,
     });
 
     const time = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -842,7 +1012,9 @@ export default function KioskMode() {
         pointerEvents: running ? 'auto' : 'none',
       }}>
         <span style={s.hudMarca}>CONTROL <span style={{ color: 'var(--accent)' }}>REGISTRO</span></span>
-        <button style={s.hudDetener} onClick={stopAll}>⏹ Detener</button>
+        {/* Detener es la ÚNICA vía al reposo: marca la parada como manual
+            para que el auto-arranque no vuelva a encender la cámara solo. */}
+        <button style={s.hudDetener} onClick={() => { setDetenido(true); setStatusNote('Kiosco en pausa.'); stopAll(); }}>⏹ Detener</button>
 
         {/* Zona de mensaje, SIEMPRE arriba del cuadro */}
         <div style={s.hudMensaje}>
@@ -981,9 +1153,12 @@ export default function KioskMode() {
             </div>
           )}
 
-          {!running && configurado && (
-            <button style={s.startBtn} onClick={handleStart} disabled={!ready}>
-              {ready ? '▶️ Iniciar kiosco' : 'Cargando…'}
+          {/* El botón SOLO existe tras una pausa manual o un arranque fallido.
+              Mientras carga y arranca solo, el reposo dice «Espere un
+              momento…» sin nada que tocar. */}
+          {!running && configurado && (detenido || arranqueFallo) && !iniciando && (
+            <button style={s.startBtn} onClick={() => { setDetenido(false); handleStart(); }}>
+              {arranqueFallo && !detenido ? '↻ Reintentar' : '▶️ Iniciar kiosco'}
             </button>
           )}
           {pendientes > 0 && (

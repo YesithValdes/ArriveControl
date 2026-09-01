@@ -32,6 +32,44 @@ export const MATCH_THRESHOLD = 0.5;
  */
 export const MARGEN_MINIMO = 0.10;
 
+// ── Modelo v2 (ArcFace/MobileFaceNet, 512-D, similitud coseno) ─────────
+//
+// La MEDIDA de v2 es SIMILITUD (más alta = más parecido), al revés que la
+// distancia euclidiana de v1. Estas constantes son la única fuente de verdad;
+// lib/rostroV2.js (navegador) las re-exporta.
+
+export const V2_LENGTH = 512
+
+/** Similitud mínima para aceptar una identidad con v2. Se calibra con logs. */
+export const V2_UMBRAL_SIM = 0.35
+
+/** Margen mínimo de similitud entre el 1º y el 2º candidato (análogo al v1). */
+export const V2_MARGEN_SIM = 0.08
+
+/**
+ * Colisión en el REGISTRO con v2: una foto que se parezca a OTRA persona por
+ * encima de esto se rechaza, con aire sobre el umbral de aceptación.
+ */
+export const V2_LIMITE_COLISION_SIM = 0.45
+
+export const esDescriptorV2 = (d) =>
+  Array.isArray(d) && d.length === V2_LENGTH && d.every((n) => typeof n === 'number' && Number.isFinite(n))
+
+/**
+ * Similitud coseno entre dos descriptores v2. Divide por las normas para que
+ * también valga con vectores que no lleguen normalizados.
+ */
+export function similitudCosenoV2(a, b) {
+  let dot = 0, na = 0, nb = 0
+  for (let i = 0; i < V2_LENGTH; i++) {
+    dot += a[i] * b[i]
+    na += a[i] * a[i]
+    nb += b[i] * b[i]
+  }
+  const den = Math.sqrt(na) * Math.sqrt(nb)
+  return den === 0 ? 0 : dot / den
+}
+
 /**
  * Valida que el valor sea un vector numérico de 128 posiciones.
  * Acepta Array o Float32Array (face-api devuelve Float32Array).

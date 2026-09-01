@@ -12,6 +12,7 @@ import { conEmpresa } from '../../../lib/db.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
 import { cabeOtroEmpleado } from '../../../lib/empresas.js'
 import { validarDias } from '../../../lib/horariosDias.js'
+import { esDescriptorV2 } from '../../../utils/faceMath.js'
 
 export const runtime = 'nodejs'
 
@@ -33,12 +34,19 @@ export async function GET(req) {
     // TODOS los rostros de cada empleado, no solo el principal: el kiosco
     // compara contra el más parecido de los suyos, que es lo que absorbe los
     // cambios de luz y de ángulo sin diluir la identidad.
+    // Cada rostro baja como PAR {v1, v2}: v2 (ArcFace) es el que decide cuando
+    // ambas partes lo tienen; v1 es el respaldo de los aún no re-registrados.
     const { rows } = await conEmpresa(ctx.esquema, (db) => db.query(
       `select e.id, e.nombre, e.cedula, e.sede_id, e.validar_sede, e.descriptor_facial,
               coalesce(
                 (select array_agg(r.descriptor) from rostros r where r.empleado_id = e.id),
                 case when e.descriptor_facial is null then '{}' else array[e.descriptor_facial] end
-              ) as descriptores
+              ) as descriptores,
+              coalesce(
+                (select json_agg(json_build_object('v1', r.descriptor, 'v2', r.descriptor_v2) order by r.creado_en)
+                   from rostros r where r.empleado_id = e.id),
+                '[]'
+              ) as rostros_pares
          from empleados e
         where e.activo
         order by e.nombre`,
@@ -58,7 +66,8 @@ export async function GET(req) {
     `select e.id, e.nombre, e.cedula, e.correo, e.sede_id, s.nombre as sede_nombre, e.validar_sede, e.validar_ubicacion,
             e.entrada_esperada, e.salida_esperada, e.almuerzo_min, e.jornada_dias, e.jornada_semanal,
             e.salario_mensual, e.activo, e.creado_en,
-            (e.descriptor_facial is not null) as tiene_rostro
+            (e.descriptor_facial is not null) as tiene_rostro,
+            (select count(*)::int from rostros r where r.empleado_id = e.id and r.descriptor_v2 is not null) as rostros_v2
        from empleados e
        left join sedes s on s.id = e.sede_id
       ${incluirInactivos ? '' : 'where e.activo'}
@@ -101,6 +110,10 @@ export async function POST(req) {
   const descriptores = (Array.isArray(c?.descriptores) ? c.descriptores : []).filter(esDescriptor)
   const listaRostros = descriptores.length > 0 ? descriptores : (descriptor ? [descriptor] : [])
   const principal = listaRostros[0] ?? null
+  // Descriptores v2 (ArcFace, 512-D), PARALELOS a listaRostros por posición:
+  // la misma foto produce ambos. Opcionales — un cliente viejo no los manda.
+  const crudosV2 = Array.isArray(c?.descriptores_v2) ? c.descriptores_v2 : []
+  const listaV2 = listaRostros.map((_, i) => (esDescriptorV2(crudosV2[i]) ? crudosV2[i] : null))
 
   // Correo del comprobante de marcación. OPCIONAL: sin correo no se envía
   // nada. Validación mínima: si viene algo, que al menos parezca un correo.
@@ -141,8 +154,11 @@ export async function POST(req) {
          c.almuerzo_min ?? 60, jornadaDias == null ? null : JSON.stringify(jornadaDias), jornada, salario, principal],
       )
       // Misma transacción: un empleado sin sus rostros no podría marcar.
-      for (const d of listaRostros) {
-        await db.query(`insert into rostros (empleado_id, descriptor) values ($1,$2)`, [rows[0].id, d])
+      for (let i = 0; i < listaRostros.length; i++) {
+        await db.query(
+          `insert into rostros (empleado_id, descriptor, descriptor_v2) values ($1,$2,$3)`,
+          [rows[0].id, listaRostros[i], listaV2[i]],
+        )
       }
       return { ...rows[0], rostros: listaRostros.length }
     })

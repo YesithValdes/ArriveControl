@@ -1,0 +1,13 @@
+-- 010_rostros_v2.sql — Descriptor facial v2 (ArcFace/MobileFaceNet, 512-D).
+--
+-- Migración del modelo de reconocimiento: el embedding de face-api (128-D,
+-- arquitectura de 2017) no separa suficiente — en un roster de ~10 personas ya
+-- produjo dos parejas confundibles (Tatiana/Hanny y Óscar/Edwin). El modelo v2
+-- (InsightFace w600k_mbf) mide con similitud coseno sobre 512 dimensiones y
+-- separa esas mismas parejas con holgura.
+--
+-- CONVIVENCIA: cada rostro nuevo guarda AMBOS descriptores; los viejos solo
+-- tienen v1 y siguen funcionando. El kiosco decide con v2 cuando las dos
+-- partes lo tienen, y v1 queda de respaldo hasta re-registrar a todos.
+-- Igual que `descriptor`, es DATO BIOMÉTRICO (Ley 1581).
+alter table rostros add column if not exists descriptor_v2 real[];

@@ -17,3 +17,5 @@ db/respaldo-*.json
 db/volcado-*.json
 *.dump
 *.sql.gz
+
+db/respaldos/

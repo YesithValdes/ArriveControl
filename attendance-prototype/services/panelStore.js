@@ -345,6 +345,9 @@ export async function syncPanel() {
     createdAt: e.creado_en,
     activo: e.activo,
     tieneRostro: e.tiene_rostro,
+    // Cuántos de sus rostros ya tienen descriptor del MODELO V2: con 0 aún
+    // le falta la foto nueva (el kiosco decide con v2 cuando nadie esté en 0).
+    rostrosV2: e.rostros_v2 ?? 0,
     descriptor: null,
   }));
 
@@ -421,12 +424,20 @@ export function listArchivados() {
 // (cédula, horario, correo…) se piden una sola vez en la vida.
 export const listarRostros = (id) => api(`/api/empleados/${id}/rostros`).then((d) => d.rostros);
 
-export async function agregarRostro(id, descriptor, { forzar = false } = {}) {
+export async function agregarRostro(id, descriptor, { forzar = false, descriptorV2 = null } = {}) {
   try {
-    return await api(`/api/empleados/${id}/rostros`, {
+    // fetch directo (no api()): un 409 de colisión trae `choque` con el
+    // nombre y la medida, y la pantalla lo necesita para ofrecer FORZAR.
+    const r = await fetch(`/api/empleados/${id}/rostros`, {
       method: 'POST',
-      body: JSON.stringify({ descriptor, forzar }),
+      headers: { 'Content-Type': 'application/json' },
+      // descriptor_v2 (ArcFace): la misma foto produce ambos; el servidor lo
+      // usa para el chequeo de colisión y el kiosco para decidir identidad.
+      body: JSON.stringify({ descriptor, descriptor_v2: descriptorV2, forzar }),
     });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) return { error: d.error || `Error ${r.status}`, choque: d.choque ?? null };
+    return d;
   } catch (e) {
     return { error: e.message };
   }
@@ -494,6 +505,8 @@ export async function addPerson(name, descriptor, extra = {}) {
         jornada_dias: extra.jornadaDias == null ? null : diasAApi(extra.jornadaDias),
         salario_mensual: extra.salarioMensual ?? null,
         descriptor_facial: descriptor,
+        descriptores: extra.descriptores ?? undefined,
+        descriptores_v2: extra.descriptoresV2 ?? undefined,
       }),
     });
     return { id: d.empleado.id, name: d.empleado.nombre };

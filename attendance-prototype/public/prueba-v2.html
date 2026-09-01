@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prueba del modelo v2</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #eaf1f8; color: #233240; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; }
+  .paso { background: #fff; border: 1px solid #d8e2ee; border-radius: 10px; padding: 10px 14px; margin: 8px 0; font-size: 14px; }
+  .ok { border-left: 4px solid #2f6b55; }
+  .err { border-left: 4px solid #8a4a42; white-space: pre-wrap; word-break: break-word; }
+</style>
+</head>
+<body>
+<h1>Prueba del modelo facial v2</h1>
+<p style="font-size:13px">Esta página prueba, paso por paso, lo mismo que hace el panel al subir una foto. Donde falle, ese es el problema.</p>
+<div id="log"></div>
+<script type="module">
+const log = (msg, clase) => {
+  const d = document.createElement('div');
+  d.className = `paso ${clase}`;
+  d.textContent = msg;
+  document.getElementById('log').appendChild(d);
+};
+const t0 = performance.now();
+const t = () => `${((performance.now() - t0) / 1000).toFixed(1)}s`;
+try {
+  log('1. Cargando runtime ONNX…');
+  const ort = await import('/wasm/ort/ort.wasm.min.mjs');
+  ort.env.wasm.wasmPaths = '/wasm/ort/';
+  ort.env.wasm.numThreads = 1;
+  log(`1. Runtime cargado (${t()})`, 'ok');
+
+  log('2. Descargando y compilando el modelo (13 MB — puede tardar en celular)…');
+  const sesion = await ort.InferenceSession.create('/models/v2/w600k_mbf.onnx', { executionProviders: ['wasm'] });
+  log(`2. Modelo listo (${t()}) · entrada: ${sesion.inputNames[0]}`, 'ok');
+
+  log('3. Corriendo una inferencia de prueba…');
+  const datos = new Float32Array(3 * 112 * 112);
+  for (let i = 0; i < datos.length; i++) datos[i] = Math.sin(i / 97) * 0.5;
+  const tensor = new ort.Tensor('float32', datos, [1, 3, 112, 112]);
+  const salida = await sesion.run({ [sesion.inputNames[0]]: tensor });
+  const vec = salida[sesion.outputNames[0]].data;
+  log(`3. Inferencia OK (${t()}) · ${vec.length} valores, finitos: ${Array.from(vec).every(Number.isFinite)}`, 'ok');
+  log('✅ TODO FUNCIONA en este navegador. Si el panel aún falla, recárgalo (en celular: menú ⋮ → recargar, o cierra y abre la pestaña).', 'ok');
+} catch (e) {
+  log(`❌ FALLÓ AQUÍ:\n${e?.name ?? ''}: ${e?.message ?? e}\n${e?.stack?.split('\n').slice(0, 3).join('\n') ?? ''}`, 'err');
+  log('Envía una captura de esta pantalla para diagnosticar.', 'err');
+}
+</script>
+</body>
+</html>

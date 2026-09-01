@@ -107,6 +107,11 @@ export async function cargarRoster() {
       descriptores: Array.isArray(e.descriptores) && e.descriptores.length > 0
         ? e.descriptores
         : (e.descriptor_facial ? [e.descriptor_facial] : []),
+      // Descriptores del MODELO V2 (ArcFace): solo los rostros re-registrados
+      // los tienen. Con al menos uno, v2 decide la identidad de esta persona.
+      descriptoresV2: (Array.isArray(e.rostros_pares) ? e.rostros_pares : [])
+        .map((p) => p?.v2)
+        .filter((v) => Array.isArray(v) && v.length === 512),
       // Para exigir (si el flag está activo) que marque en SU sede.
       sedeId: e.sede_id || null, validarSede: e.validar_sede === true,
     }));
@@ -204,14 +209,19 @@ export async function sincronizarCola() {
   return { enviadas: cola.length - restantes.length, quedan: restantes.length, motivo };
 }
 
-/** Log de intento de reconocimiento (fire-and-forget: nunca bloquea el kiosco). */
-export function logIntento({ empleadoId = null, aceptado, distancia = null, livenessOk = null }) {
+/**
+ * Log de intento de reconocimiento (fire-and-forget: nunca bloquea el kiosco).
+ * `metricas` lleva las mediciones de calibración del modelo v2 (similitudes
+ * del 1º y 2º candidato y el modo de decisión) — escalares, sin biometría.
+ */
+export function logIntento({ empleadoId = null, aceptado, distancia = null, livenessOk = null, metricas = null }) {
   fetch('/api/intentos', {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify({
       empleado_id: empleadoId, aceptado, distancia,
       liveness_ok: livenessOk, sede_id: getSedeId() || null,
+      ...(metricas ?? {}),
     }),
   }).catch(() => { /* métricas: si se pierde una, no pasa nada */ });
 }

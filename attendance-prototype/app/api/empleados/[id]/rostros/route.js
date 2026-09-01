@@ -15,7 +15,10 @@
 import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../../../lib/db.js'
 import { estadoAcceso } from '../../../../../lib/sesion'
-import { euclideanDistance, MATCH_THRESHOLD, MARGEN_MINIMO } from '../../../../../utils/faceMath.js'
+import {
+  euclideanDistance, MATCH_THRESHOLD, MARGEN_MINIMO,
+  esDescriptorV2, similitudCosenoV2, V2_LIMITE_COLISION_SIM,
+} from '../../../../../utils/faceMath.js'
 
 export const runtime = 'nodejs'
 
@@ -24,6 +27,10 @@ export const runtime = 'nodejs'
  * que el kiosco pueda confundirlos. El listón está por encima del umbral de
  * aceptación a propósito: no basta con que hoy no colisione — tiene que haber
  * margen para que mañana, con otra luz, tampoco.
+ *
+ * Con v2 disponible EN AMBOS LADOS manda v2 (separa mucho mejor: parejas que
+ * v1 confunde quedan lejos en v2, y al revés v1 puede dar falsas alarmas).
+ * El chequeo v1 solo aplica contra rostros que aún no tienen v2.
  */
 const LIMITE_COLISION = MATCH_THRESHOLD + MARGEN_MINIMO // 0.60
 
@@ -51,6 +58,7 @@ export async function POST(req, { params }) {
   if (!esDescriptor(c?.descriptor)) {
     return NextResponse.json({ ok: false, error: 'La foto no trae un rostro válido.' }, { status: 400 })
   }
+  const v2 = esDescriptorV2(c?.descriptor_v2) ? c.descriptor_v2 : null
 
   const r = await conEmpresa(esquema, async (db) => {
     const yo = await db.query(`select id, nombre from empleados where id = $1 and activo`, [id])
@@ -59,20 +67,30 @@ export async function POST(req, { params }) {
     // Contra los rostros de LOS DEMÁS: si el nuevo se parece demasiado a otra
     // persona, guardarlo sería sembrar la confusión que luego cuesta rastrear.
     const otros = await db.query(
-      `select r.descriptor, e.nombre
+      `select r.descriptor, r.descriptor_v2, e.nombre
          from rostros r join empleados e on e.id = r.empleado_id
         where e.activo and e.id <> $1`, [id],
     )
     let choque = null
     for (const o of otros.rows) {
-      const d = euclideanDistance(c.descriptor, o.descriptor)
-      if (d < LIMITE_COLISION && (!choque || d < choque.distancia)) choque = { nombre: o.nombre, distancia: d }
+      if (v2 && Array.isArray(o.descriptor_v2)) {
+        // v2 contra v2: la medida buena. Se reporta como SIMILITUD.
+        const s = similitudCosenoV2(v2, o.descriptor_v2)
+        if (s > V2_LIMITE_COLISION_SIM && (!choque || s > (choque.similitud ?? -1))) {
+          choque = { nombre: o.nombre, similitud: s }
+        }
+      } else {
+        const d = euclideanDistance(c.descriptor, o.descriptor)
+        if (d < LIMITE_COLISION && !choque?.similitud && (!choque || d < choque.distancia)) {
+          choque = { nombre: o.nombre, distancia: d }
+        }
+      }
     }
     if (choque && !c.forzar) return { choque }
 
     const ins = await db.query(
-      `insert into rostros (empleado_id, descriptor, origen) values ($1,$2,$3) returning id, creado_en`,
-      [id, c.descriptor, c.origen === 'kiosco' ? 'kiosco' : 'registro'],
+      `insert into rostros (empleado_id, descriptor, descriptor_v2, origen) values ($1,$2,$3,$4) returning id, creado_en`,
+      [id, c.descriptor, v2, c.origen === 'kiosco' ? 'kiosco' : 'registro'],
     )
     // Sin rostro principal (empleado creado sin foto), el primero lo ocupa.
     await db.query(
@@ -85,10 +103,18 @@ export async function POST(req, { params }) {
 
   if (r.error === 'NO_EXISTE') return NextResponse.json({ ok: false, error: 'Empleado no encontrado.' }, { status: 404 })
   if (r.choque) {
+    const medida = r.choque.similitud != null
+      ? `similitud ${r.choque.similitud.toFixed(3)}`
+      : `distancia ${r.choque.distancia.toFixed(3)}`
     return NextResponse.json({
       ok: false,
-      error: `Esta foto se parece demasiado a ${r.choque.nombre} (distancia ${r.choque.distancia.toFixed(3)}). Toma otra de frente y con mejor luz, o el kiosco podría confundirlos.`,
-      choque: { nombre: r.choque.nombre, distancia: Math.round(r.choque.distancia * 1000) / 1000 },
+      error: `Esta foto se parece demasiado a ${r.choque.nombre} (${medida}). Toma otra de frente y con mejor luz, o el kiosco podría confundirlos.`,
+      choque: {
+        nombre: r.choque.nombre,
+        ...(r.choque.similitud != null
+          ? { similitud: Math.round(r.choque.similitud * 1000) / 1000 }
+          : { distancia: Math.round(r.choque.distancia * 1000) / 1000 }),
+      },
     }, { status: 409 })
   }
   return NextResponse.json({ ok: true, ...r })

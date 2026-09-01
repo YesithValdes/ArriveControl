@@ -1,2 +1,5 @@
+# pnpm ≥ 11: qué dependencias pueden ejecutar sus scripts de instalación.
+# Sin esto, `pnpm install` se niega por estos paquetes y todo `pnpm add` falla.
 allowBuilds:
-  sharp: set this to true or false
+  protobufjs: true
+  sharp: true

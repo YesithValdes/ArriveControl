@@ -22,10 +22,17 @@ export async function POST(req) {
     return NextResponse.json({ ok: false, error: 'Falta aceptado (boolean).' }, { status: 400 })
   }
 
+  // Mediciones de calibración del modelo v2 (escalares, nunca descriptores):
+  // solo números finitos; cualquier otra cosa entra como null.
+  const num = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null)
+  const modo = ['v1', 'v1+veto', 'v2'].includes(c.modo) ? c.modo : null
+
   await conEmpresa(ctx.esquema, (db) => db.query(
-    `insert into intentos_kiosco (empleado_id, aceptado, distancia, liveness_ok, sede_id)
-     values ($1,$2,$3,$4,$5)`,
-    [c.empleado_id ?? null, c.aceptado, c.distancia ?? null, c.liveness_ok ?? null, c.sede_id ?? null],
+    `insert into intentos_kiosco (empleado_id, aceptado, distancia, liveness_ok, sede_id,
+                                  v1_mejor, v1_segundo, v2_mejor, v2_segundo, modo)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [c.empleado_id ?? null, c.aceptado, c.distancia ?? null, c.liveness_ok ?? null, c.sede_id ?? null,
+     num(c.v1_mejor), num(c.v1_segundo), num(c.v2_mejor), num(c.v2_segundo), modo],
   ))
   return NextResponse.json({ ok: true })
 }

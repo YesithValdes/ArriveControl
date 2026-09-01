@@ -23,6 +23,24 @@ const nextConfig = {
   outputFileTracingIncludes: {
     '/api/auth/[...all]': ['./db/migrations/empresa/**/*.sql'],
   },
+
+  /**
+   * Los MODELOS faciales (~10 MB entre face-api y MediaPipe) no cambian nunca:
+   * son pesos congelados. Sin esta cabecera, cada apertura del kiosco los
+   * revalidaba contra el servidor y el arranque pagaba esa vuelta; con caché
+   * inmutable de 30 días, la tablet los lee de disco y el arranque en frío
+   * solo es lento la PRIMERA vez.
+   */
+  async headers() {
+    return [
+      {
+        source: '/:carpeta(models|wasm)/:archivo*',
+        headers: [
+          { key: 'Cache-Control', value: 'public, max-age=2592000, immutable' },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

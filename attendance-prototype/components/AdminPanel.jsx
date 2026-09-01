@@ -866,7 +866,30 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         if (lado < 90) {
           showToast(`En ${file.name} la cara tiene ${lado} px y hacen falta 90: acércate o usa una foto de más resolución.`); continue;
         }
-        const res = await agregarRostro(empleadoId, Array.from(det.descriptor));
+        // La misma foto produce el descriptor v2 (ArcFace). Durante la
+        // migración un rostro SIN v2 dejaría a la persona en el modelo viejo
+        // sin que nadie lo note: si v2 no se puede calcular, NO se guarda.
+        let dv2 = null;
+        let motivoV2 = '';
+        try {
+          const { descriptorV2, puntos5DeFaceApi } = await import('../lib/rostroV2.js');
+          dv2 = await descriptorV2(img, puntos5DeFaceApi(det.landmarks));
+        } catch (err) {
+          motivoV2 = err?.message || String(err);
+          console.warn('[Rostros] descriptor v2 no disponible:', motivoV2);
+        }
+        if (!dv2) {
+          // El motivo REAL viaja en el aviso: en el celular no hay consola.
+          showToast(`⚠ No se pudo calcular el modelo nuevo (v2): ${motivoV2 || 'sin detalle'}. Recarga la página y reintenta; si sigue, abre /prueba-v2.html y mándame una captura.`);
+          continue;
+        }
+        let res = await agregarRostro(empleadoId, Array.from(det.descriptor), { descriptorV2: dv2 });
+        // Colisión con otra persona: se avisa con nombre y medida, y el
+        // administrador puede FORZAR (sabe si son hermanos, gemelos, etc.).
+        if (res.error && res.choque) {
+          const seguir = confirm(`${res.error}\n\n¿Agregarla de todas formas? Si el kiosco duda entre los dos, rechazará antes que marcar por la persona equivocada.`);
+          if (seguir) res = await agregarRostro(empleadoId, Array.from(det.descriptor), { descriptorV2: dv2, forzar: true });
+        }
         if (res.error) { showToast(res.error); continue; }
         sumadas += 1;
       }
@@ -994,6 +1017,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     } catch { /* sin localStorage no hay bienvenida, y no pasa nada */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick]);
+
+  // Mismo service worker del kiosco: cachea los modelos faciales (~26 MB con
+  // el runtime) en el navegador del panel — sin él, cada subida de foto desde
+  // un celular re-descarga todo, y en datos móviles suele fallar a mitad.
+  useEffect(() => {
+    navigator.serviceWorker?.register?.('/sw.js').catch(() => { /* sin SW funciona igual, solo más lento */ });
+  }, []);
 
   const data = useMemo(() => {
     const events = listJourneyEvents().sort((a, b) => a.ts.localeCompare(b.ts));
@@ -1568,6 +1598,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     const f = [];
     // La sede ya NO cuenta como faltante: es opcional por diseño.
     if (!p.tieneRostro) f.push('rostro');
+    // Migración al modelo facial v2: quien tiene rostro pero ninguno con
+    // descriptor v2 necesita su FOTO NUEVA (agregarla desde su ficha).
+    if (p.tieneRostro && !p.rostrosV2) f.push('foto nueva (v2)');
     if (!(p.jornadaDias || (p.expectedEntry && p.expectedExit))) f.push('horario');
     if (p.salarioMensual == null) f.push('salario');
     if (!p.cedula) f.push('cédula');
@@ -2399,9 +2432,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             </h2>
             {/* Sin suscripción no se puede dar de alta a nadie. Se dice aquí,
                 antes de que llene el formulario y choque con el error. */}
-            {sesion?.planEstado && !sesion.planEstado.vigente && (
+            {/* `acceso` es el campo real de estadoDelPlan (antes se leía un
+                `vigente` que no existe y el aviso salía SIEMPRE, incluso con
+                la suscripción activa). */}
+            {sesion?.planEstado && !sesion.planEstado.acceso && (
               <p className="hint" style={{ color: 'var(--crit-text)' }}>
-                {sesion.planEstado.nunca
+                {sesion.planEstado.pruebaVencida
                   ? 'Para registrar empleados necesitas un plan activo.'
                   : 'Tu suscripción venció: no puedes registrar empleados nuevos hasta renovarla.'}
                 {' '}
@@ -2413,6 +2449,18 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 Llegaste al tope acordado de {sesion.limiteEmpleados} empleados. Escríbenos para ampliarlo.
               </p>
             )}
+            {/* Migración al modelo facial v2: el contador baja con cada foto
+                nueva; en cero, el kiosco decide solo con v2. */}
+            {(() => {
+              const sinV2 = allPeople.filter((p) => p.tieneRostro && !p.rostrosV2).length;
+              if (sinV2 === 0) return null;
+              return (
+                <p className="hint">
+                  📷 <b>{sinV2} empleado{sinV2 === 1 ? '' : 's'}</b> sin foto nueva para el reconocimiento v2 —
+                  agrégala desde su ficha (fila → rostros). Cuando todos la tengan, el kiosco decide con el modelo nuevo.
+                </p>
+              );
+            })()}
             <p className="hint">Quiénes pueden marcar en el kiosco. Toca una fila para editar.</p>
             <div className="att-controls">
               <input

@@ -190,10 +190,24 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
           continue;
         }
         if (ladoCara < ROSTRO_COMODO) avisos.push(`${file.name}: la cara mide ${ladoCara} px, va justa`);
-        // La foto NO se guarda en ninguna parte: de ella solo sale el vector de
-        // 128 floats. La previsualización vive en memoria del navegador y se
-        // libera al terminar.
-        nuevas.push({ previewUrl: URL.createObjectURL(file), descriptor: Array.from(det.descriptor) });
+        // La foto NO se guarda en ninguna parte: de ella solo salen los
+        // vectores (v1 de 128 floats y v2 de 512). La previsualización vive
+        // en memoria del navegador y se libera al terminar.
+        // El descriptor v2 (ArcFace) sale de la MISMA foto. Si no se puede
+        // calcular, la foto NO entra: guardarla solo con v1 dejaría a la
+        // persona en el modelo viejo sin que nadie lo note.
+        let dv2 = null;
+        try {
+          const { descriptorV2, puntos5DeFaceApi } = await import('../lib/rostroV2.js');
+          dv2 = await descriptorV2(img, puntos5DeFaceApi(det.landmarks));
+        } catch (e) {
+          console.warn('[Foto] descriptor v2 no disponible:', e?.message || e);
+        }
+        if (!dv2) {
+          sinRostro.push(`${file.name}: no se pudo calcular el modelo nuevo — recarga la página y reintenta (si sigue, abre /prueba-v2.html)`);
+          continue;
+        }
+        nuevas.push({ previewUrl: URL.createObjectURL(file), descriptor: Array.from(det.descriptor), descriptorV2: dv2 });
       }
       setFotos((prev) => [...prev, ...nuevas]);
       setStatus(sinRostro.length > 0
@@ -228,6 +242,8 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
   const handleRegister = async () => {
     const result = await addPerson(nombre.trim(), fotos[0].descriptor, {
       descriptores: fotos.map((f) => f.descriptor),
+      // Paralelo por posición a `descriptores`: la misma foto produce ambos.
+      descriptoresV2: fotos.map((f) => f.descriptorV2 ?? null),
       cedula: cedulaLimpia,
       correo: correo.trim().toLowerCase() || null,
       sede, validarSede, validarUbicacion, jornadaDias,
