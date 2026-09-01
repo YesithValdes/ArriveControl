@@ -5651,7 +5651,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   }
   /* La barra superior cruza TODO el ancho, por encima del menú lateral: es
      lo que hace que la marca no se mueva ni desaparezca al encoger el menú. */
-  .app-header { grid-column: 1 / -1; grid-row: 1; padding: 10px 20px; background: var(--btn-primary); border-bottom: none; border-radius: 0; }
+  .app-header { grid-column: 1 / -1; grid-row: 1; padding: 12px 24px; background: var(--btn-primary); border-bottom: none; border-radius: 0; }
   .head-sede {
     display: block; max-width: 210px; font-size: 13px; padding: 7px 10px;
     background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.25);
@@ -5674,7 +5674,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
     grid-column: 1; grid-row: 2;
     display: flex; flex-direction: column; gap: 4px;
     align-self: stretch; height: 100%;
-    padding: 14px 14px;
+    padding: 18px 14px 14px;
     border-radius: 0; border: none; border-right: 1px solid var(--grid);
     box-shadow: none;
   }
