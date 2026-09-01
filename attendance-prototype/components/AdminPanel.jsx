@@ -295,18 +295,15 @@ function Q({ texto, abajo = false }) {
   );
 }
 
-/** Logo «C-dial» (el de public/icon.svg), en el color del texto. */
+/** Logo «Presente ✓» (el de public/icon.svg), en el color del texto con el
+    chulo en aguamarina. */
 function MarcaCDial({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
-      <g stroke="currentColor" strokeLinecap="round" fill="none">
-        <path d="M 51 17.5 A 24 24 0 1 0 51 46.5" strokeWidth="7.5" />
-        <line x1="32" y1="10" x2="32" y2="15" strokeWidth="3.4" />
-        <line x1="10" y1="32" x2="15" y2="32" strokeWidth="3.4" />
-        <line x1="32" y1="49" x2="32" y2="54" strokeWidth="3.4" />
-        <circle cx="32" cy="32" r="3" fill="currentColor" stroke="none" />
-        <line x1="32" y1="32" x2="41" y2="23" strokeWidth="4.4" />
-      </g>
+      <circle cx="32" cy="31" r="20" stroke="currentColor" strokeWidth="4.6" fill="none" />
+      <circle cx="25.4" cy="27" r="2.2" fill="currentColor" />
+      <circle cx="38.6" cy="27" r="2.2" fill="currentColor" />
+      <path d="M 24 37 l 6 6 l 12 -12" stroke="#9fdcca" strokeWidth="4.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   );
 }
@@ -1880,7 +1877,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             se esconde, así que el nombre no desaparece al encoger el menú. */}
         <span className="head-marca">
           <span className="head-logo" aria-hidden="true"><MarcaCDial size={22} /></span>
-          <span className="head-brand">CONTROL<b>REGISTRO</b></span>
+          <span className="head-brand">ASISTENC<b>IA</b></span>
         </span>
         {/* Regresar a la ÚLTIMA pantalla visitada dentro del panel (como la
             flecha de la Configuración de Windows). Aparece solo cuando hay
@@ -2822,7 +2819,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       )}
                       {permisos.liquidar && (
                         <span className="col-pago">
-                          Pagado <Q abajo texto="Anotación de que esas horas ya se liquidaron en nómina — Control Registro no paga. Si después se corrige una marcación ya pagada, ese tramo vuelve a quedar pendiente y la fila se muestra como parcial." />
+                          Pagado <Q abajo texto="Anotación de que esas horas ya se liquidaron en nómina — AsistencIA no paga. Si después se corrige una marcación ya pagada, ese tramo vuelve a quedar pendiente y la fila se muestra como parcial." />
                         </span>
                       )}
                     </div>
@@ -4700,7 +4697,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       {guiaAbierta && (
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setGuiaAbierta(false)}>
           <div className="dialog" role="dialog" aria-modal="true" aria-label="Cómo empezar">
-            <h3>¡Bienvenido a Control Registro!</h3>
+            <h3>¡Bienvenido a AsistencIA!</h3>
             <p className="hint">Cuatro pasos y tu empresa queda marcando asistencia.</p>
             <ol className="pasos">
               <li className={horarios.length > 0 ? 'hecho' : ''}>
@@ -5697,11 +5694,6 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   }
   .tabbar > button .icon { font-size: 18px; }
   .tabbar .badge { position: static; margin-left: auto; }
-    margin-left: auto; flex: 0 0 auto; width: 26px; height: 26px; border-radius: 8px;
-    border: 1px solid var(--border); background: transparent; color: var(--accent);
-    font-size: 14px; line-height: 1; cursor: pointer; padding: 0;
-    display: flex; align-items: center; justify-content: center;
-  }
   .side-foot { display: block; padding: 10px 6px 2px; font-size: 10px; color: var(--muted); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
 
   /* PC: bloquear como fila del menú, anclado al fondo sobre el pie */

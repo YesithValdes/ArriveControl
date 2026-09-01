@@ -529,6 +529,76 @@ await test('respaldo: empleados viejos sin horario por día', () => {
   assert.equal(totalExtra(calcularRegistros(viejo, DESPUES)), 1.5);
 });
 
+// ── El CSS del panel está bien formado ──────────────────────────────────
+// Los estilos viven en una plantilla de texto dentro del componente, así que
+// nadie los valida: ni el compilador ni el navegador se quejan. Una llave de
+// más cierra su @media antes de tiempo y TODAS las reglas siguientes quedan
+// fuera — que fue exactamente como el dashboard perdió sus dos columnas al
+// borrar unas reglas que ya no se usaban.
+console.log('\n🧱 CSS del panel');
+const { readFileSync: leerCss } = await import('node:fs');
+
+const cssDelPanel = (archivo) => {
+  const t = leerCss(new URL(archivo, import.meta.url), 'utf8');
+  const i = t.indexOf('const CSS = `');
+  if (i === -1) return null;
+  return t.slice(i + 13, t.lastIndexOf('`'));
+};
+
+await test('las llaves del CSS están balanceadas', () => {
+  const css = cssDelPanel('../components/AdminPanel.jsx');
+  assert.ok(css, 'no se encontró el bloque de estilos');
+  let abren = 0;
+  let cierran = 0;
+  for (const c of css) {
+    if (c === '{') abren++;
+    else if (c === '}') cierran++;
+  }
+  assert.equal(cierran, abren, `sobran ${Math.abs(abren - cierran)} llaves`);
+});
+
+await test('no quedan bloques huérfanos (cuerpo sin selector)', () => {
+  // Al borrar la línea del selector queda su cuerpo suelto: propiedades
+  // sueltas donde el CSS espera una regla. El navegador las ignora en
+  // silencio y arrastra consigo lo que venga después.
+  const css = cssDelPanel('../components/AdminPanel.jsx');
+  // Pila de bloques abiertos: 'regla' (un selector) o 'grupo' (@media y
+  // compañía). Una propiedad solo puede vivir dentro de una REGLA; si el
+  // bloque de más adentro es un @media —o no hay ninguno— quedó huérfana.
+  const pila = [];
+  const huerfanas = [];
+  for (const [n, cruda] of css.split('\n').entries()) {
+    const linea = cruda.replace(/\/\*.*?\*\//g, '').trim();
+    if (!linea) continue;
+    const dentroDeRegla = pila[pila.length - 1] === 'regla';
+    if (!dentroDeRegla && /^[a-z-]+\s*:\s*[^;{]+;$/.test(linea) && !linea.startsWith('--')) {
+      huerfanas.push(`línea ${n + 1}: ${linea.slice(0, 60)}`);
+    }
+    for (const c of linea) {
+      if (c === '{') pila.push(linea.trimStart().startsWith('@') ? 'grupo' : 'regla');
+      else if (c === '}') pila.pop();
+    }
+  }
+  assert.deepEqual(huerfanas, [], `hay propiedades fuera de toda regla:\n     ${huerfanas.join('\n     ')}`);
+});
+
+await test('el dashboard conserva sus dos columnas en PC', () => {
+  // La regla debe estar DENTRO del @media de escritorio: si un cierre de más
+  // la deja fuera, el dashboard se apila en una sola columna.
+  const css = cssDelPanel('../components/AdminPanel.jsx');
+  let profundidad = 0;
+  let dentro = false;
+  for (const linea of css.split('\n')) {
+    if (/@media \(min-width: 900px\)/.test(linea)) profundidad = 1;
+    if (/\.dash-grid \{[^}]*grid-template-columns:\s*minmax\(0, 2\.2fr\)/.test(linea)) dentro = profundidad > 0;
+    for (const c of linea) {
+      if (c === '{' && profundidad) profundidad++;
+      else if (c === '}' && profundidad) profundidad--;
+    }
+  }
+  assert.equal(dentro, true, 'las dos columnas quedaron fuera del @media de PC');
+});
+
 // ── Novedades deducidas del horario ─────────────────────────────────────
 // «Salida temprana» aparecía en el panel pero NUNCA se marcaba: la regla se
 // quedó en journeyService.js, el servicio del prototipo que panelStore
