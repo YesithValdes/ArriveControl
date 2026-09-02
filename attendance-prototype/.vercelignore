@@ -1,0 +1,19 @@
+# Lo que NO se sube al desplegar.
+#
+# Sin este archivo, Vercel recorre el proyecto entero — incluida la carpeta
+# `android/`, donde compilar el APK deja cientos de megas de artefactos y un
+# demonio de Gradle con archivos abiertos. El despliegue fallaba con
+# «EBUSY: resource busy or locked» por eso.
+#
+# Nada de esto hace falta en el servidor: Vercel compila la web desde el
+# código fuente.
+
+# Proyecto Android (el APK se compila y distribuye aparte)
+android/
+
+# Compilación local de Next: el servidor hace la suya
+.next/
+
+# Modelos empaquetados para el APK — se generan con
+# scripts/empaquetar-modelos.mjs desde public/, que sí se sube
+android/app/src/main/assets/modelos/
