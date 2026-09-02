@@ -80,6 +80,9 @@ export default function KioskMode() {
   const [loadError, setLoadError] = useState(null);
   // Espejo del error de modelos para leerlo dentro de esperas async.
   const loadErrorRef = useRef(null);
+  // Aparte del anterior: un fallo de face-api NO impide arrancar (la cámara y
+  // la detección viven de MediaPipe), solo impide saber quién es.
+  const faErrorRef = useRef(null);
   const [statusNote, setStatusNote] = useState('Espere un momento…');
   // El kiosco ARRANCA SOLO al abrir la app: la pantalla de reposo con su botón
   // únicamente existe después de que alguien presione «Detener».
@@ -237,14 +240,80 @@ export default function KioskMode() {
   // Modelo v2 listo (se comprueba en caliente dentro del bucle de captura).
   const v2ListoRef = useRef(false);
 
+  /**
+   * Primera inferencia en vacío, en segundo plano.
+   *
+   * Compilar los kernels cuesta unos segundos en una tablet y se paga una sola
+   * vez. Hacerlo aquí, contra un lienzo en blanco, es pagarlo mientras nadie
+   * espera; si no, lo paga la primera persona que se pare enfrente.
+   */
+  const calentar = async (faceapi) => {
+    try {
+      const c = document.createElement('canvas');
+      c.width = 224; c.height = 224;
+      await faceapi.detectSingleFace(c, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECTOR_INPUT, scoreThreshold: 0.5 }));
+      const c2 = document.createElement('canvas');
+      c2.width = 150; c2.height = 150;
+      await faceapi.nets.faceLandmark68Net.detectLandmarks(c2);
+      await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(c2);
+    } catch { /* sin calentamiento se paga en la primera marcación, como antes */ }
+  };
+
   // ── Carga de modelos (paralela, GPU→CPU) ──────────────────────────────
+  //
+  // Los tres modelos hacen falta en momentos DISTINTOS, así que se esperan en
+  // momentos distintos. Antes el kiosco no encendía hasta tenerlos todos, y
+  // eso lo ataba al más lento:
+  //
+  //   MediaPipe  ve si hay una cara y si parpadea → hace falta YA, es lo que
+  //              corre en cada cuadro. Único bloqueante.
+  //   face-api   saca el descriptor de identidad → solo cuando alguien ya se
+  //              paró enfrente y pasó el reto: segundos después.
+  //   ArcFace v2 confirma la identidad → todavía más tarde, y es opcional.
+  //
+  // La cámara enciende con MediaPipe listo. Los otros dos siguen cargando de
+  // fondo mientras la persona se acerca, que es tiempo que antes se perdía
+  // mirando una pantalla apagada.
   useEffect(() => {
     let cancelled = false;
+    const t0 = performance.now();
+    const marca = (que) => console.log(`[Kiosco⏱] ${que} a los ${Math.round(performance.now() - t0)} ms`);
+
     // El v2 carga EN PARALELO y es opcional: si falla (sin red la primera
     // vez, tablet sin memoria), el kiosco sigue decidiendo con v1.
     cargarV2()
-      .then(() => { v2ListoRef.current = true; console.log('[Kiosco⏱] modelo v2 (ArcFace) listo'); })
+      .then(() => { v2ListoRef.current = true; marca('modelo v2 (ArcFace) listo'); })
       .catch((e) => console.warn('[Kiosco] modelo v2 no disponible; se sigue con v1:', e?.message || e));
+
+    // face-api tampoco bloquea: cuando termine se anota en su ref y el bucle
+    // lo empieza a usar en el siguiente cuadro que necesite una captura.
+    (async () => {
+      const faceapi = await import('@vladmandic/face-api');
+      marca('face-api importado');
+      // El backend de TensorFlow (wasm/webgl) inicializa ASÍNCRONO tras el
+      // import. Cargar los modelos sin esperarlo es una carrera que a veces
+      // revienta con "backend 'wasm' has not yet been initialized". Si el
+      // backend rápido falla, se cae a CPU antes que dejar el kiosco muerto.
+      try { await faceapi.tf.ready(); } catch { await faceapi.tf.setBackend('cpu'); await faceapi.tf.ready(); }
+      marca(`backend TF listo (${faceapi.tf.getBackend?.() ?? '?'})`);
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(FACEAPI_MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(FACEAPI_MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(FACEAPI_MODEL_URL),
+      ]);
+      if (cancelled) return;
+      faceapiRef.current = faceapi;
+      marca('face-api LISTO (identidad)');
+      calentar(faceapi);
+    })().catch((e) => {
+      // NO se toca `loadErrorRef`: ese gobierna el arranque, y face-api ya no
+      // lo bloquea. Si falla, la cámara y la detección siguen vivas y lo que
+      // se pierde es identificar a quién — se avisa al intentar la captura,
+      // no antes.
+      faErrorRef.current = `${e?.name}: ${e?.message || e}`;
+      console.warn('[Kiosco] face-api no cargó; no se podrá identificar:', e?.message || e);
+    });
+
     (async () => {
       try {
         const loadMp = (async () => {
@@ -259,43 +328,15 @@ export default function KioskMode() {
           });
           try { return await make('GPU'); } catch { return await make('CPU'); }
         })();
-        const loadFa = (async () => {
-          const faceapi = await import('@vladmandic/face-api');
-          // El backend de TensorFlow (wasm/webgl) inicializa ASÍNCRONO tras el
-          // import. Cargar los modelos sin esperarlo es una carrera que a veces
-          // revienta con "backend 'wasm' has not yet been initialized". Si el
-          // backend rápido falla, se cae a CPU antes que dejar el kiosco muerto.
-          try { await faceapi.tf.ready(); } catch { await faceapi.tf.setBackend('cpu'); await faceapi.tf.ready(); }
-          await Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(FACEAPI_MODEL_URL),
-            faceapi.nets.faceLandmark68Net.loadFromUri(FACEAPI_MODEL_URL),
-            faceapi.nets.faceRecognitionNet.loadFromUri(FACEAPI_MODEL_URL),
-          ]);
-          return faceapi;
-        })();
-        const [landmarker, faceapi] = await Promise.all([loadMp, loadFa]);
+        const landmarker = await loadMp;
         if (cancelled) return;
-        // Los refs se ponen DE UNA: el kiosco puede empezar a validar ya.
         landmarkerRef.current = landmarker;
-        faceapiRef.current = faceapi;
+        // ENCIENDE AQUÍ. Con esto ya se ve la cámara y se detectan caras y
+        // parpadeos; lo de identificar quién es llega unos segundos después,
+        // que es cuando de verdad hace falta.
         setReady(true);
+        marca('KIOSCO OPERATIVO (cámara y detección)');
         setStatusNote('Espere un momento…');
-        // CALENTAMIENTO en SEGUNDO PLANO: la primera inferencia compila los
-        // kernels (~2-3 s en tablet). Antes bloqueaba el arranque entero; ahora
-        // corre de fondo. Si alguien marca antes de que termine, su primera
-        // detección paga esa compilación (más lenta, no fallida) — a cambio,
-        // el kiosco queda operativo esos segundos antes en TODOS los arranques.
-        ;(async () => {
-          try {
-            const c = document.createElement('canvas');
-            c.width = 224; c.height = 224;
-            await faceapi.detectSingleFace(c, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECTOR_INPUT, scoreThreshold: 0.5 }));
-            const c2 = document.createElement('canvas');
-            c2.width = 150; c2.height = 150;
-            await faceapi.nets.faceLandmark68Net.detectLandmarks(c2);
-            await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(c2);
-          } catch { /* sin calentamiento se paga en la primera marcación, como antes */ }
-        })();
       } catch (err) {
         if (!cancelled) {
           loadErrorRef.current = `${err?.name}: ${err?.message || err}`;
@@ -482,7 +523,10 @@ export default function KioskMode() {
    * montaje) estén listos. Si su carga falló, revienta con ese motivo.
    */
   const modelosListos = async () => {
-    while (!(faceapiRef.current && landmarkerRef.current)) {
+    // Solo MediaPipe. face-api puede seguir cargando: no hace falta para ver
+    // caras ni para el reto de parpadeo, y llegará mucho antes de que alguien
+    // complete el reto — que es cuando se necesita para saber QUIÉN es.
+    while (!landmarkerRef.current) {
       if (loadErrorRef.current) throw new Error(loadErrorRef.current);
       await new Promise((r) => setTimeout(r, 120));
     }
@@ -637,7 +681,9 @@ export default function KioskMode() {
   // ── Bucle principal ───────────────────────────────────────────────────
   const startLoop = () => {
     const landmarker = landmarkerRef.current;
-    const faceapi = faceapiRef.current;
+    // face-api NO se captura aquí: el bucle arranca antes de que termine de
+    // cargar, y guardarse el valor de este instante lo dejaría en null para
+    // siempre. Se lee del ref en el momento de la captura.
     const video = videoRef.current;
     let lastRun = 0;
     let faBusy = false;
@@ -732,7 +778,12 @@ export default function KioskMode() {
           ponerProgreso(st.sawOpen && st.sawClosed ? 75 : (st.sawOpen || st.sawClosed) ? 50 : 25);
 
           const frontal = Math.abs(yaw) < 12;
-          if (frontal && !faBusy && st.captures < FACE_CAPTURES && now - st.lastCapture >= CAPTURE_GAP_MS) {
+          // `faceapi` se lee AHORA y no al montar el bucle: puede seguir
+          // cargando cuando la cámara ya está encendida. Si todavía no está,
+          // simplemente no se captura en este cuadro — el reto sigue corriendo
+          // y la captura entra en cuanto llegue, que son milisegundos.
+          const faceapi = faceapiRef.current;
+          if (faceapi && frontal && !faBusy && st.captures < FACE_CAPTURES && now - st.lastCapture >= CAPTURE_GAP_MS) {
             faBusy = true; st.captures += 1; st.lastCapture = now;
             faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECTOR_INPUT, scoreThreshold: 0.5 }))
               .withFaceLandmarks().withFaceDescriptor()
