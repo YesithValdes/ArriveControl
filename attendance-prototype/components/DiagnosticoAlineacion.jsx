@@ -37,6 +37,7 @@ const NOMBRES = ['Ojo izq.', 'Ojo der.', 'Nariz', 'Boca izq.', 'Boca der.'];
 
 export default function DiagnosticoAlineacion() {
   const videoRef = useRef(null);
+  const lienzoRef = useRef(null);
   const [estado, setEstado] = useState('Preparando…');
   const [muestras, setMuestras] = useState([]);
   const [corriendo, setCorriendo] = useState(false);
@@ -95,6 +96,32 @@ export default function DiagnosticoAlineacion() {
     };
   }, []);
 
+  /**
+   * Pinta el cuadro con los dos juegos de puntos encima.
+   *
+   * Es la parte más útil de esta pantalla: un número dice que algo no
+   * coincide, pero la imagen dice POR QUÉ. Si los ojos estuvieran invertidos
+   * se vería al instante, y si los dos juegos caen uno sobre otro también.
+   */
+  const dibujar = (p5fa, p5mp, video) => {
+    const c = lienzoRef.current;
+    if (!c) return;
+    c.width = video.videoWidth;
+    c.height = video.videoHeight;
+    const g = c.getContext('2d');
+    g.drawImage(video, 0, 0, c.width, c.height);
+    const r = Math.max(4, c.width / 140);
+    const marcar = (pts, color, relleno) => {
+      g.strokeStyle = color; g.fillStyle = color; g.lineWidth = Math.max(2, r / 2.5);
+      for (const [x, y] of pts) {
+        g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2);
+        if (relleno) g.fill(); else g.stroke();
+      }
+    };
+    marcar(p5fa, '#22c55e', true);   // face-api: relleno
+    marcar(p5mp, '#f97316', false);  // MediaPipe: contorno
+  };
+
   /** Una medición: mismo cuadro, los dos alineamientos, los dos descriptores. */
   const medir = async () => {
     const { lm, faceapi } = refs.current;
@@ -120,6 +147,19 @@ export default function DiagnosticoAlineacion() {
       const p5fa = puntos5DeFaceApi(det.landmarks);
       const p5mp = puntos5DeMediaPipe(puntos, video.videoWidth, video.videoHeight);
 
+      // ── Se descartan los cuadros malos ────────────────────────────────
+      // Con una cara lejos, a contraluz o a medias, cada detector ve algo
+      // distinto y comparar sus alineamientos no dice nada del alineamiento:
+      // dice que la foto era mala. La primera versión de esta pantalla los
+      // contaba igual y por eso mezclaba medidas de 0,96 con otras de 0,14.
+      let minY = 1;
+      let maxY = 0;
+      for (const p of puntos) { if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y; }
+      const alto = maxY - minY;            // fracción del alto del cuadro
+      if (alto < 0.22) { setEstado(`Cara muy lejos (ocupa ${(alto * 100).toFixed(0)}% del alto). Acércate.`); return; }
+      if (alto > 0.85) { setEstado('Cara muy cerca, se sale del cuadro. Aléjate un poco.'); return; }
+      if (det.detection.score < 0.7) { setEstado(`Detección floja (${det.detection.score.toFixed(2)}). Más luz o más de frente.`); return; }
+
       const [dFa, dMp] = await Promise.all([descriptorV2(video, p5fa), descriptorV2(video, p5mp)]);
       const sim = similitudV2(dFa, dMp);
       // El tamaño de la cara da la escala: 8 px de desvío en una cara de 100
@@ -127,7 +167,8 @@ export default function DiagnosticoAlineacion() {
       const ojoAojo = dist(p5fa[0], p5fa[1]);
       const desvios = p5fa.map((p, i) => dist(p, p5mp[i]));
 
-      setMuestras((m) => [{ sim, desvios, ojoAojo, t: Date.now() }, ...m].slice(0, 20));
+      dibujar(p5fa, p5mp, video);
+      setMuestras((m) => [{ sim, desvios, ojoAojo, alto, score: det.detection.score, t: Date.now() }, ...m].slice(0, 20));
       setEstado(`Medido. Similitud ${sim.toFixed(4)}`);
     } catch (e) {
       setEstado(`Falló la medición: ${e?.message || e}`);
@@ -157,6 +198,15 @@ export default function DiagnosticoAlineacion() {
       </p>
 
       <video ref={videoRef} playsInline muted style={S.video} />
+      {/* El último cuadro medido, con los dos alineamientos encima:
+          relleno verde = face-api, contorno naranja = MediaPipe. */}
+      <canvas ref={lienzoRef} style={{ ...S.video, display: muestras.length ? 'block' : 'none', marginTop: 10 }} />
+      {muestras.length > 0 && (
+        <p style={S.leyenda}>
+          <span style={{ color: '#22c55e' }}>●</span> face-api (hoy) &nbsp;·&nbsp;
+          <span style={{ color: '#f97316' }}>○</span> MediaPipe (propuesto)
+        </p>
+      )}
 
       <div style={S.barra}>
         <button onClick={medir} disabled={corriendo} style={S.btn}>
@@ -218,5 +268,6 @@ const S = {
   desvNom: { display: 'block', fontSize: 12, color: '#7b8ca0' },
   desvVal: { fontSize: 17, fontVariantNumeric: 'tabular-nums' },
   veredicto: { marginTop: 20, marginBottom: 0, padding: '12px 15px', borderRadius: 10, fontSize: 14, lineHeight: 1.55, fontWeight: 600 },
+  leyenda: { margin: "6px 0 16px", fontSize: 12.5, color: "#7b8ca0" },
   nota: { marginTop: 14, marginBottom: 0, fontSize: 13, color: '#7b8ca0' },
 };
