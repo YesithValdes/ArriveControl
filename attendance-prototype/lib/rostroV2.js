@@ -100,6 +100,41 @@ const centro = (pts) => {
  * Los 5 puntos ArcFace desde los 68 landmarks de face-api.
  * @param {object} landmarks  resultado .landmarks de face-api (con posiciones en píxeles del medio)
  */
+/**
+ * Los mismos 5 puntos, pero sacados de MediaPipe.
+ *
+ * Existe para poder QUITAR face-api del kiosco: hoy se cargan 6,5 MB de
+ * modelos y todo TensorFlow.js nada más para obtener estas cinco coordenadas,
+ * mientras MediaPipe —que ya corre en cada cuadro— entrega 478 puntos.
+ *
+ * Los índices son los del malla facial canónica de MediaPipe. Los contornos de
+ * ojo elegidos son los seis que corresponden a los que face-api promedia
+ * (dlib 36-41 y 42-47), para que el centro caiga en el mismo sitio.
+ *
+ * OJO con la izquierda y la derecha: aquí «izquierdo» es el de la IMAGEN, no
+ * el de la persona, igual que en puntos5DeFaceApi. Invertirlos daría un
+ * alineamiento espejado y descriptores que no se parecen a nada.
+ *
+ * @param {Array<{x:number,y:number}>} lm  landmarks normalizados (0..1)
+ * @param {number} ancho @param {number} alto  del media, para pasar a píxeles
+ */
+export function puntos5DeMediaPipe(lm, ancho, alto) {
+  const OJO_IZQ = [33, 160, 158, 133, 153, 144]
+  const OJO_DER = [362, 385, 387, 263, 373, 380]
+  const NARIZ = 1
+  const BOCA_IZQ = 61
+  const BOCA_DER = 291
+
+  const px = (i) => [lm[i].x * ancho, lm[i].y * alto]
+  const centroDe = (idx) => {
+    let sx = 0
+    let sy = 0
+    for (const i of idx) { sx += lm[i].x; sy += lm[i].y }
+    return [(sx / idx.length) * ancho, (sy / idx.length) * alto]
+  }
+  return [centroDe(OJO_IZQ), centroDe(OJO_DER), px(NARIZ), px(BOCA_IZQ), px(BOCA_DER)]
+}
+
 export function puntos5DeFaceApi(landmarks) {
   const pos = landmarks.positions
   return [
