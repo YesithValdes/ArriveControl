@@ -18,7 +18,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { euclideanDistance, MATCH_THRESHOLD, MARGEN_MINIMO } from '../utils/faceMath.js';
 // Modelo v2 (ArcFace 512-D, similitud coseno): decide la identidad cuando la
 // captura viva y la persona lo tienen; v1 queda de respaldo del resto.
-import { cargarV2, descriptorV2, puntos5DeFaceApi, similitudV2, promedioV2, V2_UMBRAL_SIM, V2_MARGEN_SIM } from '../lib/rostroV2.js';
+import { cargarV2, descriptorV2, puntos5DeMediaPipe, similitudV2, promedioV2, V2_UMBRAL_SIM, V2_MARGEN_SIM } from '../lib/rostroV2.js';
 import {
   cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
   getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
@@ -247,6 +247,36 @@ export default function KioskMode() {
    * vez. Hacerlo aquí, contra un lienzo en blanco, es pagarlo mientras nadie
    * espera; si no, lo paga la primera persona que se pare enfrente.
    */
+  /**
+   * Trae face-api y sus modelos. RESPALDO: solo se llama si ArcFace no cargó.
+   *
+   * Reconoce por su cuenta (descriptor de 128 dimensiones), así que un kiosco
+   * en este modo sigue sirviendo — con la precisión vieja, que confundía
+   * parejas parecidas, pero sirviendo. La alternativa era no identificar a
+   * nadie.
+   */
+  const cargarRespaldoFaceApi = async (marca) => {
+    try {
+      const faceapi = await import('@vladmandic/face-api');
+      // El backend de TensorFlow inicializa ASÍNCRONO tras el import. Cargar
+      // los modelos sin esperarlo revienta con "backend has not yet been
+      // initialized"; si el rápido falla, se cae a CPU antes que morir.
+      try { await faceapi.tf.ready(); } catch { await faceapi.tf.setBackend('cpu'); await faceapi.tf.ready(); }
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(FACEAPI_MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(FACEAPI_MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(FACEAPI_MODEL_URL),
+      ]);
+      marca?.('respaldo face-api listo');
+      calentar(faceapi);
+      return faceapi;
+    } catch (e) {
+      faErrorRef.current = `${e?.name}: ${e?.message || e}`;
+      console.error('[Kiosco] ni ArcFace ni face-api cargaron: no se podrá identificar.', e?.message || e);
+      return null;
+    }
+  };
+
   const calentar = async (faceapi) => {
     try {
       const c = document.createElement('canvas');
@@ -279,40 +309,23 @@ export default function KioskMode() {
     const t0 = performance.now();
     const marca = (que) => console.log(`[Kiosco⏱] ${que} a los ${Math.round(performance.now() - t0)} ms`);
 
-    // El v2 carga EN PARALELO y es opcional: si falla (sin red la primera
-    // vez, tablet sin memoria), el kiosco sigue decidiendo con v1.
+    // La identidad la saca ArcFace (v2), alineando con los 5 puntos que
+    // MediaPipe ya entrega en cada cuadro. face-api NO se carga: se medió que
+    // los dos alineamientos producen descriptores casi idénticos (mediana
+    // 0,97 sobre 20 medidas, ninguna bajo el umbral), así que sus 6,5 MB de
+    // modelos y toda la inicialización de TensorFlow.js —lo más lento del
+    // arranque en una tablet— sobraban para dar cinco coordenadas.
     cargarV2()
-      .then(() => { v2ListoRef.current = true; marca('modelo v2 (ArcFace) listo'); })
-      .catch((e) => console.warn('[Kiosco] modelo v2 no disponible; se sigue con v1:', e?.message || e));
-
-    // face-api tampoco bloquea: cuando termine se anota en su ref y el bucle
-    // lo empieza a usar en el siguiente cuadro que necesite una captura.
-    (async () => {
-      const faceapi = await import('@vladmandic/face-api');
-      marca('face-api importado');
-      // El backend de TensorFlow (wasm/webgl) inicializa ASÍNCRONO tras el
-      // import. Cargar los modelos sin esperarlo es una carrera que a veces
-      // revienta con "backend 'wasm' has not yet been initialized". Si el
-      // backend rápido falla, se cae a CPU antes que dejar el kiosco muerto.
-      try { await faceapi.tf.ready(); } catch { await faceapi.tf.setBackend('cpu'); await faceapi.tf.ready(); }
-      marca(`backend TF listo (${faceapi.tf.getBackend?.() ?? '?'})`);
-      await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(FACEAPI_MODEL_URL),
-        faceapi.nets.faceLandmark68Net.loadFromUri(FACEAPI_MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(FACEAPI_MODEL_URL),
-      ]);
-      if (cancelled) return;
-      faceapiRef.current = faceapi;
-      marca('face-api LISTO (identidad)');
-      calentar(faceapi);
-    })().catch((e) => {
-      // NO se toca `loadErrorRef`: ese gobierna el arranque, y face-api ya no
-      // lo bloquea. Si falla, la cámara y la detección siguen vivas y lo que
-      // se pierde es identificar a quién — se avisa al intentar la captura,
-      // no antes.
-      faErrorRef.current = `${e?.name}: ${e?.message || e}`;
-      console.warn('[Kiosco] face-api no cargó; no se podrá identificar:', e?.message || e);
-    });
+      .then(() => { v2ListoRef.current = true; marca('IDENTIDAD LISTA (ArcFace v2)'); })
+      .catch((e) => {
+        // RESPALDO: solo si ArcFace no cargó se trae face-api, que sabe
+        // reconocer por su cuenta. Se paga su lentitud únicamente cuando la
+        // alternativa es un kiosco que no identifica a nadie.
+        console.warn('[Kiosco] ArcFace no disponible; cayendo al modelo viejo:', e?.message || e);
+        cargarRespaldoFaceApi(marca).then((fa) => {
+          if (!cancelled && fa) faceapiRef.current = fa;
+        });
+      });
 
     (async () => {
       try {
@@ -778,34 +791,36 @@ export default function KioskMode() {
           ponerProgreso(st.sawOpen && st.sawClosed ? 75 : (st.sawOpen || st.sawClosed) ? 50 : 25);
 
           const frontal = Math.abs(yaw) < 12;
-          // `faceapi` se lee AHORA y no al montar el bucle: puede seguir
-          // cargando cuando la cámara ya está encendida. Si todavía no está,
-          // simplemente no se captura en este cuadro — el reto sigue corriendo
-          // y la captura entra en cuanto llegue, que son milisegundos.
-          const faceapi = faceapiRef.current;
-          if (faceapi && frontal && !faBusy && st.captures < FACE_CAPTURES && now - st.lastCapture >= CAPTURE_GAP_MS) {
+          const listoParaCapturar = v2ListoRef.current || faceapiRef.current;
+          if (listoParaCapturar && frontal && !faBusy && st.captures < FACE_CAPTURES && now - st.lastCapture >= CAPTURE_GAP_MS) {
             faBusy = true; st.captures += 1; st.lastCapture = now;
-            faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECTOR_INPUT, scoreThreshold: 0.5 }))
-              .withFaceLandmarks().withFaceDescriptor()
-              .then((det) => {
-                if (det) {
-                  st.descs.push(Array.from(det.descriptor));
-                  if (st.tCaptura == null) {
-                    st.tCaptura = performance.now() - st.t0;
-                    console.log(`[Kiosco⏱] ROSTRO listo a los ${Math.round(st.tCaptura)} ms (primera captura de identidad)`);
-                  }
-                  // Mismo cuadro, descriptor v2 (ArcFace) con los landmarks ya
-                  // detectados. Best-effort: si falla, la captura v1 queda.
-                  if (v2ListoRef.current) {
-                    descriptorV2(video, puntos5DeFaceApi(det.landmarks))
-                      .then((v) => st.descsV2.push(v))
-                      .catch(() => {});
-                  }
-                } else {
-                  console.log('[Kiosco⏱] captura de rostro sin resultado (face-api no vio la cara en ese cuadro)');
-                }
-              })
-              .catch(() => {}).finally(() => { faBusy = false; });
+            const anotarTiempo = () => {
+              if (st.tCaptura != null) return;
+              st.tCaptura = performance.now() - st.t0;
+              console.log(`[Kiosco⏱] ROSTRO listo a los ${Math.round(st.tCaptura)} ms (primera captura de identidad)`);
+            };
+
+            if (v2ListoRef.current) {
+              // Camino normal: los 5 puntos de alineación salen de los MISMOS
+              // landmarks que ya se usaron para el parpadeo y el encuadre. Sin
+              // una segunda detección sobre el mismo cuadro — antes se corría
+              // el detector dos veces para llegar a las mismas coordenadas.
+              descriptorV2(video, puntos5DeMediaPipe(lm, video.videoWidth, video.videoHeight))
+                .then((v) => { st.descsV2.push(v); anotarTiempo(); })
+                .catch(() => {})
+                .finally(() => { faBusy = false; });
+            } else {
+              // Respaldo (ArcFace no cargó): el modelo viejo reconoce solo.
+              const faceapi = faceapiRef.current;
+              faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: DETECTOR_INPUT, scoreThreshold: 0.5 }))
+                .withFaceLandmarks().withFaceDescriptor()
+                .then((det) => {
+                  if (det) { st.descs.push(Array.from(det.descriptor)); anotarTiempo(); }
+                  else console.log('[Kiosco⏱] captura sin resultado (el modelo viejo no vio la cara en ese cuadro)');
+                })
+                .catch(() => {})
+                .finally(() => { faBusy = false; });
+            }
           }
 
           // Concluye APENAS se detecta el cierre de ojos: exigir además que
@@ -813,22 +828,26 @@ export default function KioskMode() {
           // prueba de vida ya está demostrada con abierto → cerrado. La única
           // condición extra es tener al menos una captura de identidad, que
           // se toma en los cuadros previos con los ojos abiertos.
-          if (st.sawOpen && st.sawClosed && st.descs.length > 0) {
-            const live = averageDescriptors(st.descs);
-            // ── Ranking v1 (euclidiano): existe para TODOS los rostros ──
+          if (st.sawOpen && st.sawClosed && (st.descsV2.length > 0 || st.descs.length > 0)) {
+            // ── Ranking v1 (euclidiano) ──
+            // Solo existe en modo RESPALDO: en el camino normal no se calculan
+            // descriptores v1, así que este ranking queda vacío y decide v2.
             // Los DOS más parecidos, no solo el ganador: sin el segundo no se
             // puede saber si la decisión fue clara o un empate a los pelos.
             // Por persona gana su rostro MÁS parecido (nunca el promedio).
+            const live = st.descs.length > 0 ? averageDescriptors(st.descs) : null;
             let best = { distance: Infinity, person: null };
             let segundo = { distance: Infinity, person: null };
-            for (const p of peopleRef.current) {
-              let d = Infinity;
-              for (const desc of p.descriptores) {
-                const dd = euclideanDistance(desc, live);
-                if (dd < d) d = dd;
+            if (live) {
+              for (const p of peopleRef.current) {
+                let d = Infinity;
+                for (const desc of p.descriptores) {
+                  const dd = euclideanDistance(desc, live);
+                  if (dd < d) d = dd;
+                }
+                if (d < best.distance) { segundo = best; best = { distance: d, person: p }; }
+                else if (d < segundo.distance) segundo = { distance: d, person: p };
               }
-              if (d < best.distance) { segundo = best; best = { distance: d, person: p }; }
-              else if (d < segundo.distance) segundo = { distance: d, person: p };
             }
             const margen = segundo.distance - best.distance; // Infinity con un solo empleado
 
@@ -854,7 +873,15 @@ export default function KioskMode() {
             // Mientras quede gente sin v2, decide v1 — pero si el ganador v1
             // ya tiene v2, v2 tiene que estar de acuerdo (VETO): es lo que
             // separa a las parejas que v1 confunde (Tatiana/Hanny, Óscar/Edwin).
-            const modoV2 = liveV2 !== null && conV2 > 0 && conV2 === peopleRef.current.length;
+            // Basta con TENER captura v2: en el camino normal no se calculan
+            // descriptores v1, así que caer a esa rama sería decidir sin
+            // datos. Quien no tenga rostro v2 simplemente no compite —y se
+            // avisa, porque es un empleado que el kiosco nunca reconocerá
+            // hasta que lo vuelvan a registrar.
+            const modoV2 = liveV2 !== null && conV2 > 0;
+            if (modoV2 && conV2 < peopleRef.current.length) {
+              console.warn(`[Kiosco] ${peopleRef.current.length - conV2} empleado(s) sin rostro v2: no pueden ser reconocidos. Vuelve a registrarlos.`);
+            }
 
             let reconocido, ambiguo, ganador, distanciaMostrada;
             if (modoV2) {

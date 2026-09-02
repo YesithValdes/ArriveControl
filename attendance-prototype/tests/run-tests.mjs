@@ -616,6 +616,42 @@ await test('las horas se muestran como la gente las lee', () => {
   assert.equal(horasCortas(45 * 60), '45 min');
 });
 
+// ── Lo que se usa, ¿está importado? ─────────────────────────────────────
+// El proyecto es JavaScript sin tipos, así que usar algo que no se importó
+// compila igual y revienta en la tablet, con el kiosco en marcha y gente
+// esperando. Pasó: se cambió `puntos5DeFaceApi` por `puntos5DeMediaPipe` en
+// el cuerpo y no en el import.
+console.log('\n🔗 Importaciones de los módulos de rostro');
+const { readFileSync: leerMod } = await import('node:fs');
+
+await test('todo lo que se usa de lib/rostroV2.js está importado', () => {
+  const fuentes = ['../components/KioskMode.jsx', '../components/EmployeeRegister.jsx', '../components/DiagnosticoAlineacion.jsx'];
+  const modulo = leerMod(new URL('../lib/rostroV2.js', import.meta.url), 'utf8');
+  // Lo que rostroV2 ofrece: `export function x`, `export const x`, `export { a, b }`.
+  const exporta = new Set([
+    ...[...modulo.matchAll(/^export (?:async )?function (\w+)/gm)].map((m) => m[1]),
+    ...[...modulo.matchAll(/^export const (\w+)/gm)].map((m) => m[1]),
+    ...[...modulo.matchAll(/^export \{([^}]+)\}/gm)].flatMap((m) => m[1].split(',').map((s) => s.trim())),
+  ]);
+  assert.ok(exporta.size >= 5, `se esperaban varios exports, se hallaron ${exporta.size}`);
+
+  const faltantes = [];
+  for (const f of fuentes) {
+    const src = leerMod(new URL(f, import.meta.url), 'utf8');
+    const linea = src.match(/import \{([^}]+)\} from '[^']*rostroV2\.js'/);
+    if (!linea) continue;
+    const importados = new Set(linea[1].split(',').map((s) => s.trim()));
+    const cuerpo = src.slice(src.indexOf('export default'));
+    for (const nombre of exporta) {
+      // Se usa como llamada o como valor, pero no se importó.
+      if (new RegExp(`\\b${nombre}\\s*\\(`).test(cuerpo) && !importados.has(nombre)) {
+        faltantes.push(`${f.split('/').pop()} usa ${nombre} sin importarlo`);
+      }
+    }
+  }
+  assert.deepEqual(faltantes, [], faltantes.join('\n     '));
+});
+
 // ── Modelos empaquetados en el APK ──────────────────────────────────────
 // La app Android es un cascarón que carga la web remota, así que la primera
 // arrancada bajaba ~25 MB de modelos. Ahora viajan dentro del APK y
