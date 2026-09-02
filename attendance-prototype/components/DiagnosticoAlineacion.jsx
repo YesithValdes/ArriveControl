@@ -180,12 +180,23 @@ export default function DiagnosticoAlineacion() {
   const n = muestras.length;
   const prom = (f) => (n === 0 ? 0 : muestras.reduce((s, m) => s + f(m), 0) / n);
   const simProm = prom((m) => m.sim);
-  const simMin = n === 0 ? 0 : Math.min(...muestras.map((m) => m.sim));
-  // La conclusión, en los términos que importan: ¿un descriptor alineado con
-  // MediaPipe seguiría reconociendo a alguien registrado con face-api?
-  const veredicto = n < 5 ? null
-    : simMin >= 0.90 ? { ok: true, txt: 'Se puede cambiar sin re-registrar a nadie.' }
-      : simMin >= V2_UMBRAL_SIM ? { ok: null, txt: 'Reconocería, pero con menos margen del que hay hoy. Conviene re-registrar.' }
+  const sims = muestras.map((m) => m.sim).sort((a, b) => a - b);
+  const simMin = n === 0 ? 0 : sims[0];
+  // La MEDIANA es la que manda, no el peor caso.
+  //
+  // El kiosco no decide con una sola captura: toma varias y promedia. Una
+  // medida suelta puede salir mal por un parpadeo o un movimiento, y dejar
+  // que esa vete a las otras quince fue el error de la primera versión — con
+  // media 0,92 concluía «imposible» por un 0,25 aislado.
+  const mediana = n === 0 ? 0 : sims[Math.floor(n / 2)];
+  const bajoUmbral = sims.filter((s) => s < V2_UMBRAL_SIM).length;
+  const buenas = sims.filter((s) => s >= 0.90).length;
+
+  const veredicto = n < 8 ? null
+    : mediana >= 0.90 && bajoUmbral / n <= 0.1
+      ? { ok: true, txt: `Se puede cambiar sin re-registrar: la mitad de las medidas pasa de ${mediana.toFixed(2)} y solo ${bajoUmbral} de ${n} quedó bajo el umbral.` }
+      : mediana >= V2_UMBRAL_SIM
+        ? { ok: null, txt: `Reconocería (mediana ${mediana.toFixed(2)}) pero con menos margen, y ${bajoUmbral} de ${n} medidas quedaron bajo el umbral. Conviene migrar guardando ambos descriptores.` }
         : { ok: false, txt: 'NO se puede cambiar sin re-registrar a los 12: los descriptores no se parecen lo suficiente.' };
 
   return (
@@ -220,9 +231,25 @@ export default function DiagnosticoAlineacion() {
         <section style={S.panel}>
           <div style={S.metricas}>
             <div><span style={S.mLbl}>Medidas</span><b style={S.mVal}>{n}</b></div>
-            <div><span style={S.mLbl}>Similitud media</span><b style={S.mVal}>{simProm.toFixed(4)}</b></div>
-            <div><span style={S.mLbl}>La peor</span><b style={{ ...S.mVal, color: simMin >= 0.9 ? '#15803d' : simMin >= V2_UMBRAL_SIM ? '#b45309' : '#b3403a' }}>{simMin.toFixed(4)}</b></div>
-            <div><span style={S.mLbl}>Umbral para reconocer</span><b style={S.mVal}>{V2_UMBRAL_SIM}</b></div>
+            <div><span style={S.mLbl}>Mediana</span><b style={{ ...S.mVal, color: mediana >= 0.9 ? '#15803d' : mediana >= V2_UMBRAL_SIM ? '#b45309' : '#b3403a' }}>{mediana.toFixed(4)}</b></div>
+            <div><span style={S.mLbl}>Media</span><b style={S.mVal}>{simProm.toFixed(4)}</b></div>
+            <div><span style={S.mLbl}>Bajo el umbral</span><b style={{ ...S.mVal, color: bajoUmbral === 0 ? '#15803d' : '#b45309' }}>{bajoUmbral} de {n}</b></div>
+          </div>
+
+          {/* Cada medida, para ver si las malas coinciden con cuadros malos.
+              Un número suelto no distingue «el alineamiento falla» de «esa
+              captura salió mal», y la diferencia lo es todo. */}
+          <div style={S.listaMedidas}>
+            <span style={S.mLbl}>Cada medida · {buenas} de {n} sobre 0,90</span>
+            <div style={S.barras}>
+              {muestras.map((m) => (
+                <div key={m.t} style={S.barraFila} title={`similitud ${m.sim.toFixed(4)} · cara ${(m.alto * 100).toFixed(0)}% del alto · detección ${m.score.toFixed(2)}`}>
+                  <span style={{ ...S.barra, width: `${Math.max(2, m.sim * 100)}%`, background: m.sim >= 0.9 ? '#22c55e' : m.sim >= V2_UMBRAL_SIM ? '#f59e0b' : '#dc2626' }} />
+                  <span style={S.barraNum}>{m.sim.toFixed(3)}</span>
+                  <span style={S.barraMeta}>cara {(m.alto * 100).toFixed(0)}% · det {m.score.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div style={S.desvios}>
@@ -269,5 +296,11 @@ const S = {
   desvVal: { fontSize: 17, fontVariantNumeric: 'tabular-nums' },
   veredicto: { marginTop: 20, marginBottom: 0, padding: '12px 15px', borderRadius: 10, fontSize: 14, lineHeight: 1.55, fontWeight: 600 },
   leyenda: { margin: "6px 0 16px", fontSize: 12.5, color: "#7b8ca0" },
+  listaMedidas: { marginTop: 22, paddingTop: 18, borderTop: "1px solid #eef2f7" },
+  barras: { display: "flex", flexDirection: "column", gap: 4, marginTop: 8 },
+  barraFila: { display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 },
+  barra: { height: 12, borderRadius: 3, flex: "0 0 auto", minWidth: 2, maxWidth: "45%" },
+  barraNum: { fontVariantNumeric: "tabular-nums", color: "#233240", fontWeight: 700, flex: "0 0 42px" },
+  barraMeta: { color: "#9aa9b8", whiteSpace: "nowrap" },
   nota: { marginTop: 14, marginBottom: 0, fontSize: 13, color: '#7b8ca0' },
 };
