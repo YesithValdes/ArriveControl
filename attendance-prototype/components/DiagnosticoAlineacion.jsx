@@ -40,6 +40,7 @@ export default function DiagnosticoAlineacion() {
   const [estado, setEstado] = useState('Preparando…');
   const [muestras, setMuestras] = useState([]);
   const [corriendo, setCorriendo] = useState(false);
+  const [resolucion, setResolucion] = useState(null);
   const refs = useRef({});
 
   useEffect(() => {
@@ -65,8 +66,24 @@ export default function DiagnosticoAlineacion() {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 1280, height: 720, facingMode: 'user' },
         });
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        const video = videoRef.current;
+        video.srcObject = stream;
+        await video.play();
+        // `play()` resuelve antes de que el cuadro tenga TAMAÑO. Llamar a
+        // MediaPipe en ese momento le entrega una región de 0×0 y revienta con
+        // «ROI width and height must be > 0». Hay que esperar de verdad.
+        await new Promise((listo) => {
+          if (video.readyState >= 2 && video.videoWidth > 0) { listo(); return; }
+          const ver = () => {
+            if (video.readyState >= 2 && video.videoWidth > 0) {
+              video.removeEventListener('loadeddata', ver);
+              listo();
+            }
+          };
+          video.addEventListener('loadeddata', ver);
+          const id = setInterval(() => { if (video.videoWidth > 0) { clearInterval(id); ver(); } }, 100);
+        });
+        setResolucion(`${video.videoWidth}×${video.videoHeight}`);
         setEstado('Listo. Ponte de frente y pulsa Medir.');
       } catch (e) {
         setEstado(`No se pudo preparar: ${e?.message || e}`);
@@ -83,6 +100,12 @@ export default function DiagnosticoAlineacion() {
     const { lm, faceapi } = refs.current;
     const video = videoRef.current;
     if (!lm || !faceapi || !video) return;
+    // La misma guarda que el kiosco: sin un cuadro con tamaño, MediaPipe
+    // recibe una región de 0×0 y revienta en vez de devolver «no vi nada».
+    if (video.readyState < 2 || !video.videoWidth) {
+      setEstado('La cámara todavía no entrega imagen. Espera un segundo.');
+      return;
+    }
     setCorriendo(true);
     try {
       const res = lm.detectForVideo(video, performance.now());
@@ -140,7 +163,7 @@ export default function DiagnosticoAlineacion() {
           {corriendo ? 'Midiendo…' : 'Medir'}
         </button>
         <button onClick={() => setMuestras([])} style={{ ...S.btn, ...S.btnGhost }}>Borrar</button>
-        <span style={S.estado}>{estado}</span>
+        <span style={S.estado}>{estado}{resolucion ? ` · cámara ${resolucion}` : ''}</span>
       </div>
 
       {n > 0 && (
