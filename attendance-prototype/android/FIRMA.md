@@ -2,12 +2,23 @@
 
 ## Antes de compilar, SIEMPRE
 
+Abre una terminal **en la carpeta `attendance-prototype`** (no en `android`) y
+corre:
+
 ```bash
-node scripts/empaquetar-modelos.mjs
+npm run apk
 ```
 
 Copia los modelos faciales dentro del APK. Sin esto, la primera arrancada en
 cada aparato baja 20 MB.
+
+Si usas la terminal de Android Studio, esta abre en `android/`, así que
+primero hay que salir una carpeta:
+
+```bash
+cd ..
+npm run apk
+```
 
 ---
 
@@ -46,7 +57,7 @@ keyPassword=la-contraseña-de-la-llave
 
 ## Cada actualización
 
-1. `node scripts/empaquetar-modelos.mjs`
+1. `npm run apk` (desde `attendance-prototype`)
 2. Subir `versionCode` en `android/app/build.gradle` (2 → 3 → 4…). Android se
    niega a instalar encima una versión con número menor, y con el mismo número
    no hay forma de saber qué tiene cada aparato.
