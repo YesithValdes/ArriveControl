@@ -9,6 +9,11 @@
  *   splash.png (1024)             → pantalla de arranque
  *
  * Uso:  node scripts/generar-iconos.mjs
+ *
+ * DESPUES DE CORRERLO: SUBIR EL ?v= de los iconos en app/layout.jsx y en
+ * public/manifest.webmanifest. Sin eso, quien ya tenga la app instalada
+ * seguira viendo el icono viejo — el sistema guarda el que habia el dia de la
+ * instalacion y no vuelve a pedirlo si la direccion no cambio.
  */
 import sharp from 'sharp'
 import { writeFileSync } from 'node:fs'

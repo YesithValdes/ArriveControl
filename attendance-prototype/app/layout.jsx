@@ -21,11 +21,18 @@ export const metadata = {
   manifest: '/manifest.webmanifest',
   icons: {
     // El SVG escala a cualquier tamaño; el PNG queda de respaldo.
+    //
+    // El `?v=` NO es adorno: una app ya instalada se queda con el icono que
+    // guardó el día que se instaló, y cambiar el contenido del archivo sin
+    // cambiar su dirección no la entera de nada. Al mover el número, la
+    // dirección es otra y el sistema lo vuelve a pedir.
+    //
+    // AL CAMBIAR EL LOGO, SUBIR ESTE NÚMERO — aquí y en manifest.webmanifest.
     icon: [
-      { url: '/icon.svg', type: 'image/svg+xml' },
-      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon.svg?v=2', type: 'image/svg+xml' },
+      { url: '/icon-192.png?v=2', sizes: '192x192', type: 'image/png' },
     ],
-    apple: '/apple-touch-icon.png', // iOS no lee el manifest: necesita su propio tag
+    apple: '/apple-touch-icon.png?v=2', // iOS no lee el manifest: necesita su propio tag
   },
   appleWebApp: {
     capable: true,
