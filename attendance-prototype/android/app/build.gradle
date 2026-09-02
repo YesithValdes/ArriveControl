@@ -1,5 +1,14 @@
 apply plugin: 'com.android.application'
 
+// Datos de la llave de firma. Viven FUERA del repositorio (keystore.properties
+// está en .gitignore) porque son la identidad de la app: quien los tenga puede
+// publicar actualizaciones que Android acepte como tuyas.
+//
+// Para crearlos, ver android/FIRMA.md.
+def clavesFirma = new Properties()
+def archivoClaves = rootProject.file('keystore.properties')
+if (archivoClaves.exists()) clavesFirma.load(new FileInputStream(archivoClaves))
+
 android {
     namespace = "com.kupocell.arrivecontrol"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +16,11 @@ android {
         applicationId "com.kupocell.arrivecontrol"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // SUBIR versionCode EN CADA ACTUALIZACIÓN. Android se niega a instalar
+        // encima una versión con número menor, y con el mismo número no hay
+        // forma de saber cuál tiene un aparato.
+        versionCode 2
+        versionName "1.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +28,25 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            // Solo se define si keystore.properties existe. Sin él, compilar
+            // release da un APK SIN FIRMAR que ningún teléfono instala — es
+            // preferible a firmarlo con la llave de depuración y descubrir
+            // meses después que no se puede actualizar.
+            if (clavesFirma.containsKey('storeFile')) {
+                storeFile rootProject.file(clavesFirma['storeFile'])
+                storePassword clavesFirma['storePassword']
+                keyAlias clavesFirma['keyAlias']
+                keyPassword clavesFirma['keyPassword']
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (clavesFirma.containsKey('storeFile')) signingConfig signingConfigs.release
         }
     }
 }

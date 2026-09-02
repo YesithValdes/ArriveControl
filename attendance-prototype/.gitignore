@@ -23,3 +23,9 @@ db/respaldos/
 # Modelos empaquetados en el APK: los genera scripts/empaquetar-modelos.mjs
 # desde public/, así que versionarlos sería guardar 55 MB duplicados.
 android/app/src/main/assets/modelos/
+
+# Llave de firma de Android: es la IDENTIDAD de la app. Quien la tenga puede
+# publicar actualizaciones que Android acepte como tuyas.
+android/keystore.properties
+*.jks
+*.keystore
