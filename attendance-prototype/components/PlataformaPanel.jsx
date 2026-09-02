@@ -88,6 +88,7 @@ export default function PlataformaPanel({ sesion }) {
   const [segmento, setSegmento] = useState('todas');
   const [borrando, setBorrando] = useState(null); // { empresa, confirmacion }
   const [regalando, setRegalando] = useState(null); // { empresa, dias, que }
+  const [tareas, setTareas] = useState([]);         // últimas corridas programadas
   const [toast, setToast] = useState(null);
 
   const showToast = (m) => { setToast(m); setTimeout(() => setToast(null), 2800); };
@@ -95,7 +96,10 @@ export default function PlataformaPanel({ sesion }) {
   const cargar = () => {
     fetch('/api/plataforma/empresas')
       .then((r) => r.json())
-      .then((d) => { if (d.ok) { setEmpresas(d.empresas); setError(null); } else setError(d.error); })
+      .then((d) => {
+        if (d.ok) { setEmpresas(d.empresas); setTareas(d.tareas ?? []); setError(null); }
+        else setError(d.error);
+      })
       .catch((e) => setError(e.message));
   };
   useEffect(cargar, []);
@@ -267,6 +271,42 @@ export default function PlataformaPanel({ sesion }) {
           </div>
         </section>
       )}
+
+      {/* Tareas programadas. Corren solas de madrugada y le mandan correos a
+          los empleados de todas las empresas: si una noche fallan, esto tiene
+          que decirlo antes de que lo note un cliente. */}
+      <section className="tareas" aria-label="Tareas programadas">
+        <span className="m-label">Envíos automáticos</span>
+        {tareas.length === 0 ? (
+          <p className="tarea-vacio">
+            Sin corridas registradas todavía. El resumen diario sale entre las 11:00 y
+            las 11:59 p. m.; si mañana esto sigue vacío, la tarea no se está disparando.
+          </p>
+        ) : (
+          <div className="tarea-lista">
+            {tareas.map((t) => {
+              const d = t.detalle ?? {};
+              return (
+                <div className={`tarea ${t.estado}`} key={t.creadoEn}>
+                  <span className={`chip ${t.estado === 'ok' ? 'good' : 'crit'}`}>
+                    {t.estado === 'ok' ? 'Corrió' : 'Falló'}
+                  </span>
+                  <b>{t.tarea}</b>
+                  <span className="tarea-cuando">
+                    {new Date(t.creadoEn).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}
+                    {t.sobre ? ` · sobre el ${fmtFecha(t.sobre)}` : ''}
+                  </span>
+                  <span className="tarea-detalle">
+                    {t.estado === 'ok'
+                      ? `${d.enviados ?? 0} enviados${d.fallidos ? `, ${d.fallidos} fallidos` : ''}${d.sinCorreo ? `, ${d.sinCorreo} sin correo` : ''}`
+                      : (d.error ?? 'sin detalle')}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <div className="plat-controls">
         <div className="segmentos" role="tablist" aria-label="Filtrar por estado">
@@ -617,6 +657,14 @@ const CSS = `
    arriba y con una línea que los separa sin gritar. */
 .resumen.negocio { margin-top: -12px; padding-top: 16px; border-top: 1px solid var(--grid); }
 
+.tareas { margin-bottom: 22px; padding-top: 16px; border-top: 1px solid var(--grid); }
+.tarea-vacio { margin: 8px 0 0; font-size: 13px; color: var(--muted); line-height: 1.55; max-width: 62ch; }
+.tarea-lista { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.tarea { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.tarea b { font-weight: 650; color: var(--ink); }
+.tarea-cuando { color: var(--muted); }
+.tarea-detalle { color: var(--ink-2); margin-left: auto; font-variant-numeric: tabular-nums; }
+.tarea.error .tarea-detalle { color: var(--crit-text); }
 .dlg-campos { display: flex; gap: 14px; flex-wrap: wrap; margin: 16px 0 4px; }
 .dlg-campos label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); flex: 1 1 140px; }
 .dlg-campos input, .dlg-campos select {

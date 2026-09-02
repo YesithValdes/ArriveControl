@@ -80,6 +80,28 @@ export async function listarEmpresas() {
 }
 
 /**
+ * Últimas corridas de las tareas programadas.
+ *
+ * Existe porque una noche no llegaron los correos del resumen diario y no
+ * había forma de saber si la tarea no corrió, corrió y falló, o corrió sin
+ * encontrar a quién escribirle: los registros de Vercel ya se habían borrado.
+ *
+ * Una tarea que corre sola de madrugada y le manda correos a los empleados de
+ * todas las empresas tiene que verse desde aquí. Si no, la primera señal de
+ * que se rompió es que lo note un cliente.
+ */
+export async function ultimasTareas(limite = 10) {
+  const { rows } = await control(
+    `select tarea, sobre, estado, detalle, duracion_ms as "duracionMs", creado_en as "creadoEn"
+       from control.tareas
+      order by creado_en desc
+      limit $1`,
+    [limite],
+  ).catch(() => ({ rows: [] })) // sin la tabla (migración pendiente) la consola no se cae
+  return rows
+}
+
+/**
  * Regala días de servicio a una empresa: extiende la prueba o la suscripción.
  *
  * Existe porque hasta ahora darle una semana más a un cliente —lo más normal

@@ -8,12 +8,16 @@
  */
 import { NextResponse } from 'next/server'
 import { soloSuperadmin } from '../../../../lib/guardaPlataforma.js'
-import { listarEmpresas } from '../../../../lib/plataforma.js'
+import { listarEmpresas, ultimasTareas } from '../../../../lib/plataforma.js'
 
 export const runtime = 'nodejs'
 
 export async function GET() {
   const { error } = await soloSuperadmin()
   if (error) return error
-  return NextResponse.json({ ok: true, empresas: await listarEmpresas() })
+  // Las tareas viajan con las empresas: se miran en el mismo momento —al
+  // entrar a ver cómo va la plataforma— y pedirlas aparte sería una petición
+  // más para un dato de dos líneas.
+  const [empresas, tareas] = await Promise.all([listarEmpresas(), ultimasTareas()])
+  return NextResponse.json({ ok: true, empresas, tareas })
 }

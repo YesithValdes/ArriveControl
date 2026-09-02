@@ -24,6 +24,7 @@
  */
 import { NextResponse } from 'next/server'
 import { enviarResumenesDelDia, hoyEnBogota } from '../../../../lib/enviosDiarios.js'
+import { control } from '../../../../lib/db.js'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -53,7 +54,33 @@ export async function GET(req) {
   }
 
   const t0 = Date.now()
-  const r = await enviarResumenesDelDia(fecha)
-  console.log(`Resumen diario ${fecha}: ${r.enviados} enviados, ${r.fallidos} fallidos, ${r.sinCorreo} sin correo (${Date.now() - t0} ms)`)
+  let r
+  let fallo = null
+  try {
+    r = await enviarResumenesDelDia(fecha)
+  } catch (e) {
+    fallo = e?.message || String(e)
+  }
+  const duracion = Date.now() - t0
+
+  // Queda BITÁCORA en la base, no solo en los registros del servidor: los de
+  // Vercel se borran, y cuando una noche no llegaron los correos no hubo
+  // forma de saber si la tarea no corrió, corrió y falló, o corrió y no tenía
+  // a quién escribirle. Guardar el rastro es la diferencia entre revisar y
+  // adivinar.
+  //
+  // Si anotar falla, la tarea NO falla: ya hizo su trabajo y perder la
+  // bitácora es menos grave que perder los correos.
+  await control(
+    `insert into control.tareas (tarea, sobre, estado, detalle, duracion_ms)
+     values ('resumen-diario', $1::date, $2, $3::jsonb, $4)`,
+    [fecha, fallo ? 'error' : 'ok', JSON.stringify(fallo ? { error: fallo } : r), duracion],
+  ).catch((e) => console.error('No se pudo anotar la tarea en la bitácora:', e?.message || e))
+
+  if (fallo) {
+    console.error(`Resumen diario ${fecha} FALLÓ tras ${duracion} ms:`, fallo)
+    return NextResponse.json({ ok: false, error: fallo }, { status: 500 })
+  }
+  console.log(`Resumen diario ${fecha}: ${r.enviados} enviados, ${r.fallidos} fallidos, ${r.sinCorreo} sin correo (${duracion} ms)`)
   return NextResponse.json({ ok: true, ...r })
 }
