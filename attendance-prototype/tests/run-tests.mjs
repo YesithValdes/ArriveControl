@@ -529,6 +529,47 @@ await test('respaldo: empleados viejos sin horario por día', () => {
   assert.equal(totalExtra(calcularRegistros(viejo, DESPUES)), 1.5);
 });
 
+// ── Umbrales del reconocimiento v2 ──────────────────────────────────────
+// Son cuatro números que deciden si a alguien se le atribuye la jornada de
+// otro. Se calibraron con 284 marcaciones reales el 2026-09-10, después de
+// que un empleado fuera reconocido como otra persona con similitud 0.408.
+console.log('\n🎯 Umbrales del reconocimiento facial');
+const { V2_UMBRAL_SIM: UMBRAL, V2_MARGEN_SIM: MARGEN, V2_LIMITE_COLISION_SIM: COLISION, similitudCosenoV2 } =
+  await import('../utils/faceMath.js');
+
+await test('registrar dos caras parecidas es imposible por encima del umbral', () => {
+  // LA invariante. Si se pudiera registrar a dos personas con caras más
+  // parecidas de lo que hace falta para reconocerlas, el kiosco tendría
+  // GARANTIZADO confundirlas — que es exactamente lo que pasó cuando cinco
+  // empleados quedaron registrados con la misma cara.
+  assert.ok(COLISION <= UMBRAL,
+    `el límite de colisión (${COLISION}) no puede superar al umbral de aceptación (${UMBRAL})`);
+});
+
+await test('el umbral deja fuera el error que se midió en producción', () => {
+  // El caso real: 0.408 fue aceptado y no debió serlo.
+  assert.ok(UMBRAL > 0.408, `con umbral ${UMBRAL} ese error volvería a pasar`);
+});
+
+await test('el umbral no se pasa de estricto', () => {
+  // La mediana de los aciertos reales fue 0.603 y el p25 0.518: por encima de
+  // 0.52 se empezaría a rechazar a gente legítima en masa.
+  assert.ok(UMBRAL <= 0.52, `con umbral ${UMBRAL} se rechazaría más de un cuarto de las marcaciones buenas`);
+});
+
+await test('el margen sigue siendo un freno alcanzable', () => {
+  // El margen real más ajustado fue 0.095. Pedir más que eso convertiría en
+  // ambiguas marcaciones que hoy son correctas.
+  assert.ok(MARGEN > 0 && MARGEN < 0.095, `un margen de ${MARGEN} rechazaría casos que se midieron como buenos`);
+});
+
+await test('la similitud coseno se comporta como debe', () => {
+  const a = Array.from({ length: 512 }, (_, i) => Math.sin(i));
+  const b = a.map((n) => -n);
+  assert.ok(Math.abs(similitudCosenoV2(a, a) - 1) < 1e-9, 'consigo mismo debe dar 1');
+  assert.ok(Math.abs(similitudCosenoV2(a, b) + 1) < 1e-9, 'con su opuesto debe dar −1');
+});
+
 // ── Resumen diario que se envía por correo ──────────────────────────────
 // Un correo al terminar el día, en vez de uno por marcación. Cuenta lo que
 // pasó de verdad, así que tiene que cuadrar con lo que la nómina pagará: si

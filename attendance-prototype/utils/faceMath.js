@@ -40,17 +40,49 @@ export const MARGEN_MINIMO = 0.10;
 
 export const V2_LENGTH = 512
 
-/** Similitud mínima para aceptar una identidad con v2. Se calibra con logs. */
-export const V2_UMBRAL_SIM = 0.35
+/**
+ * Similitud mínima para aceptar una identidad con v2.
+ *
+ * CALIBRADO (2026-09-10) con 284 marcaciones reales de producción. Nació en
+ * 0.35 como punto de partida puesto a ojo, y ese número dejó pasar un error:
+ * a un empleado lo reconocieron como OTRA persona con similitud 0.408.
+ *
+ * La distribución de lo que se venía aceptando:
+ *
+ *     mínima  0.350   ← el piso lo ponía el propio umbral
+ *     p5      0.412   ← aquí vivía el error
+ *     p25     0.518
+ *     mediana 0.603
+ *     máxima  0.894
+ *
+ * Los acierto claros viven de 0.52 para arriba; los errores, abajo de 0.45.
+ * Subirlo a 0.45 rechaza el 10% de lo que hoy se acepta —esas personas
+ * reintentan— y a cambio no se le atribuye la jornada de alguien a otro.
+ *
+ * El intercambio es deliberado y no simétrico: un reintento cuesta cinco
+ * segundos, y una marcación mal atribuida cuesta que dos personas tengan
+ * mal las horas y que nadie vuelva a creerle al sistema.
+ */
+export const V2_UMBRAL_SIM = 0.45
 
-/** Margen mínimo de similitud entre el 1º y el 2º candidato (análogo al v1). */
+/**
+ * Margen mínimo de similitud entre el 1º y el 2º candidato (análogo al v1).
+ *
+ * En los mismos 284 datos el margen real fue: mínimo 0.095, p5 0.188,
+ * mediana 0.371. O sea que con 0.08 este freno casi nunca actuaba — cuando la
+ * decisión es buena, el segundo queda muy lejos.
+ */
 export const V2_MARGEN_SIM = 0.08
 
 /**
  * Colisión en el REGISTRO con v2: una foto que se parezca a OTRA persona por
- * encima de esto se rechaza, con aire sobre el umbral de aceptación.
+ * encima de esto se rechaza.
+ *
+ * Va ATADO al umbral de aceptación a propósito: si se pudiera registrar a dos
+ * personas con caras más parecidas de lo que hace falta para reconocerlas, el
+ * kiosco tendría garantizado confundirlas. Nunca debe quedar por encima.
  */
-export const V2_LIMITE_COLISION_SIM = 0.45
+export const V2_LIMITE_COLISION_SIM = V2_UMBRAL_SIM
 
 export const esDescriptorV2 = (d) =>
   Array.isArray(d) && d.length === V2_LENGTH && d.every((n) => typeof n === 'number' && Number.isFinite(n))
