@@ -1,15 +1,25 @@
 /**
  * app/api/cron/resumen-diario/route.js
  *
- * GET — envía a cada empleado el resumen de su jornada. Lo llama la tarea
- *       programada de las 11:59 p. m. hora Colombia: lo último del día, para
- *       que hasta el último turno de la tarde alcance a quedar dentro.
+ * GET — envía a cada empleado el resumen de su jornada, la del ÚLTIMO DÍA
+ *       COMPLETO. Corre de madrugada, ya cerrado el día que resume.
  *
- * El horario vive en vercel.json como `59 4 * * *`, y ese 4 es UTC: las 04:59
- * UTC son las 11:59 p. m. del día ANTERIOR en Bogotá (UTC-5). Cuadra solo con
- * el resto: a esa hora `hoyEnBogota()` devuelve justamente el día que termina,
- * que es el que hay que resumir. JSON no admite comentarios, así que la
- * explicación vive aquí.
+ * Nació apuntando a las 11:59 p. m. para que el correo llegara el mismo día, y
+ * estuvo OCHO DÍAS sin enviar nada: el plan Hobby de Vercel tiene ±59 minutos
+ * de imprecisión y la tarea terminaba disparándose a las 00:52, ya pasada la
+ * medianoche. Resumía el día que acababa de empezar —vacío— y reportaba «ok»,
+ * porque técnicamente no había fallado nada.
+ *
+ * De ahí las dos decisiones de ahora:
+ *
+ *  · el horario (`0 6 * * *` en vercel.json, o sea 01:00 en Bogotá) queda
+ *    cómodamente DESPUÉS de medianoche, no pegado a ella;
+ *  · y la fecha se cuenta hacia atrás con `ayerEnBogota()`, así que dispararse
+ *    a las 00:10 o a las 01:50 da igual: siempre resume la jornada cerrada.
+ *
+ * El correo llega de madrugada y se lee por la mañana. Con esta imprecisión no
+ * hay forma de garantizar que salga antes de medianoche, y es preferible que
+ * llegue tarde a que llegue vacío.
  *
  * PROTEGIDO. No exige sesión —quien llama es un programador de tareas, no una
  * persona— así que la puerta es un secreto compartido: sin él, cualquiera
@@ -23,7 +33,7 @@
  * el envío, se repite sin esperar 24 horas.
  */
 import { NextResponse } from 'next/server'
-import { enviarResumenesDelDia, hoyEnBogota } from '../../../../lib/enviosDiarios.js'
+import { enviarResumenesDelDia, ayerEnBogota } from '../../../../lib/enviosDiarios.js'
 import { control } from '../../../../lib/db.js'
 
 export const runtime = 'nodejs'
@@ -48,7 +58,7 @@ export async function GET(req) {
     return NextResponse.json({ ok: false, error: 'No autorizado.' }, { status: 401 })
   }
 
-  const fecha = searchParams.get('fecha') || hoyEnBogota()
+  const fecha = searchParams.get('fecha') || ayerEnBogota()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
     return NextResponse.json({ ok: false, error: 'La fecha debe ser YYYY-MM-DD.' }, { status: 400 })
   }

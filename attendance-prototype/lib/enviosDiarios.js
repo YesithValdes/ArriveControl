@@ -24,6 +24,23 @@ import { enviarResumenDiario } from './correo.js'
 export const hoyEnBogota = () => new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10)
 
 /**
+ * El último día COMPLETO en Bogotá: el que hay que resumir.
+ *
+ * No es «hoy» y ese fue el error que dejó el correo sin enviarse ocho días
+ * seguidos. La tarea se programó para las 11:59 p. m., pero el plan Hobby de
+ * Vercel tiene ±59 minutos de imprecisión y terminaba disparándose a las
+ * 00:52 — ya pasada la medianoche. Resumía el día que ACABABA DE EMPEZAR,
+ * que obviamente estaba vacío: cero marcaciones, cero correos, y la tarea
+ * reportando «ok» porque técnicamente no había fallado nada.
+ *
+ * Contar hacia atrás lo vuelve inmune a la hora exacta en que corra: puede
+ * dispararse a las 00:10 o a las 01:50 y siempre resume la jornada que
+ * terminó. Es lo que hay que hacer cuando el reloj no se controla.
+ */
+export const ayerEnBogota = () =>
+  new Date(Date.now() - 5 * 3600000 - 86400000).toISOString().slice(0, 10)
+
+/**
  * Envía los resúmenes de un día.
  *
  * @param {string=} fechaISO  día a resumir (YYYY-MM-DD). Por defecto, hoy.
