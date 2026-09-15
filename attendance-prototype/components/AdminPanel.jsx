@@ -4299,7 +4299,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             <div className="drawer-head">
               <div>
                 <h3>{drawer.personName}</h3>
-                <span className="drawer-id">{drawer.personId}</span>
               </div>
               <button className="btn" onClick={() => setDrawer(null)}>Cerrar</button>
             </div>
@@ -6122,8 +6121,13 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   /* Fila de marcación: tipo · hora · origen · acciones caben en una línea
      porque las acciones son iconos; el origen cede si hace falta. */
   .tl-row { grid-template-columns: 58px auto 1fr auto; gap: 4px 6px; }
-  /* La info (origen + ubicación) baja a una segunda línea de la fila. */
-  .tl-info { grid-column: 1 / -1; }
+  /* Primera línea: tipo · hora · botones. Segunda: origen + ubicación, a
+     todo el ancho. Con posiciones fijas: el orden automático mandaba los
+     botones a una tercera línea. */
+  .tl-type { grid-area: 1 / 1; }
+  .tl-time { grid-area: 1 / 2; }
+  .tl-actions { grid-area: 1 / 4; justify-self: end; }
+  .tl-info { grid-area: 2 / 1 / 3 / -1; }
   .tl-info:empty { display: none; }
   .lugar-detalle { margin-left: 0; }
 }
