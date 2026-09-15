@@ -3,6 +3,16 @@ const nextConfig = {
   reactStrictMode: true,
 
   /**
+   * Carpeta de salida. Por defecto `.next`, la de siempre. Con NEXT_DIST_DIR
+   * se puede compilar a OTRA carpeta: un `next build` de verificación mientras
+   * `npm run dev` está corriendo escribe en la misma `.next` y lo deja
+   * sirviendo módulos que ya no existen («Cannot find module ./9705.js»).
+   *   NEXT_DIST_DIR=.next-verificacion npx next build
+   * Vercel no define la variable, así que en producción no cambia nada.
+   */
+  distDir: process.env.NEXT_DIST_DIR || '.next',
+
+  /**
    * Los .sql de la plantilla de empresa TIENEN que viajar al servidor.
    *
    * Al registrarse alguien con Google, `crearEmpresa()` (lib/empresas.js) crea

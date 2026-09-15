@@ -11,7 +11,10 @@
  * SEMANA, no por día. Es la jornada flexible del art. 161-d del CST (Ley
  * 2101): las horas de la semana (42 de fábrica, Ajustes → Reglamento) se
  * reparten entre lunes y sábado como haga falta, y un día largo compensa uno
- * corto.
+ * corto. Desde 2026-09-15 el modo es CONFIGURABLE (Ajustes → Reglamento →
+ * modo_extra, con vigencia): 'semana', lo descrito aquí, o 'dia', donde lo
+ * que pasa de la jornada del horario de cada día es extra de ese día
+ * (`tramosDeDia`). Lo demás es igual en los dos modos.
  *
  *  - Durante la semana solo se ACUMULA. No hay «hora extra» hasta que la
  *    semana cierra (termina el domingo). Antes se decidía por día contra 7 h
@@ -341,6 +344,51 @@ export function tramosDeSemana({ pares, extra, franjaDe }) {
 }
 
 /**
+ * Tramos con recargo de una semana en modo POR DÍA: lo que pase de la jornada
+ * de cada día es extra de ese día, ubicado en sus últimas horas.
+ *
+ * La jornada del día sale del HORARIO del empleado (7h 30 un lunes de
+ * 09:00–17:30 con una hora de almuerzo; 4h 30 un sábado corto). Es lo que
+ * corrige el defecto del cálculo viejo, que usaba 7 h planas para todos y
+ * regalaba media hora diaria a quien tenía horario de 7h 30 mientras su
+ * sábado nunca daba extra. Quien no tenga horario cae a la jornada legal
+ * repartida (`jornadaSinHorario`).
+ *
+ * Un día se define solo: no espera a que cierre la semana. Sí se cuenta el
+ * día de hoy — sus pares son reales, y una marcación más solo podría
+ * sumarle, nunca quitarle. Domingo y festivo, igual que en modo semana.
+ *
+ * @param {object} p
+ * @param {Array} p.pares
+ * @param {(fecha: string) => number|null} p.jornadaDe  horas del horario ese día
+ * @param {number} p.jornadaSinHorario  respaldo para un día sin horario
+ * @param {(fecha: string) => {inicio: number, fin: number}} p.franjaDe
+ */
+export function tramosDeDia({ pares, jornadaDe, jornadaSinHorario, franjaDe }) {
+  const tramos = []
+  const porDia = new Map()
+  for (const p of pares) {
+    if (!porDia.has(p.fecha)) porDia.set(p.fecha, [])
+    porDia.get(p.fecha).push(p)
+  }
+  for (const [fecha, ps] of porDia) {
+    if (ps[0].dominical) {
+      // Recargo desde la primera hora: se resuelve con la misma función.
+      tramos.push(...tramosDeSemana({ pares: ps, extra: null, franjaDe }))
+      continue
+    }
+    const horas = ps.reduce((s, p) => s + p.horas, 0)
+    const jornada = jornadaDe(fecha) ?? jornadaSinHorario
+    const extra = Math.max(0, horas - jornada)
+    // La atribución (últimas horas, mínimo de 0,5 h sobre el total, pedazos
+    // completos, partición nocturna) es la misma que por semana, aplicada al
+    // día como si fuera una semana de un solo día.
+    tramos.push(...tramosDeSemana({ pares: ps, extra, franjaDe }))
+  }
+  return tramos.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.horaInicio.localeCompare(b.horaInicio))
+}
+
+/**
  * Convierte marcaciones en tramos con recargo.
  *
  * @param {Map<string, {cedula: string, nombre: string, sede: string,
@@ -357,13 +405,18 @@ export function tramosDeSemana({ pares, extra, franjaDe }) {
  *        Puede ser una FUNCIÓN de la fecha: la franja es un parámetro con
  *        vigencias, y un tramo de marzo debe partirse con la franja de marzo.
  *        `hoy`: fecha Bogotá con la que se decide qué semanas ya cerraron.
+ *        `modoExtra`: 'semana' (de fábrica) o 'dia' — o una FUNCIÓN de la
+ *        fecha, porque el modo lleva vigencia y se evalúa con el lunes de
+ *        cada semana: el cambio rige desde la semana siguiente al día en que
+ *        se hizo, nunca parte una semana en dos.
  * @returns {Array} registros listos para exportar o entregar por API
  */
 export function calcularRegistros(
   porEmpleado,
-  { festivos, vigencias, nocturno = NOCTURNO_DEFECTO, hoy = hoyEnBogota() },
+  { festivos, vigencias, nocturno = NOCTURNO_DEFECTO, hoy = hoyEnBogota(), modoExtra = 'semana' },
 ) {
   const franjaDe = typeof nocturno === 'function' ? nocturno : () => nocturno
+  const modoDe = typeof modoExtra === 'function' ? modoExtra : () => modoExtra
   const registros = []
   for (const [empId, e] of porEmpleado) {
     const pares = emparejarMarcas(e, { festivos, hoy })
@@ -390,8 +443,15 @@ export function calcularRegistros(
         hoy,
       })
 
-      // DÓNDE cayó y de qué clase.
-      const tramos = tramosDeSemana({ pares: ps, extra: semana.extra, franjaDe })
+      // DÓNDE cayó y de qué clase, según el modo que regía ese lunes.
+      const tramos = modoDe(lunes) === 'dia'
+        ? tramosDeDia({
+          pares: ps,
+          jornadaDe: (fecha) => horasDeHorario(e, fecha),
+          jornadaSinHorario: horasSemanaEn(vigencias, lunes) / 6,
+          franjaDe,
+        })
+        : tramosDeSemana({ pares: ps, extra: semana.extra, franjaDe })
 
       for (const t of tramos) {
         registros.push({

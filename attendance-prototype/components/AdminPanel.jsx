@@ -34,13 +34,14 @@ import { TIPOS_HORA, CODIGOS_HORA, nombreTipo, valorizarRegistro } from '../lib/
 // → qué horas son extra y de qué código). El simulador los llama tal cual, sin
 // base de datos: entra un turno y cuántas horas lleva la semana, sale la
 // lista de tramos.
-import { emparejarMarcas, tramosDeSemana } from '../lib/calculoHoras.js';
+import { emparejarMarcas, tramosDeSemana, tramosDeDia } from '../lib/calculoHoras.js';
 // La SEMANA es la unidad de la hora extra (lib/semanaLaboral.js): el detalle
 // de una persona se agrupa por semanas y la extra solo aparece en las que ya
 // cerraron. Los festivos legales se calculan aquí igual que en el servidor.
 import { resumenSemana, lunesDe, domingoDe, EXTRA_MINIMA_H } from '../lib/semanaLaboral.js';
 import { getHolidaysForYear } from 'colombian-holidays';
 import { rutaDe, tabDeRuta } from '../lib/rutasPanel.js';
+import { haversineDistance } from '../utils/haversine.js';
 import { signOut } from '../lib/auth-client';
 // Diagnóstico GPS embebido en Ajustes (la página /gps sigue existiendo).
 import GpsDebug from './GpsDebug.jsx';
@@ -83,6 +84,41 @@ function Icon({ name, size = 17 }) {
  * angostas obligarían a scroll horizontal). Cabecera = lo esencial;
  * al expandir se ven los demás campos y las acciones.
  */
+/**
+ * Desde dónde se marcó: dirección legible (o coordenadas), precisión del
+ * GPS, distancia a la sede si la sede tiene coordenadas, y el enlace al
+ * mapa. Una sola pieza para el cajón y para la tabla (`compacto`).
+ */
+function Lugar({ lat, lon, precision, direccion, sede, compacto = false }) {
+  const sedeObj = sede ? getSedes().find((x) => x.name === sede) : null;
+  const dist = sedeObj && Number.isFinite(Number(sedeObj.lat)) && Number.isFinite(Number(sedeObj.lon))
+    ? Math.round(haversineDistance(Number(lat), Number(lon), Number(sedeObj.lat), Number(sedeObj.lon)))
+    : null;
+  const dentro = dist != null && dist <= (Number(sedeObj.radius) || 50);
+  const texto = direccion || `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`;
+  return (
+    <a
+      className={`lugar${compacto ? ' compacto' : ''}`}
+      href={`https://www.google.com/maps?q=${lat},${lon}`}
+      target="_blank" rel="noreferrer"
+      title="Abrir en Google Maps"
+      onClick={(ev) => ev.stopPropagation()}
+    >
+      <span className="lugar-ico" aria-hidden="true"><Icon name="pin" size={compacto ? 11 : 13} /></span>
+      <span className="lugar-txt">
+        <span className="lugar-dir">{texto}</span>
+        {(precision != null || dist != null) && (
+          <span className="lugar-meta">
+            {precision != null && <em>±{Math.round(precision)} m</em>}
+            {dist != null && <em className={dentro ? 'ok' : 'lejos'}>{dist} m de {sede}</em>}
+          </span>
+        )}
+      </span>
+      {!compacto && <span className="lugar-mapa">Mapa</span>}
+    </a>
+  );
+}
+
 function AccList({ items }) {
   const [openId, setOpenId] = useState(null);
   return (
@@ -586,7 +622,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // diga lo que la persona acaba de tocar y no siempre "Reglamento".
   const CLAVES_VALORIZACION = ['factores', 'divisorHorasMes', 'nocturnoInicio', 'nocturnoFin'];
   const updateCfg = (partial) => {
-    setCfg(saveLaborConfig(partial));
+    setCfg(saveLaborConfig(partial, (motivo) => {
+      // El servidor no lo aceptó: se muestra lo que quedó de verdad y se dice.
+      setCfg(getLaborConfig());
+      showToast(`No se guardó: ${motivo}`);
+    }));
     const esValorizacion = Object.keys(partial).some((k) => CLAVES_VALORIZACION.includes(k));
     showToast(esValorizacion ? 'Valorización actualizada' : 'Reglamento actualizado');
   };
@@ -624,6 +664,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   };
   const [newSedeOpen, setNewSedeOpen] = useState(false); // drawer de "Nueva sede"
   const [newHoliday, setNewHoliday] = useState('');
+  // Año que se ve en la lista de festivos (se navega con ‹ ›).
+  const [holYear, setHolYear] = useState(() => new Date().getFullYear());
   // Borradores de la pantalla de valorización: lo tecleado se guarda al salir
   // del campo, no en cada pulsación (escribir "215" pasa por "2" y "21").
   const [pctDraft, setPctDraft] = useState(null); // { HED: '125', … }
@@ -637,7 +679,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // `acumuladas`: horas que la semana ya lleva antes del turno simulado. Con
   // 42 (la jornada completa) todo el turno sale como extra, que es lo útil
   // para ver en qué códigos lo parte el sistema.
-  const [simTurno, setSimTurno] = useState({ fecha: todayKey(), entrada: '08:00', salida: '20:00', acumuladas: '42' });
+  const [simTurno, setSimTurno] = useState({ fecha: todayKey(), entrada: '08:00', salida: '20:00', acumuladas: '42', jornada: '7.5' });
 
   // Quién tiene acceso a esta empresa. Con Google no se crean cuentas: se
   // invita un correo, y la cuenta nace cuando esa persona entra.
@@ -1438,6 +1480,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
    */
   const rangoSemanas = (desde, hasta) => {
     const hoy = todayKey();
+    // Por día no hace falta ajustar: cada día se define solo.
+    if (cfg.modoExtra === 'dia') return { desde, hasta: hasta < hoy ? hasta : hoy };
     const dom = domingoDe(hasta);
     return { desde: lunesDe(desde), hasta: dom < hoy ? dom : hoy };
   };
@@ -1449,9 +1493,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     setEvForm(null);
     setOpenDia(day);
     const hoy = todayKey();
+    // Por día: el día pedido, o los últimos 7 días (como siempre fue).
     const rango = day
       ? rangoSemanas(day, day)
-      : rangoSemanas(dayKey(new Date(Date.now() - 7 * 24 * 3600000).toISOString()), hoy);
+      : rangoSemanas(dayKey(new Date(Date.now() - (cfg.modoExtra === 'dia' ? 6 : 7) * 24 * 3600000).toISOString()), hoy);
     setDrawer({ personId, personName, ...rango });
   };
 
@@ -1577,16 +1622,31 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           horasSemana: cfg.weeklyHours ?? 42,
           hoy: todayKey(),
         });
-        // Reparto por CÓDIGO (HED, HEN, HEDDF, HENDF) con la misma función
-        // del motor: la extra semanal cae en las últimas horas de la semana y
-        // toma su tipo por el reloj; domingo y festivo salen siempre.
+        // Reparto por CÓDIGO (HED, HEN, HEDDF, HENDF) con las mismas funciones
+        // del motor, según el modo de la empresa (Ajustes → Reglamento):
+        //  · semana: la extra cae en las últimas horas de la semana cerrada;
+        //  · día: cada día se define solo contra la jornada de su horario.
+        // Domingo y festivo salen siempre en los dos.
         const pares = dias.flatMap((d) => paresDe(d.evs, ahora, drawerPersona)
           .map((p) => ({ ...p, dominical: p.dow === 0 || festivos.has(p.fecha) })));
+        const porDia = cfg.modoExtra === 'dia';
+        const tramos = porDia
+          ? tramosDeDia({
+            pares,
+            jornadaDe: (fecha) => horasFranja(franjaEsperada(drawerPersona, fecha)),
+            jornadaSinHorario: (cfg.weeklyHours ?? 42) / 6,
+            franjaDe: () => nocturno,
+          })
+          : tramosDeSemana({ pares, extra: semana.extra, franjaDe: () => nocturno });
         const porCodigo = Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0]));
-        for (const t of tramosDeSemana({ pares, extra: semana.extra, franjaDe: () => nocturno })) porCodigo[t.tipoHora] += t.horas;
-        return { dias, ...semana, porCodigo };
+        const extraPorDia = new Map(); // solo con sentido en modo día
+        for (const t of tramos) {
+          porCodigo[t.tipoHora] += t.horas;
+          if (!t.tipoHora.endsWith('DF')) extraPorDia.set(t.fecha, (extraPorDia.get(t.fecha) ?? 0) + t.horas);
+        }
+        return { dias, ...semana, porCodigo, porDia, extraPorDia };
       });
-  }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin]);
+  }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin, cfg.modoExtra]);
 
   const saveEvForm = async () => {
     if (!evForm?.time || !evForm.reason.trim()) return;
@@ -2000,9 +2060,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           </span>
         </div>
         <div className="head-right">
-          {/* Guía de arranque: antes era una tarjeta fija del dashboard;
-              ahora vive aquí, bajo demanda. */}
-          <button className="head-guia" onClick={() => setGuiaAbierta(true)}>¿Cómo empezar?</button>
+          {/* Guía de arranque: solo en el dashboard, que es la puerta de
+              entrada. En las demás pantallas quitaba sitio a lo que sí importa. */}
+          {tab === 'dashboard' && (
+            <button className="head-guia" onClick={() => setGuiaAbierta(true)}>¿Cómo empezar?</button>
+          )}
           {data.anomalies.length > 0 && (
             <button className="head-badge" title="Anomalías pendientes" onClick={() => setTab('anomalias')}>
               {data.anomalies.length}
@@ -2112,7 +2174,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   {esHoy ? 'Asistencia de hoy' : `Asistencia — ${new Date(`${diaAsistencia}T12:00:00-05:00`).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}`}
                   {' '}<span className="muted-count">{attRows.length}</span>
                 </h2>
-<div className="att-controls">
+                {/* En el celular: tres filas limpias (buscar · día · filtro
+                    segmentado a todo el ancho). En PC, todo en una línea. */}
+                <div className="att-controls asist-controles">
                   <input
                     className="att-search mini" type="search" placeholder="Buscar…"
                     value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
@@ -2126,14 +2190,16 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     />
                     <button className="btn dia-flecha" title="Día siguiente" disabled={esHoy} onClick={() => cambiarDia(1)}>›</button>
                   </div>
-                  {[['all', 'Todos'], ['present', esHoy ? 'Trabajando' : 'Asistieron'], ['absent', 'Ausentes']].map(([id, lbl]) => (
-                    <button
-                      key={id} className="fchip" aria-pressed={statusFilter === id}
-                      onClick={() => { setStatusFilter(id); setPage(0); }}
-                    >
-                      {lbl}
-                    </button>
-                  ))}
+                  <div className="fchips" role="group" aria-label="Filtrar por estado">
+                    {[['all', 'Todos'], ['present', esHoy ? 'Trabajando' : 'Asistieron'], ['absent', 'Ausentes']].map(([id, lbl]) => (
+                      <button
+                        key={id} className="fchip" aria-pressed={statusFilter === id}
+                        onClick={() => { setStatusFilter(id); setPage(0); }}
+                      >
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="scrollable">
                   {attRows.length === 0 && (
@@ -2211,16 +2277,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                   <td className="att-sede">
                                     {r.sede || (r.lugar ? '' : '—')}
                                     {r.lugar && (
-                                      <a
-                                        className="att-lugar"
-                                        href={`https://www.google.com/maps?q=${r.lugar.lat},${r.lugar.lon}`}
-                                        target="_blank" rel="noreferrer"
-                                        title={`Marcó desde aquí · ${horaCorta(r.lugar.ts)}`}
-                                        onClick={(ev) => ev.stopPropagation()}
-                                      >
-                                        <Icon name="pin" size={11} />
-                                        {r.lugar.direccion || `${Number(r.lugar.lat).toFixed(4)}, ${Number(r.lugar.lon).toFixed(4)}`}
-                                      </a>
+                                      <Lugar compacto lat={r.lugar.lat} lon={r.lugar.lon} precision={r.lugar.precision} direccion={r.lugar.direccion} sede={r.lugar.sede || r.sede} />
                                     )}
                                   </td>
                                 </tr>
@@ -2244,11 +2301,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               ...(novedadDe(r) ? [['Novedad', novedadDe(r)]] : []),
                               ['Sede', r.sede || '—'],
                               ...(r.lugar ? [['Marcó desde', (
-                                <a key="l" className="att-lugar" target="_blank" rel="noreferrer"
-                                  href={`https://www.google.com/maps?q=${r.lugar.lat},${r.lugar.lon}`}>
-                                  <Icon name="pin" size={11} />
-                                  {r.lugar.direccion || `${Number(r.lugar.lat).toFixed(4)}, ${Number(r.lugar.lon).toFixed(4)}`}
-                                </a>
+                                <Lugar key="l" lat={r.lugar.lat} lon={r.lugar.lon} precision={r.lugar.precision} direccion={r.lugar.direccion} sede={r.lugar.sede || r.sede} />
                               )]] : []),
                             ],
                             actions: (
@@ -2860,11 +2913,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'reportes' && (
           <section className="card grow">
             <h2>Horas extra por período</h2>
-            <p className="hint">Extra = lo que pasa de {cfg.weeklyHours ?? 42} h de lunes a sábado, por semana cerrada.</p>
+            <p className="hint">
+              {cfg.modoExtra === 'dia'
+                ? 'Extra = lo que pasa de la jornada del horario de cada día.'
+                : `Extra = lo que pasa de ${cfg.weeklyHours ?? 42} h de lunes a sábado, por semana cerrada.`}
+            </p>
 {/* La semana en curso no tiene extra todavía (domingo y festivo sí:
                 esos no dependen de la cuenta). Se avisa para que un reporte
                 que la incluya no se lea como «no hubo». */}
-            {repTo >= lunesDe(todayKey()) && (
+            {cfg.modoExtra !== 'dia' && repTo >= lunesDe(todayKey()) && (
               <p className="cfg-note rep-en-curso">
                 La semana del {Number(lunesDe(todayKey()).slice(8, 10))} al {Number(domingoDe(todayKey()).slice(8, 10))} sigue en curso:
                 sus horas extra de lunes a sábado aparecerán aquí cuando cierre el domingo.
@@ -3797,7 +3854,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           };
 
           const horasSemana = cfg.weeklyHours ?? 42;
+          const simPorDia = cfg.modoExtra === 'dia';
           const acumuladas = Math.max(0, Number(simTurno.acumuladas) || 0);
+          const jornadaSim = Math.max(0, Number(simTurno.jornada) || 0);
           let tramosTurno = [];
           if (duracion > 0) {
             // El turno pasa por el MISMO emparejador que las marcaciones reales
@@ -3811,7 +3870,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             // Domingo y festivo no entran en esa cuenta (van con recargo
             // desde la primera hora, y tramosDeSemana los saca solos).
             const ordinarias = pares.filter((p) => !p.dominical).reduce((s, p) => s + p.horas, 0);
-            const extra = Math.max(0, acumuladas + ordinarias - horasSemana);
+            // Por día: lo que el turno pase de la jornada del día. Por semana:
+            // lo que haga pasar de la jornada semanal, sumado a lo acumulado.
+            const extra = simPorDia
+              ? Math.max(0, ordinarias - jornadaSim)
+              : Math.max(0, acumuladas + ordinarias - horasSemana);
             const nocturnoCfg = {
               inicio: aMin(cfg.nocturnoInicio ?? '21:00') ?? 21 * 60,
               fin: aMin(cfg.nocturnoFin ?? '06:00') ?? 6 * 60,
@@ -3929,23 +3992,39 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         onChange={(e) => e.target.value && setSimTurno({ ...simTurno, salida: e.target.value })} />
                     </div>
                   </div>
-                  <div className="cfg-row">
-                    <label htmlFor="sim-acumuladas">
-                      Horas que ya lleva la semana
-                      <small>Lunes a sábado, antes de este turno. Con {horasSemana} h, el turno entero es extra.</small>
-                    </label>
-                    <div className="cfg-input">
-                      <input id="sim-acumuladas" type="number" min="0" max="80" step="0.5"
-                        value={simTurno.acumuladas}
-                        onChange={(e) => setSimTurno({ ...simTurno, acumuladas: e.target.value })} /> h
+                  {simPorDia ? (
+                    <div className="cfg-row">
+                      <label htmlFor="sim-jornada">
+                        Jornada del día
+                        <small>La del horario de la persona ese día.</small>
+                      </label>
+                      <div className="cfg-input">
+                        <input id="sim-jornada" type="number" min="0" max="12" step="0.5"
+                          value={simTurno.jornada}
+                          onChange={(e) => setSimTurno({ ...simTurno, jornada: e.target.value })} /> h
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="cfg-row">
+                      <label htmlFor="sim-acumuladas">
+                        Horas que ya lleva la semana
+                        <small>Lunes a sábado, antes de este turno. Con {horasSemana} h, el turno entero es extra.</small>
+                      </label>
+                      <div className="cfg-input">
+                        <input id="sim-acumuladas" type="number" min="0" max="80" step="0.5"
+                          value={simTurno.acumuladas}
+                          onChange={(e) => setSimTurno({ ...simTurno, acumuladas: e.target.value })} /> h
+                      </div>
+                    </div>
+                  )}
 
                   {turnoSim.tramos.length === 0 ? (
                     <p className="cfg-note">
                       {turnoSim.duracion <= 0
                         ? 'Turno vacío.'
-                        : `Sin horas extra: con ${fmtHoras(acumuladas)} ya trabajadas, ${fmtHoras(turnoSim.duracion)} más no pasan de las ${horasSemana} h de la semana.`}
+                        : simPorDia
+                          ? `Sin horas extra: ${fmtHoras(turnoSim.duracion)} no pasan de la jornada de ${fmtHoras(jornadaSim)}.`
+                          : `Sin horas extra: con ${fmtHoras(acumuladas)} ya trabajadas, ${fmtHoras(turnoSim.duracion)} más no pasan de las ${horasSemana} h de la semana.`}
                     </p>
                   ) : (
                     <>
@@ -4002,6 +4081,35 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     /> h
                   </div>
                 </div>
+                {/* Por semana o por día. Es un parámetro de PAGO: abre
+                    vigencia, y rige desde la semana siguiente al cambio. */}
+                <div className="cfg-row">
+                  <label htmlFor="cfg-modo-extra">
+                    Hora extra
+                    <small>
+                      {cfg.modoExtra === 'dia'
+                        ? 'Lo que pase de la jornada del horario de cada día.'
+                        : `Lo que pase de ${cfg.weeklyHours ?? 42} h de lunes a sábado; los días se compensan.`}
+                    </small>
+                  </label>
+                  <div className="cfg-input">
+                    <select
+                      id="cfg-modo-extra"
+                      className="sede-select"
+                      aria-label="Cómo se cuenta la hora extra"
+                      value={cfg.modoExtra ?? 'semana'}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === (cfg.modoExtra ?? 'semana')) return;
+                        if (!confirm(`¿Contar la hora extra ${v === 'dia' ? 'por día' : 'por semana'}? Rige desde la próxima semana; lo ya calculado no cambia.`)) { e.target.value = cfg.modoExtra ?? 'semana'; return; }
+                        updateCfg({ modoExtra: v });
+                      }}
+                    >
+                      <option value="semana">Por semana</option>
+                      <option value="dia">Por día</option>
+                    </select>
+                  </div>
+                </div>
                 <div className="cfg-row">
                   <label htmlFor="cfg-grace">
                     Gracia de puntualidad
@@ -4021,25 +4129,59 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <p className="cfg-note">
                   Los festivos oficiales de Colombia se calculan solos; agrega solo los propios de tu empresa.
                 </p>
-                <div className="holiday-add">
-                  <input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} aria-label="Nuevo festivo" />
-                  <button
-                    className="btn primary"
-                    disabled={!newHoliday || (cfg.holidays ?? []).includes(newHoliday)}
-                    onClick={() => { updateCfg({ holidays: [...(cfg.holidays ?? []), newHoliday].sort() }); setNewHoliday(''); }}
-                  >
-                    ＋ Agregar
-                  </button>
-                </div>
-                <div className="holiday-list">
-                  {(cfg.holidays ?? []).map((d) => (
-                    <span className="holiday-chip" key={d}>
-                      {new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: '2-digit' })}
-                      <button aria-label={`Quitar festivo ${d}`}
-                        onClick={() => updateCfg({ holidays: (cfg.holidays ?? []).filter((x) => x !== d) })}>✕</button>
-                    </span>
-                  ))}
-                </div>
+                {(() => {
+                  // Los OFICIALES salen del calendario (no se pueden quitar); los
+                  // PROPIOS son los que la empresa agregó. El servidor devuelve
+                  // los dos juntos, así que aquí se separan otra vez.
+                  const oficiales = new Map(getHolidaysForYear(holYear).map((h) => [h.celebrationDate, h.name?.es ?? 'Festivo']));
+                  const oficialesTodos = new Set([holYear - 1, holYear, holYear + 1].flatMap((a) => getHolidaysForYear(a).map((h) => h.celebrationDate)));
+                  const propios = (cfg.holidays ?? []).filter((d) => !oficialesTodos.has(d));
+                  const delAnio = [...new Set([...oficiales.keys(), ...propios.filter((d) => d.startsWith(String(holYear)))])].sort();
+                  const porMes = new Map();
+                  for (const d of delAnio) { const m = Number(d.slice(5, 7)); if (!porMes.has(m)) porMes.set(m, []); porMes.get(m).push(d); }
+                  const nombreMes = (m) => new Date(holYear, m - 1, 1).toLocaleDateString('es-CO', { month: 'long' });
+                  return (
+                    <>
+                      <div className="holiday-add">
+                        <input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} aria-label="Nuevo festivo propio" />
+                        <button
+                          className="btn primary"
+                          disabled={!newHoliday || propios.includes(newHoliday) || oficialesTodos.has(newHoliday)}
+                          title={oficialesTodos.has(newHoliday) ? 'Ya es festivo oficial' : undefined}
+                          onClick={() => { updateCfg({ holidays: [...propios, newHoliday].sort() }); setNewHoliday(''); }}
+                        >
+                          ＋ Agregar
+                        </button>
+                      </div>
+                      <div className="holiday-anio">
+                        <button className="btn small" onClick={() => setHolYear(holYear - 1)} aria-label="Año anterior">‹</button>
+                        <b>{holYear}</b>
+                        <button className="btn small" onClick={() => setHolYear(holYear + 1)} aria-label="Año siguiente">›</button>
+                        <span className="holiday-leyenda"><i className="oficial" /> oficial <i className="propio" /> de la empresa</span>
+                      </div>
+                      {[...porMes.entries()].map(([m, dias]) => (
+                        <div className="holiday-mes" key={m}>
+                          <h4>{nombreMes(m)}</h4>
+                          <div className="holiday-list">
+                            {dias.map((d) => {
+                              const oficial = oficiales.has(d);
+                              const fecha = new Date(d + 'T12:00:00');
+                              return (
+                                <span className={`holiday-chip${oficial ? ' oficial' : ''}`} key={d} title={oficial ? oficiales.get(d) : 'Festivo de la empresa'}>
+                                  <b>{fecha.getDate()}</b> {fecha.toLocaleDateString('es-CO', { weekday: 'short' })}
+                                  {!oficial && (
+                                    <button aria-label={`Quitar festivo ${d}`}
+                                      onClick={() => updateCfg({ holidays: propios.filter((x) => x !== d) })}>✕</button>
+                                  )}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </section>
@@ -4199,9 +4341,109 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   : `${fmtDM(s.lunes)} – ${fmtDM(s.domingo)}`);
                 const horasSem = cfg.weeklyHours ?? 42;
 
+                // Una fila de día, común a las dos vistas del cajón. `extraDia` solo
+                // llega con valor en modo por día: cada día trae su extra.
+                const filaDia = (d, extraDia = 0) => {
+                  const abierto = openDia === d.fecha;
+                  // Bloques como CHIPS (envuelven a varias líneas: soporta
+                  // cualquier número de pares sin superponerse).
+                  const bloques = [];
+                  for (let i = 0; i < d.evs.length; i++) {
+                    if (d.evs[i].type === 'in' && d.evs[i + 1]?.type === 'out') {
+                      bloques.push({ txt: `${hh(d.evs[i].ts)}–${hh(d.evs[i + 1].ts)}` });
+                      i++;
+                    } else {
+                      bloques.push({ txt: `${d.evs[i].type === 'in' ? 'E' : 'S'} ${hh(d.evs[i].ts)}`, warn: true });
+                    }
+                  }
+                  return (
+                    <div className={`dia${abierto ? ' abierto' : ''}`} key={d.fecha}>
+                      <button className="dia-row" aria-expanded={abierto} onClick={() => { setOpenDia(abierto ? null : d.fecha); setEvForm(null); }}>
+                        <span className="dia-top">
+                          <span className="dia-fecha">
+                            {new Date(`${d.fecha}T12:00:00`).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })}
+                          </span>
+                          <span className="dia-horas">
+                            {fmtH(d.horas)}
+                            {/* En modo día cada día trae su extra (ya definitiva). */}
+                            {extraDia > 0.001 && (
+                              <em className="dia-extra" title="Extra de este día: lo que pasó de la jornada de su horario"> +{fmtHM(extraDia)}</em>
+                            )}
+                          </span>
+                          <span className="dia-chev">›</span>
+                        </span>
+                        <span className="dia-bloques">
+                          {bloques.length === 0 && <span className="bloque">—</span>}
+                          {bloques.map((b, i) => (
+                            <span key={i} className={`bloque${b.warn ? ' warn' : ''}`}>{b.txt}{b.warn ? ' ⚠' : ''}</span>
+                          ))}
+                        </span>
+                      </button>
+
+                      {abierto && (
+                        <div className="dia-detalle">
+                          {d.evs.map((e, i) => {
+                            // Mismo criterio que los bloques ⚠ de arriba y que el
+                            // resaltado de Asistencia: marcación con bandera
+                            // (tardía / salida temprana) o entrada sin su salida.
+                            const novedad = e.flag === 'late-entry' || e.flag === 'early-exit'
+                              || (e.type === 'in' && d.evs[i + 1]?.type !== 'out');
+                            return (
+                            <div key={e.id}>
+                              <div className={`tl-row${novedad ? ' con-novedad' : ''}`}>
+                                <span className={`tl-type ${e.type}`}>{e.type === 'in' ? 'Entrada' : 'Salida'}</span>
+                                <span className="tl-time">{fmt12(e.ts)}</span>
+                                <span className="tl-flag">
+                                  {e.flag === 'manual' ? 'manual' : e.flag === 'corrected' ? 'corregida' : e.flag === 'late-entry' ? 'tardía' : 'kiosco'}
+                                </span>
+                                <span className="tl-actions">
+                                  <button
+                                    className="btn small"
+                                    onClick={() => {
+                                      const dt = new Date(new Date(e.ts).getTime() - 5 * 3600000); // hora Bogotá
+                                      setEvForm({ mode: 'edit', eventId: e.id, fecha: d.fecha, type: e.type, time: `${String(dt.getUTCHours()).padStart(2, '0')}:${String(dt.getUTCMinutes()).padStart(2, '0')}`, reason: '' });
+                                    }}
+                                  >
+                                    Editar
+                                  </button>
+                                  <button className="btn small danger-btn" onClick={() => removeEv(e)}>Eliminar</button>
+                                </span>
+                              </div>
+                              {/* Desde dónde se marcó. Solo aparece si el
+                                  empleado tiene «validar ubicación»: sin
+                                  eso el kiosco no guarda el punto. */}
+                              {e.lat != null && e.lon != null && (
+                                <Lugar lat={e.lat} lon={e.lon} precision={e.precision} direccion={e.direccion} sede={e.sede || drawerPersona?.sede} />
+                              )}
+                              {/* El formulario de edición, JUSTO bajo la marcación editada */}
+                              {evForm?.mode === 'edit' && evForm.eventId === e.id && formularioEv}
+                              {/* (el alta con fecha libre —conFecha— se pinta abajo, no aquí) */}
+                            </div>
+                            );
+                          })}
+
+                          {/* Alta manual: el formulario aparece bajo el botón, dentro del día */}
+                          {evForm?.mode === 'add' && !evForm.conFecha && evForm.fecha === d.fecha
+                            ? formularioEv
+                            : (
+                              <button className="btn small block" onClick={() => setEvForm({ mode: 'add', fecha: d.fecha, type: d.evs.length % 2 === 0 ? 'in' : 'out', time: '08:00', reason: '' })}>
+                                Agregar marcación
+                              </button>
+                            )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                };
+                // En modo POR DÍA no hay cuenta semanal que mostrar: el cajón
+                // vuelve a la lista plana de días de antes, cada uno con su extra.
+                const porDia = cfg.modoExtra === 'dia';
+                const extraDeDia = new Map(drawerSemanas.flatMap((s) => [...s.extraPorDia.entries()]));
+
                 return (
                   <>
-                    {drawerSemanas.map((s) => (
+                    {porDia && drawerDias.map((d) => filaDia(d, extraDeDia.get(d.fecha)))}
+                    {!porDia && drawerSemanas.map((s) => (
                     <section className={`sem-bloque ${s.cerrada ? 'cerrada' : 'curso'}`} key={s.lunes}>
                       {/* Las cuentas de la semana. La extra NO se estima por
                           día: solo existe cuando la semana cerró (domingo
@@ -4210,12 +4452,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         {/* El estado se ve en el COLOR de la cabecera: azul la
                             semana en curso, gris las que ya cerraron. */}
                         <span className="sem-top">
-                          <span className="sem-titulo" title={s.cerrada ? 'Semana cerrada: la extra es definitiva' : 'Semana en curso: la extra se define al cerrar el domingo'}>{etiquetaSemana(s)}</span>
+                          <span className="sem-titulo" title={s.porDia ? 'Extra por día: cada día se define solo' : s.cerrada ? 'Semana cerrada: la extra es definitiva' : 'Semana en curso: la extra se define al cerrar el domingo'}>{etiquetaSemana(s)}</span>
                           <span className="sem-total">{fmtH(s.trabajado)}</span>
                         </span>
                         {/* Solo códigos y horas; la explicación, al pasar el mouse. */}
                         <span className="sem-chips">
-                          {!s.cerrada && (
+                          {!s.cerrada && !s.porDia && (
                             <span className="sem-chip" title={`Lunes a sábado, sobre las ${horasSem} h de la semana`}>{fmtH(s.cuenta)} / {horasSem} h</span>
                           )}
                           {CODIGOS_HORA.filter((c) => s.porCodigo[c] > 0.001).map((c) => (
@@ -4223,7 +4465,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               {c} {fmtH(s.porCodigo[c])}
                             </span>
                           ))}
-                          {s.cerrada && s.extra < EXTRA_MINIMA_H && (
+                          {!s.porDia && s.cerrada && s.extra < EXTRA_MINIMA_H && (
                             <span
                               className="sem-chip"
                               title={s.extra > 0.001
@@ -4233,6 +4475,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               Sin extra
                             </span>
                           )}
+                          {s.porDia && CODIGOS_HORA.every((c) => s.porCodigo[c] <= 0.001) && (
+                            <span className="sem-chip" title="Ningún día pasó de la jornada de su horario">Sin extra</span>
+                          )}
                           {s.festivosAcreditados.map((f) => (
                             <span className="sem-chip festivo" key={f.fecha} title={`Festivo del ${fmtDM(f.fecha)}: ${fmtH(f.horas)} acreditadas por horario en la cuenta de la semana`}>
                               F {fmtDM(f.fecha)} +{fmtH(f.horas)}
@@ -4241,101 +4486,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         </span>
                       </header>
 
-                    {s.dias.map((d) => {
-                      const abierto = openDia === d.fecha;
-                      // Bloques como CHIPS (envuelven a varias líneas: soporta
-                      // cualquier número de pares sin superponerse).
-                      const bloques = [];
-                      for (let i = 0; i < d.evs.length; i++) {
-                        if (d.evs[i].type === 'in' && d.evs[i + 1]?.type === 'out') {
-                          bloques.push({ txt: `${hh(d.evs[i].ts)}–${hh(d.evs[i + 1].ts)}` });
-                          i++;
-                        } else {
-                          bloques.push({ txt: `${d.evs[i].type === 'in' ? 'E' : 'S'} ${hh(d.evs[i].ts)}`, warn: true });
-                        }
-                      }
-                      return (
-                        <div className={`dia${abierto ? ' abierto' : ''}`} key={d.fecha}>
-                          <button className="dia-row" aria-expanded={abierto} onClick={() => { setOpenDia(abierto ? null : d.fecha); setEvForm(null); }}>
-                            <span className="dia-top">
-                              <span className="dia-fecha">
-                                {new Date(`${d.fecha}T12:00:00`).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })}
-                              </span>
-                              <span className="dia-horas">{fmtH(d.horas)}</span>
-                              <span className="dia-chev">›</span>
-                            </span>
-                            <span className="dia-bloques">
-                              {bloques.length === 0 && <span className="bloque">—</span>}
-                              {bloques.map((b, i) => (
-                                <span key={i} className={`bloque${b.warn ? ' warn' : ''}`}>{b.txt}{b.warn ? ' ⚠' : ''}</span>
-                              ))}
-                            </span>
-                          </button>
-
-                          {abierto && (
-                            <div className="dia-detalle">
-                              {d.evs.map((e, i) => {
-                                // Mismo criterio que los bloques ⚠ de arriba y que el
-                                // resaltado de Asistencia: marcación con bandera
-                                // (tardía / salida temprana) o entrada sin su salida.
-                                const novedad = e.flag === 'late-entry' || e.flag === 'early-exit'
-                                  || (e.type === 'in' && d.evs[i + 1]?.type !== 'out');
-                                return (
-                                <div key={e.id}>
-                                  <div className={`tl-row${novedad ? ' con-novedad' : ''}`}>
-                                    <span className={`tl-type ${e.type}`}>{e.type === 'in' ? 'Entrada' : 'Salida'}</span>
-                                    <span className="tl-time">{fmt12(e.ts)}</span>
-                                    <span className="tl-flag">
-                                      {e.flag === 'manual' ? 'manual' : e.flag === 'corrected' ? 'corregida' : e.flag === 'late-entry' ? 'tardía' : 'kiosco'}
-                                    </span>
-                                    <span className="tl-actions">
-                                      <button
-                                        className="btn small"
-                                        onClick={() => {
-                                          const dt = new Date(new Date(e.ts).getTime() - 5 * 3600000); // hora Bogotá
-                                          setEvForm({ mode: 'edit', eventId: e.id, fecha: d.fecha, type: e.type, time: `${String(dt.getUTCHours()).padStart(2, '0')}:${String(dt.getUTCMinutes()).padStart(2, '0')}`, reason: '' });
-                                        }}
-                                      >
-                                        Editar
-                                      </button>
-                                      <button className="btn small danger-btn" onClick={() => removeEv(e)}>Eliminar</button>
-                                    </span>
-                                  </div>
-                                  {/* Desde dónde se marcó. Solo aparece si el
-                                      empleado tiene «validar ubicación»: sin
-                                      eso el kiosco no guarda el punto. */}
-                                  {e.lat != null && e.lon != null && (
-                                    <a
-                                      className="tl-lugar"
-                                      href={`https://www.google.com/maps?q=${e.lat},${e.lon}`}
-                                      target="_blank" rel="noreferrer"
-                                      title="Abrir en Google Maps"
-                                    >
-                                      <Icon name="pin" size={12} />
-                                      {e.direccion || `${Number(e.lat).toFixed(5)}, ${Number(e.lon).toFixed(5)}`}
-                                      {e.precision != null && <em>±{Math.round(e.precision)} m</em>}
-                                    </a>
-                                  )}
-                                  {/* El formulario de edición, JUSTO bajo la marcación editada */}
-                                  {evForm?.mode === 'edit' && evForm.eventId === e.id && formularioEv}
-                                  {/* (el alta con fecha libre —conFecha— se pinta abajo, no aquí) */}
-                                </div>
-                                );
-                              })}
-
-                              {/* Alta manual: el formulario aparece bajo el botón, dentro del día */}
-                              {evForm?.mode === 'add' && !evForm.conFecha && evForm.fecha === d.fecha
-                                ? formularioEv
-                                : (
-                                  <button className="btn small block" onClick={() => setEvForm({ mode: 'add', fecha: d.fecha, type: d.evs.length % 2 === 0 ? 'in' : 'out', time: '08:00', reason: '' })}>
-                                    Agregar marcación
-                                  </button>
-                                )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {s.dias.map((d) => filaDia(d, s.porDia ? s.extraPorDia.get(d.fecha) : 0))}
                     </section>
                     ))}
 
@@ -4682,14 +4833,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       <span className="ficha-rostro" key={r.id}>
                         Rostro {i + 1}
                         <em>{new Date(r.creado_en).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}</em>
-                        {rostros.length > 1 && (
-                          <button title="Quitar este rostro" onClick={async () => {
-                            const res = await quitarRostro(editEmp.id, r.id);
-                            if (res.error) { showToast(res.error); return; }
-                            setRostros(await listarRostros(editEmp.id));
-                            showToast('Rostro quitado');
-                          }}>×</button>
-                        )}
+                        {/* Se puede quitar hasta el último: una foto equivocada
+                            es peor que ninguna. Si es el único, se confirma. */}
+                        <button title="Quitar este rostro" onClick={async () => {
+                          if (rostros.length === 1 && !window.confirm('Es su único rostro: no podrá marcar hasta que le agregues otra foto. ¿Quitarlo?')) return;
+                          const res = await quitarRostro(editEmp.id, r.id);
+                          if (res.error) { showToast(res.error); return; }
+                          setRostros(await listarRostros(editEmp.id));
+                          showToast(rostros.length === 1 ? 'Rostro quitado: ahora está sin rostro' : 'Rostro quitado');
+                        }}>×</button>
                       </span>
                     ))}
                   </div>
@@ -5186,6 +5338,17 @@ const CSS = `
 .holiday-add { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .holiday-add input { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
 .holiday-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.holiday-anio { display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; font-size: 14px; }
+.holiday-anio b { min-width: 44px; text-align: center; }
+.holiday-leyenda { margin-left: auto; font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+.holiday-leyenda i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+.holiday-leyenda i.oficial { background: var(--grid); }
+.holiday-leyenda i.propio { background: var(--accent-soft); border: 1px solid var(--accent); }
+.holiday-mes { margin-bottom: 10px; }
+.holiday-mes h4 { margin: 0 0 5px; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: capitalize; letter-spacing: .02em; }
+.holiday-chip.oficial { background: var(--page); color: var(--muted); }
+.holiday-chip.oficial b { color: var(--ink-2); }
+.holiday-chip:not(.oficial) { border: 1px solid var(--accent); }
 .holiday-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 4px 8px 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--ink-2); text-transform: capitalize; }
 .holiday-chip button { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0 2px; }
 .holiday-chip button:hover { color: var(--crit-text); }
@@ -5228,6 +5391,16 @@ const CSS = `
 .drawer { overflow-x: hidden; }
 .drawer input, .drawer select, .drawer textarea { min-width: 0; max-width: 100%; }
 .drawer-body, .reg-drawer-scroll, .ficha-body { overflow-x: hidden; }
+/* Con un cajón o diálogo abierto, lo de atrás queda QUIETO: ni se toca (la
+   capa oscura lo tapa) ni se desplaza. Dos cosas lo garantizan:
+   · overscroll-behavior: contain en lo que hace scroll dentro del cajón —
+     al llegar al final, el gesto NO se encadena a la página de atrás (en el
+     celular, con la ficha abierta, seguir bajando movía la lista de
+     empleados);
+   · la página deja de hacer scroll mientras exista una capa .overlay, así
+     que arrastrar sobre lo oscuro tampoco la mueve. */
+.drawer-body, .ficha-body, .dialog, .overlay { overscroll-behavior: contain; }
+html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 
 .drawer.ficha { display: flex; flex-direction: column; padding: 0; }
 
@@ -5694,6 +5867,17 @@ img.sesion-avatar { object-fit: cover; display: block; }
 
 /* Flechas de día anterior/siguiente junto al calendario */
 .dia-nav { display: flex; align-items: center; gap: 4px; }
+/* Controles de Asistencia: en móvil, tres filas a todo el ancho; el filtro
+   por estado es un control SEGMENTADO (tres celdas iguales, la activa en
+   azul sólido) en vez de tres chips que se partían en dos líneas. */
+.asist-controles { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.asist-controles .att-search.mini { flex: none; width: 100%; max-width: none; }
+.asist-controles .dia-nav { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; }
+.asist-controles .att-fecha { width: 100%; text-align: center; }
+.fchips { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--grid); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.fchips .fchip { border: 0; border-radius: 0; padding: 8px 6px; text-align: center; white-space: nowrap; }
+.fchips .fchip + .fchip { border-left: 1px solid var(--grid); }
+.fchips .fchip[aria-pressed="true"] { background: var(--btn-primary); border-color: var(--btn-primary); color: #fff; }
 .dia-flecha { padding: 6px 11px; font-size: 16px; line-height: 1; }
 .dia-flecha:disabled { opacity: 0.4; cursor: default; }
 
@@ -5762,6 +5946,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .sem-chip.dom { color: #6b21a8; background: #f3e8ff; border-color: #e9d5ff; }
 .sem-chip.festivo { color: #8a6100; background: #fdf3d3; border-color: #eedfa8; }
 .sem-bloque .dia { padding: 0 8px; }
+.dia-extra { font-style: normal; font-weight: 700; color: var(--btn-primary); }
 .sem-bloque .dia:last-child { border-bottom: 0; }
 .dia-chev { color: var(--muted); font-size: 14px; transition: transform .15s; flex: 0 0 auto; }
 .dia.abierto .dia-chev { transform: rotate(90deg); }
@@ -5790,19 +5975,34 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .tl-time { font-variant-numeric: tabular-nums; font-weight: 600; }
 .tl-flag { color: var(--muted); font-size: 11.5px; }
 /* Desde dónde se marcó: renglón discreto bajo la marcación, con enlace al mapa. */
-.tl-lugar {
-  display: inline-flex; align-items: center; gap: 5px; margin: -2px 0 8px 64px;
-  font-size: 11.5px; color: var(--muted); text-decoration: none; line-height: 1.35;
+/* Desde dónde se marcó (componente Lugar): una tarjetita con el pin en un
+   círculo, la dirección legible, y debajo la precisión y la distancia a la
+   sede (verde si está dentro del radio, roja si no). Enlaza al mapa. */
+.lugar {
+  display: flex; align-items: center; gap: 9px;
+  margin: 2px 0 10px 64px; padding: 7px 10px 7px 8px;
+  border-radius: 10px; background: var(--page); border: 1px solid var(--grid);
+  color: var(--ink-2); text-decoration: none; line-height: 1.3; max-width: 100%;
 }
-.tl-lugar:hover { color: var(--accent-2); text-decoration: underline; }
-.tl-lugar em { font-style: normal; opacity: .7; }
-/* Ubicación en la tabla de asistencia: bajo la sede, discreta y enlazable. */
-.att-lugar {
-  display: inline-flex; align-items: center; gap: 4px; margin-top: 2px;
-  font-size: 11px; color: var(--muted); text-decoration: none; line-height: 1.3;
+.lugar:hover { border-color: var(--accent); background: var(--accent-soft); }
+.lugar-ico {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface); border: 1px solid var(--grid); color: var(--accent-2);
 }
-.att-sede .att-lugar { display: flex; }
-.att-lugar:hover { color: var(--accent-2); text-decoration: underline; }
+.lugar-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.lugar-dir { font-size: 12.5px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lugar-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lugar-meta em { font-style: normal; }
+.lugar-meta em.ok { color: #1fa15f; font-weight: 600; }
+.lugar-meta em.lejos { color: var(--crit-text); font-weight: 600; }
+.lugar-mapa { flex: 0 0 auto; font-size: 11.5px; font-weight: 700; color: var(--accent-2); }
+/* En la tabla de asistencia va más discreta: sin fondo, sin «Mapa». */
+.lugar.compacto { margin: 3px 0 0; padding: 0; background: transparent; border: 0; gap: 5px; }
+.lugar.compacto .lugar-ico { width: 18px; height: 18px; border: 0; background: transparent; }
+.lugar.compacto .lugar-dir { font-size: 11.5px; font-weight: 500; color: var(--ink-2); }
+.lugar.compacto .lugar-meta { font-size: 10.5px; }
+.lugar.compacto:hover .lugar-dir { color: var(--accent-2); text-decoration: underline; }
 .tl-actions { display: flex; gap: 6px; }
 .btn.small { font-size: 12px; padding: 4px 10px; }
 .ev-form { border: 1px solid var(--grid); border-radius: 8px; padding: 12px; background: var(--surface-blanca); display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
@@ -5839,12 +6039,15 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 
 /* ─── Móvil (<900px): los drawers laterales se vuelven hojas inferiores ─── */
 @media (max-width: 899px) {
-  .overlay.right { align-items: flex-end; justify-content: stretch; padding: 0; }
+  /* Hoja inferior con un MARGEN pequeño alrededor: flota sobre la pantalla en
+     vez de pegarse a los bordes, y con las cuatro esquinas redondas. */
+  .overlay.right { align-items: flex-end; justify-content: stretch; padding: 0 8px calc(8px + env(safe-area-inset-bottom, 0px)); }
   .drawer {
-    width: 100%; max-width: none; height: auto; max-height: 84%;
-    border-left: 0; border-top: 1px solid var(--grid);
-    border-radius: 18px 18px 0 0;
-    box-shadow: 0 -10px 30px rgba(16,24,40,0.20);
+    width: 100%; max-width: none; height: auto; max-height: 86%;
+    border: 1px solid var(--grid);
+    border-radius: 18px;
+    overflow: hidden; /* que la cabecera azul respete las esquinas */
+    box-shadow: 0 10px 30px rgba(16,24,40,0.25);
     animation: sheet-up .26s ease;
   }
   /* asa de la hoja */
@@ -5873,6 +6076,8 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
      de en qué pantalla estás ahora que el título es la marca. */
   .app-header .date-note { font-size: 10.5px; }
   .head-user-btn { padding: 2px; }
+  /* La tarjeta de ubicación va a todo el ancho de la fila en el celular. */
+  .lugar { margin-left: 0; }
 }
 
 /* ─── Vista PC (≥900px): barra lateral + contenido ancho ─── */
@@ -5927,6 +6132,12 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .att-tablewrap { display: block; }
   /* En PC el buscador vuelve a su ancho fijo; en móvil ocupa lo que dejan los iconos. */
   .emp-controles .att-search.mini { flex: 0 1 260px; }
+  .asist-controles { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .asist-controles .att-search.mini { flex: 0 1 220px; width: auto; }
+  .asist-controles .dia-nav { display: flex; }
+  .asist-controles .att-fecha { width: auto; }
+  .fchips { display: inline-flex; }
+  .fchips .fchip { padding: 6px 12px; }
   .rep-table { display: flex; }
   .solo-pc { display: inline-flex; }
   .acc { display: none; }

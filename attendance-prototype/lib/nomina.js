@@ -19,11 +19,11 @@ import { valorizarRegistro } from './tiposHora.js'
  * @returns {Promise<{registros: Array, porEmpleado: Map}>}
  */
 export async function construirLote(esquema, rango = null) {
-  const { festivos, vigencias, nocturno, factores, divisor } = await configLaboral(esquema)
+  const { festivos, vigencias, nocturno, factores, divisor, modoExtra } = await configLaboral(esquema)
   // Parámetros de pago CON HISTORIA: cada tramo se clasifica y valoriza con lo
   // que regía en SU fecha, no con lo de hoy. `actualPago` es el respaldo para
   // esquemas de antes de la migración 002 (sin tabla de vigencias).
-  const actualPago = { factores, divisor, nocturno }
+  const actualPago = { factores, divisor, nocturno, modoExtra }
   const historicoPago = await vigenciasPago(esquema).catch(() => [])
   const pagoDe = (fecha) => pagoVigenteEn(historicoPago, fecha, actualPago)
 
@@ -91,6 +91,8 @@ export async function construirLote(esquema, rango = null) {
     festivos,
     vigencias,
     nocturno: (fecha) => pagoDe(fecha).nocturno,
+    // Por semana o por día, según lo que regía el LUNES de esa semana.
+    modoExtra: (fecha) => pagoDe(fecha).modoExtra,
   }).filter((r) => (!rango?.desde || r.fecha >= rango.desde) && (!rango?.hasta || r.fecha <= rango.hasta))
 
   // Valor en pesos de cada tramo, con los factores y el divisor vigentes EN LA

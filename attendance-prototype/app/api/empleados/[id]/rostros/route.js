@@ -128,20 +128,21 @@ export async function DELETE(req, { params }) {
   const rostroId = new URL(req.url).searchParams.get('rostro')
   if (!rostroId) return NextResponse.json({ ok: false, error: 'Falta cuál rostro quitar.' }, { status: 400 })
 
+  // También se puede quitar el ÚLTIMO rostro. Antes se impedía («sin él no
+  // podría marcar»), pero una foto equivocada es peor que ninguna: deja que
+  // otra persona marque como este empleado y al empleado real lo deja
+  // fuera. Sin rostro simplemente no compite en el kiosco hasta que se le
+  // tome la foto correcta; el panel lo muestra como «Sin rostro».
   const r = await conEmpresa(esquema, async (db) => {
     const { rows } = await db.query(`select id, descriptor from rostros where empleado_id = $1 order by creado_en`, [id])
-    if (rows.length <= 1) return { error: 'ULTIMO' }
     const borrado = await db.query(`delete from rostros where id = $1 and empleado_id = $2 returning id`, [rostroId, id])
     if (borrado.rowCount === 0) return { error: 'NO_EXISTE' }
-    // El principal debe seguir siendo uno de los que quedan.
+    // El principal debe seguir siendo uno de los que quedan (o ninguno).
     const resto = rows.filter((x) => x.id !== rostroId)
-    await db.query(`update empleados set descriptor_facial = $2 where id = $1`, [id, resto[0].descriptor])
+    await db.query(`update empleados set descriptor_facial = $2 where id = $1`, [id, resto[0]?.descriptor ?? null])
     return { total: resto.length }
   })
 
-  if (r.error === 'ULTIMO') {
-    return NextResponse.json({ ok: false, error: 'Es su único rostro: sin él no podría marcar. Agrega otro antes de quitar este.' }, { status: 409 })
-  }
   if (r.error === 'NO_EXISTE') return NextResponse.json({ ok: false, error: 'Ese rostro no existe.' }, { status: 404 })
   return NextResponse.json({ ok: true, ...r })
 }

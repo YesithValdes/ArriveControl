@@ -191,7 +191,25 @@ export async function registrarPaso(empleadoId, ubicacion = null) {
   if (r.status === 404) return { errorConfig: 'Empleado no encontrado en la base de datos.' };
   if (!r.ok) return { errorConfig: d?.detalle || d?.error || `El servidor respondió ${r.status}.` };
   if (d?.duplicado) return { duplicado: true, ultima: d.ultima };
-  return { tipo: d.tipo, marcacion: d.marcacion };
+  return { tipo: d.tipo, marcacion: d.marcacion, trabajadoHoySeg: d.trabajado_hoy_seg ?? null };
+}
+
+/**
+ * Adjunta la ubicación a una marcación que se registró sin ella (el GPS
+ * llegó después). Mejor esfuerzo: si falla, la marcación queda sin punto,
+ * que es como estaba; nunca se reintenta.
+ */
+export async function adjuntarUbicacion(marcacionId, gps) {
+  try {
+    const r = await fetch(`/api/marcaciones/${encodeURIComponent(marcacionId)}/ubicacion`, {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ lat: gps.lat, lon: gps.lon, precision_m: gps.precision_m }),
+    });
+    const d = await r.json().catch(() => null);
+    return Boolean(d?.aplicada);
+  } catch {
+    return false;
+  }
 }
 
 /**

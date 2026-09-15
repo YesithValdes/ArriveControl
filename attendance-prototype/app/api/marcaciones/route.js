@@ -9,7 +9,7 @@
  *        permiso VER.
  */
 import { NextResponse, after } from 'next/server'
-import { registrarPaso, listarMarcaciones, guardarDireccion } from '../../../lib/marcaciones'
+import { registrarPaso, listarMarcaciones, guardarDireccion, acumuladoDelDia } from '../../../lib/marcaciones'
 import { direccionDesdeCoordenadas } from '../../../lib/geocodificar.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
 import { puedeEscribir } from '../../../lib/empresas.js'
@@ -91,7 +91,13 @@ export async function POST(req) {
       await guardarDireccion(ctx.esquema, r.marcacion.id, direccion).catch(() => {})
     }
   })
-  return NextResponse.json({ ok: true, tipo: r.tipo, marcacion: r.marcacion })
+  // Al marcar SALIDA se le dice cuánto lleva trabajado hoy (los pares
+  // entrada→salida cerrados del día, esta salida incluida). Solo en la
+  // salida: en la entrada no hay nada que contar todavía.
+  const trabajadoHoySeg = r.tipo === 'salida'
+    ? await acumuladoDelDia(ctx.esquema, empleadoId, r.marcacion.ts).catch(() => null)
+    : null
+  return NextResponse.json({ ok: true, tipo: r.tipo, marcacion: r.marcacion, trabajado_hoy_seg: trabajadoHoySeg })
 }
 
 export async function GET(req) {

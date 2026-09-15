@@ -367,6 +367,66 @@ await test('la jornada semanal de la empresa es la que manda (44 h)', () => {
   assert.equal(totalExtra(regs), 1);
 });
 
+// ── Modo POR DÍA (configurable en Ajustes → Reglamento) ─────────────────
+console.log('\n📅 Modo por día: la jornada del día sale del horario');
+const LV75 = { entrada: '09:00', salida: '17:30', almuerzo_min: 60 };
+const HORARIO_75 = { 1: LV75, 2: LV75, 3: LV75, 4: LV75, 5: LV75, 6: { entrada: '09:00', salida: '13:30', almuerzo_min: 0 } };
+const POR_DIA = { ...CERRADA, modoExtra: 'dia' };
+
+await test('lo que pasa de la jornada del horario ese día es extra de ese día', () => {
+  // Lunes 08:00–17:00 son 9 h contra un horario de 7h 30 → 1,5 h extra
+  // (15:30–17:00), aunque el resto de la semana no exista.
+  const regs = calcularRegistros(unEmpleado(turno(SEMANA.lun, '08:00', '17:00'), { jornadaDias: HORARIO_75 }), POR_DIA);
+  assert.deepEqual(regs.map((r) => [r.fecha, r.tipoHora, r.horaInicio, r.horaFin, r.horas]), [[SEMANA.lun, 'HED', '15:30', '17:00', 1.5]]);
+});
+await test('el sábado corto también da extra: 7 h contra 4h 30 de horario', () => {
+  // Con el cálculo viejo (7 h planas) este sábado nunca daba nada.
+  const regs = calcularRegistros(unEmpleado(turno(SEMANA.sab, '08:00', '15:00'), { jornadaDias: HORARIO_75 }), POR_DIA);
+  assert.equal(totalExtra(regs), 2.5);
+});
+await test('los días NO se compensan entre sí en modo día', () => {
+  // Lunes 9 h (1,5 extra) y martes 4 h (por debajo): la extra del lunes se
+  // queda; en modo semana estos dos días juntos no darían nada.
+  const marcas = [...turno(SEMANA.lun, '08:00', '17:00'), ...turno(SEMANA.mar, '08:00', '12:00')];
+  assert.equal(totalExtra(calcularRegistros(unEmpleado(marcas, { jornadaDias: HORARIO_75 }), POR_DIA)), 1.5);
+  assert.equal(calcularRegistros(unEmpleado(marcas, { jornadaDias: HORARIO_75 }), CERRADA).length, 0, 'por semana: 13 h no pasan de 42');
+});
+await test('sin horario ese día, la jornada es la legal repartida (42 ÷ 6 = 7 h)', () => {
+  const regs = calcularRegistros(unEmpleado(turno(SEMANA.lun, '08:00', '17:00')), POR_DIA);
+  assert.equal(totalExtra(regs), 2);
+});
+await test('el día de HOY sí cuenta en modo día: sus pares son reales', () => {
+  const regs = calcularRegistros(unEmpleado(turno(SEMANA.lun, '08:00', '17:00'), { jornadaDias: HORARIO_75 }), { ...POR_DIA, hoy: SEMANA.lun });
+  assert.equal(totalExtra(regs), 1.5);
+});
+await test('domingo, mínimo de 0,5 h y partición nocturna: igual que por semana', () => {
+  const dom = calcularRegistros(unEmpleado(turno(SEMANA.dom, '08:00', '12:00'), { jornadaDias: HORARIO_75 }), POR_DIA);
+  assert.deepEqual(dom.map((r) => [r.tipoHora, r.horas]), [['HEDDF', 4]]);
+  const corto = calcularRegistros(unEmpleado(turno(SEMANA.lun, '09:00', '16:50'), { jornadaDias: HORARIO_75 }), POR_DIA);
+  assert.equal(corto.length, 0, '7h 50 − 7h 30 = 20 min: bajo el mínimo');
+  const noche = calcularRegistros(unEmpleado(turno(SEMANA.lun, '13:00', '23:00'), { jornadaDias: HORARIO_75 }), POR_DIA);
+  assert.deepEqual(noche.map((r) => [r.tipoHora, r.horaInicio, r.horaFin]), [['HED', '20:30', '21:00'], ['HEN', '21:00', '23:00']]);
+});
+await test('el modo lleva vigencia: se evalúa con el LUNES de cada semana', () => {
+  // Cambio a modo día el miércoles 5: esa semana sigue por semana (su lunes
+  // es anterior), la siguiente ya va por día. Una semana nunca se parte.
+  const modo = (fecha) => (fecha >= '2026-08-05' ? 'dia' : 'semana');
+  const marcas = [
+    ...turno(SEMANA.jue, '08:00', '17:00'),            // semana del 3: 9 h solas → por semana, nada
+    ...turno('2026-08-13', '08:00', '17:00'),          // semana del 10: 9 h → por día, 1,5 h
+  ];
+  const regs = calcularRegistros(unEmpleado(marcas, { jornadaDias: HORARIO_75 }), { ...CERRADA, hoy: '2026-08-17', modoExtra: modo });
+  assert.deepEqual(regs.map((r) => [r.fecha, r.horas]), [['2026-08-13', 1.5]]);
+});
+await test('la vigencia de pago trae el modo, y sin valor es «semana»', async () => {
+  // configLaboral importa db.js, que exige la variable aunque no se conecte.
+  process.env.DATABASE_URL ??= 'postgresql://pruebas:x@localhost:5432/pruebas';
+  const { pagoVigenteEn } = await import('../lib/configLaboral.js');
+  const vig = [{ desde: '2026-09-15', modoExtra: 'dia' }, { desde: '1950-01-01', modoExtra: 'semana' }];
+  assert.equal(pagoVigenteEn(vig, '2026-09-20', {}).modoExtra, 'dia');
+  assert.equal(pagoVigenteEn(vig, '2026-09-01', {}).modoExtra, 'semana');
+});
+
 // ── Franja nocturna y valorización ──────────────────────────────────────
 // Los cuatro códigos y sus factores son PARÁMETROS editables; lo que se prueba
 // aquí es que el tramo se parta donde debe y que la plata salga de multiplicar
@@ -1211,6 +1271,28 @@ await test('solo el roster acepta el token: ninguna otra API lo lee', async () =
   for (const d of ['app', 'lib', 'services']) recorrer(new URL(`../${d}`, import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
   const conToken = archivos.filter((p) => /x-prueba-token/i.test(leerCss(p, 'utf8')) && !p.endsWith('kioskoApi.js'));
   assert.deepEqual(conToken.map((p) => p.split('/').slice(-3).join('/')), ['api/empleados/route.js']);
+});
+
+// ── Placeholders de SQL en las rutas ────────────────────────────────────
+console.log('\n🧾 SQL de las rutas');
+await test('todo placeholder de parámetro lleva su $ (`= $N`, nunca `= N`)', async () => {
+  // Al escribir `sets.push(\`modo_extra = $${args.length}\`)` se perdió el
+  // primer «$» y el SQL quedó `modo_extra = 1`: Postgres lo rechazaba y la
+  // ruta devolvía 500 sin cuerpo. El panel «guardaba» y la siguiente
+  // sincronización lo deshacía. Se buscan interpolaciones de args.length
+  // que no vayan precedidas de $.
+  const { readdirSync, statSync, readFileSync } = await import('node:fs');
+  const raiz = new URL('../app/api', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+  const archivos = [];
+  const recorrer = (dir) => { for (const n of readdirSync(dir)) { const p = `${dir}/${n}`; if (statSync(p).isDirectory()) recorrer(p); else if (n.endsWith('.js')) archivos.push(p); } };
+  recorrer(raiz);
+  const malos = [];
+  for (const p of archivos) {
+    for (const [n, linea] of readFileSync(p, 'utf8').split('\n').entries()) {
+      if (/[^$]\$\{args\.length\}/.test(linea) && /=\s*\$\{args\.length\}/.test(linea)) malos.push(`${p.split('/').slice(-3).join('/')}:${n + 1}`);
+    }
+  }
+  assert.deepEqual(malos, [], `falta el $ del placeholder en: ${malos.join(', ')}`);
 });
 
 // ── Qué guarda el Service Worker ────────────────────────────────────────

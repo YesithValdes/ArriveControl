@@ -22,7 +22,7 @@ import { cargarV2, descriptorV2, puntos5DeMediaPipe, similitudV2, promedioV2, V2
 import {
   cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
   getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
-  olvidarActivacion, ClaveRechazada, getPruebaToken,
+  olvidarActivacion, ClaveRechazada, getPruebaToken, adjuntarUbicacion,
 } from '../services/kioskoApi.js';
 
 /**
@@ -53,6 +53,14 @@ const CAPTURE_GAP_MS = 450;
 // Fijo a propósito: no debe encogerse si se acorta la duración del resultado
 // (un arranque en frío de la función serverless puede tardar varios segundos).
 const ESPERA_RED_MS = 8800;
+
+/** Segundos → «8 h 12 min» (o «45 min»), para leerse de un vistazo en la salida. */
+function horasLegibles(seg) {
+  const total = Math.max(0, Math.round(seg / 60));
+  const h = Math.floor(total / 60);
+  const min = total % 60;
+  return h > 0 ? `${h} h ${String(min).padStart(2, '0')} min` : `${min} min`;
+}
 
 function averageDescriptors(descs) {
   if (!descs || descs.length === 0) return null;
@@ -475,6 +483,39 @@ export default function KioskMode() {
   // Solo un fix reciente vale: uno viejo diría dónde ESTUVO el aparato.
   const gpsFresco = () => (gpsRef.current && Date.now() - gpsRef.current.ts < 120000 ? gpsRef.current : null);
 
+  // El watch solo no bastaba: cerca del 30 % de las marcaciones salían sin
+  // ubicación. Dos causas: la app recién abierta (se reconoce en 2 s y el
+  // primer fix tarda más) y la tablet quieta (Android deja de refrescar el
+  // fix si el aparato no se mueve, y el último "envejece"). Por eso, además,
+  // se PIDE una posición al arrancar cada reconocimiento; sin alta precisión,
+  // que la de red llega en 1–2 s y basta (±20–30 m es lo que se venía
+  // guardando). La promesa en curso se guarda para poder esperarla al marcar.
+  const gpsPedidoRef = useRef(null);
+  const pedirGpsAhora = () => {
+    if (!('geolocation' in navigator)) return null;
+    if (gpsPedidoRef.current) return gpsPedidoRef.current;
+    const p = new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          gpsRef.current = { lat: pos.coords.latitude, lon: pos.coords.longitude, precision_m: pos.coords.accuracy, ts: Date.now() };
+          resolve(gpsRef.current);
+        },
+        () => resolve(null),
+        { enableHighAccuracy: false, maximumAge: 30000, timeout: 12000 },
+      );
+    }).finally(() => { gpsPedidoRef.current = null; });
+    gpsPedidoRef.current = p;
+    return p;
+  };
+  /** Un fix fresco ya, o el que esté llegando si aparece antes de `ms`. */
+  const gpsParaMarcar = (ms) => {
+    const listo = gpsFresco();
+    if (listo) return Promise.resolve(listo);
+    const enCurso = gpsPedidoRef.current ?? pedirGpsAhora();
+    if (!enCurso) return Promise.resolve(null);
+    return Promise.race([enCurso, new Promise((r) => setTimeout(() => r(null), ms))]);
+  };
+
   // ── Wake Lock ─────────────────────────────────────────────────────────
   const acquireWakeLock = useCallback(async () => {
     try { if ('wakeLock' in navigator) wakeLockRef.current = await navigator.wakeLock.request('screen'); } catch {}
@@ -738,6 +779,8 @@ export default function KioskMode() {
           if (lm) {
             st.phase = 'challenge';
             st.deadline = now + CHALLENGE_TIMEOUT_MS;
+            // Que el GPS vaya llegando mientras se hace el reconocimiento.
+            if (!esPrueba && !gpsFresco()) pedirGpsAhora();
             st.sawOpen = false; st.sawClosed = false;
             st.descs = []; st.descsV2 = []; st.captures = 0; st.lastCapture = 0;
             st.reintento = false; // reintento silencioso por identidad
@@ -1039,7 +1082,10 @@ export default function KioskMode() {
     setUi('ok');
     st.until = performance.now() + ESPERA_RED_MS; // margen fijo para la red
 
-    const gpsEnvio = gpsFresco();
+    // Hasta 2,5 s de espera por la ubicación: la pantalla ya dice
+    // «registrando…» y la hora oficial la pone el servidor, así que el
+    // pequeño retraso no le cuesta nada a la marcación.
+    gpsParaMarcar(2500).then((gpsEnvio) => {
     console.log(gpsEnvio
       ? `[KioscoGPS] marcación de ${person.name} con ubicación ${gpsEnvio.lat.toFixed(7)}, ${gpsEnvio.lon.toFixed(7)} (±${Math.round(gpsEnvio.precision_m)} m, de hace ${Math.round((Date.now() - gpsEnvio.ts) / 1000)} s)`
       : `[KioscoGPS] marcación de ${person.name} SIN ubicación (sin permiso, sin señal, o fix de más de 2 min)`);
@@ -1070,6 +1116,16 @@ export default function KioskMode() {
         setUi('ok');
         return;
       }
+      // Salió sin ubicación: cuando llegue el fix (hasta 60 s), se adjunta.
+      // El servidor solo la acepta si la marcación sigue sin punto y es
+      // reciente; si no aplica, no pasa nada.
+      if (!gpsEnvio && paso.marcacion?.id && !esPrueba) {
+        const idMarcacion = paso.marcacion.id;
+        Promise.race([gpsPedidoRef.current ?? pedirGpsAhora() ?? Promise.resolve(null), new Promise((r) => setTimeout(() => r(null), 60000))])
+          .then((gps) => gps && adjuntarUbicacion(idMarcacion, gps))
+          .then((ok) => { if (ok) console.log(`[KioscoGPS] ubicación adjuntada después a la marcación de ${person.name}`); })
+          .catch(() => {});
+      }
       // Entrada sube, salida baja: se distinguen de oído, sin mirar.
       sonar(paso.tipo === 'entrada' ? 'entrada' : 'salida');
       const tsOficial = new Date(paso.marcacion.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -1079,6 +1135,8 @@ export default function KioskMode() {
         time: tsOficial, // la hora OFICIAL del servidor, no la del dispositivo
         distance,
         flag: null,
+        // Solo en la salida: cuánto lleva trabajado hoy, según el servidor.
+        trabajadoHoySeg: paso.tipo === 'salida' ? paso.trabajadoHoySeg : null,
       });
       setUi('ok');
     }).catch((e) => {
@@ -1097,6 +1155,7 @@ export default function KioskMode() {
       setResult({ kind: 'no', name: person.name, time, reason: `No se pudo registrar: ${e.message}` });
       setUi('no');
     });
+    }); // gpsParaMarcar
   }
 
   // Veredicto DENTRO del cuadro de la cámara: velo translúcido del color
@@ -1160,6 +1219,9 @@ export default function KioskMode() {
 
               {result.kind === 'in' && <div style={{ ...s.hudHora, color: 'var(--k-in)' }}>{result.time}</div>}
               {result.kind === 'out' && <div style={{ ...s.hudHora, color: 'var(--k-out)' }}>{result.time}</div>}
+              {result.kind === 'out' && result.trabajadoHoySeg > 0 && (
+                <div style={s.hudDetalle}>{horasLegibles(result.trabajadoHoySeg)} trabajadas</div>
+              )}
               {result.kind === 'dup' && <div style={s.hudDetalle}>{result.lastLabel} registrada: {result.lastTime}</div>}
               {result.kind === 'prueba' && <div style={s.hudDetalle}>No se registró ninguna marcación{result.distance != null ? ` · medida ${result.distance}` : ''}</div>}
               {result.kind === 'pending' && <div style={s.hudDetalle}>Guardada; se enviará sola</div>}

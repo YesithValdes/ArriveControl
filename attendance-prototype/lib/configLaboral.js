@@ -14,6 +14,14 @@ import { conEmpresa } from './db.js'
 import { vigenciasDeHorasSemana } from './jornada.js'
 import { DIVISOR_DEFECTO, NOCTURNO_DEFECTO, normalizarFactores } from './tiposHora.js'
 
+/**
+ * Cómo se cuenta la hora extra (ver db/migrations/empresa/013_modo_extra.sql).
+ * Cualquier cosa que no sea 'dia' —incluido el null de las vigencias viejas—
+ * es 'semana': es lo que regía cuando se creó el parámetro.
+ */
+export const MODOS_EXTRA = ['semana', 'dia']
+const modoExtraDe = (v) => (v === 'dia' ? 'dia' : 'semana')
+
 /** 'HH:MM[:SS]' de Postgres → minutos desde medianoche. */
 const aMinutos = (hora, porDefecto) => {
   const m = /^(\d{1,2}):(\d{2})/.exec(String(hora ?? ''))
@@ -26,7 +34,7 @@ const aMinutos = (hora, porDefecto) => {
  */
 export async function parametrosPago(esquema) {
   const { rows } = await conEmpresa(esquema, (db) => db.query(
-    `select divisor_horas_mes, factores_hora, nocturno_inicio, nocturno_fin
+    `select divisor_horas_mes, factores_hora, nocturno_inicio, nocturno_fin, modo_extra
        from config_laboral where id`,
   ))
   const r = rows[0] ?? {}
@@ -37,6 +45,7 @@ export async function parametrosPago(esquema) {
       inicio: aMinutos(r.nocturno_inicio, NOCTURNO_DEFECTO.inicio),
       fin: aMinutos(r.nocturno_fin, NOCTURNO_DEFECTO.fin),
     },
+    modoExtra: modoExtraDe(r.modo_extra),
   }
 }
 
@@ -51,7 +60,7 @@ export async function parametrosPago(esquema) {
 export async function vigenciasPago(esquema) {
   const { rows } = await conEmpresa(esquema, (db) => db.query(
     `select to_char(desde, 'YYYY-MM-DD') as desde,
-            factores_hora, divisor_horas_mes, nocturno_inicio, nocturno_fin
+            factores_hora, divisor_horas_mes, nocturno_inicio, nocturno_fin, modo_extra
        from valorizacion_vigencias order by desde desc`,
   ))
   return rows.map((r) => ({
@@ -62,6 +71,7 @@ export async function vigenciasPago(esquema) {
       inicio: aMinutos(r.nocturno_inicio, NOCTURNO_DEFECTO.inicio),
       fin: aMinutos(r.nocturno_fin, NOCTURNO_DEFECTO.fin),
     },
+    modoExtra: modoExtraDe(r.modo_extra),
   }))
 }
 

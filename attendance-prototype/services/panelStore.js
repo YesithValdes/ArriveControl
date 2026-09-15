@@ -36,7 +36,7 @@ const store = {
   cfg: {
     weeklyHours: 42, graceMinutes: 15, holidays: [],
     factores: FACTORES_DEFECTO, divisorHorasMes: DIVISOR_DEFECTO,
-    nocturnoInicio: '21:00', nocturnoFin: '06:00',
+    nocturnoInicio: '21:00', nocturnoFin: '06:00', modoExtra: 'semana',
   },
   audit: [],        // correcciones crudas (para trazabilidad extendida)
   cargado: false,
@@ -362,6 +362,8 @@ export async function syncPanel() {
     divisorHorasMes: cfg.config.divisor_horas_mes ?? DIVISOR_DEFECTO,
     nocturnoInicio: cfg.config.nocturno_inicio ?? '21:00',
     nocturnoFin: cfg.config.nocturno_fin ?? '06:00',
+    // Cómo se cuenta la extra: por semana (compensa) o por día.
+    modoExtra: cfg.config.modo_extra === 'dia' ? 'dia' : 'semana',
   };
 
   store.audit = corr.correcciones;
@@ -620,19 +622,28 @@ export function getLaborConfig() {
  * Actualiza local al instante (para la UI) y persiste en el servidor.
  * Todo es editable: cada empresa define sus propias reglas.
  */
-export function saveLaborConfig(partial) {
+export function saveLaborConfig(partial, alFallar = null) {
+  // Optimista: el panel ve el cambio de una. Si el servidor lo rechaza, se
+  // vuelve a lo anterior y se avisa — antes solo quedaba en la consola y el
+  // valor "cambiaba" hasta la siguiente sincronización, que lo deshacía.
+  const anterior = store.cfg;
   store.cfg = { ...store.cfg, ...partial };
   const body = {};
   if ('graceMinutes' in partial) body.gracia_min = partial.graceMinutes;
   if ('weeklyHours' in partial) body.horas_semana = partial.weeklyHours;
   if ('holidays' in partial) body.festivos = partial.holidays;
+  if ('modoExtra' in partial) body.modo_extra = partial.modoExtra;
   if ('factores' in partial) body.factores_hora = partial.factores;
   if ('divisorHorasMes' in partial) body.divisor_horas_mes = Number(partial.divisorHorasMes);
   if ('nocturnoInicio' in partial) body.nocturno_inicio = partial.nocturnoInicio;
   if ('nocturnoFin' in partial) body.nocturno_fin = partial.nocturnoFin;
   if (Object.keys(body).length === 0) return store.cfg;
   api('/api/config', { method: 'PATCH', body: JSON.stringify(body) })
-    .catch((e) => console.error('No se pudo guardar la configuración:', e.message));
+    .catch((e) => {
+      console.error('No se pudo guardar la configuración:', e.message);
+      store.cfg = anterior;
+      alFallar?.(e.message);
+    });
   return store.cfg;
 }
 
