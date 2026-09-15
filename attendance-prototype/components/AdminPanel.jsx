@@ -68,6 +68,7 @@ function Icon({ name, size = 17 }) {
     users: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>,
     chevronLeft: <polyline points="15 18 9 12 15 6" />,
     chevronRight: <polyline points="9 18 15 12 9 6" />,
+    edit: <><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></>,
     userPlus: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" /></>,
     archive: <><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></>,
     check: <polyline points="20 6 9 17 4 12" />,
@@ -104,17 +105,16 @@ function Lugar({ lat, lon, precision, direccion, sede, compacto = false }) {
       title="Abrir en Google Maps"
       onClick={(ev) => ev.stopPropagation()}
     >
-      <span className="lugar-ico" aria-hidden="true"><Icon name="pin" size={compacto ? 11 : 13} /></span>
+      <span className="lugar-ico" aria-hidden="true"><Icon name="pin" size={12} /></span>
       <span className="lugar-txt">
         <span className="lugar-dir">{texto}</span>
         {(precision != null || dist != null) && (
           <span className="lugar-meta">
+            {dist != null && <em className={dentro ? 'ok' : 'lejos'}>a {dist} m de {sede}</em>}
             {precision != null && <em>±{Math.round(precision)} m</em>}
-            {dist != null && <em className={dentro ? 'ok' : 'lejos'}>{dist} m de {sede}</em>}
           </span>
         )}
       </span>
-      {!compacto && <span className="lugar-mapa">Mapa</span>}
     </a>
   );
 }
@@ -4396,17 +4396,21 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                 <span className="tl-flag">
                                   {e.flag === 'manual' ? 'manual' : e.flag === 'corrected' ? 'corregida' : e.flag === 'late-entry' ? 'tardía' : 'kiosco'}
                                 </span>
+                                {/* Solo iconos: el nombre va en el title y para el lector de pantalla. */}
                                 <span className="tl-actions">
                                   <button
-                                    className="btn small"
+                                    className="btn small btn-ico"
+                                    title="Editar" aria-label="Editar marcación"
                                     onClick={() => {
                                       const dt = new Date(new Date(e.ts).getTime() - 5 * 3600000); // hora Bogotá
                                       setEvForm({ mode: 'edit', eventId: e.id, fecha: d.fecha, type: e.type, time: `${String(dt.getUTCHours()).padStart(2, '0')}:${String(dt.getUTCMinutes()).padStart(2, '0')}`, reason: '' });
                                     }}
                                   >
-                                    Editar
+                                    <Icon name="edit" size={14} />
                                   </button>
-                                  <button className="btn small danger-btn" onClick={() => removeEv(e)}>Eliminar</button>
+                                  <button className="btn small danger-btn btn-ico" title="Eliminar" aria-label="Eliminar marcación" onClick={() => removeEv(e)}>
+                                    <Icon name="trash" size={14} />
+                                  </button>
                                 </span>
                               </div>
                               {/* Desde dónde se marcó. Solo aparece si el
@@ -5975,35 +5979,29 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .tl-time { font-variant-numeric: tabular-nums; font-weight: 600; }
 .tl-flag { color: var(--muted); font-size: 11.5px; }
 /* Desde dónde se marcó: renglón discreto bajo la marcación, con enlace al mapa. */
-/* Desde dónde se marcó (componente Lugar): una tarjetita con el pin en un
-   círculo, la dirección legible, y debajo la precisión y la distancia a la
-   sede (verde si está dentro del radio, roja si no). Enlaza al mapa. */
+/* Desde dónde se marcó (componente Lugar): discreto, sin tarjeta. Una
+   línea con el pin y la dirección completa (envuelve, no se corta) y debajo
+   la distancia a la sede —verde dentro del radio, roja fuera— y la
+   precisión. Toda la pieza enlaza al mapa. */
 .lugar {
-  display: flex; align-items: center; gap: 9px;
-  margin: 2px 0 10px 64px; padding: 7px 10px 7px 8px;
-  border-radius: 10px; background: var(--page); border: 1px solid var(--grid);
-  color: var(--ink-2); text-decoration: none; line-height: 1.3; max-width: 100%;
+  display: flex; align-items: flex-start; gap: 6px;
+  margin: 0 0 8px 64px; padding: 0;
+  color: var(--muted); text-decoration: none; line-height: 1.35; max-width: 100%;
 }
-.lugar:hover { border-color: var(--accent); background: var(--accent-soft); }
-.lugar-ico {
-  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--surface); border: 1px solid var(--grid); color: var(--accent-2);
-}
-.lugar-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
-.lugar-dir { font-size: 12.5px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lugar:hover .lugar-dir { color: var(--accent-2); text-decoration: underline; }
+.lugar-ico { flex: 0 0 auto; color: var(--accent-2); margin-top: 1px; display: inline-flex; }
+.lugar-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.lugar-dir { font-size: 12px; color: var(--ink-2); }
 .lugar-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .lugar-meta em { font-style: normal; }
 .lugar-meta em.ok { color: #1fa15f; font-weight: 600; }
 .lugar-meta em.lejos { color: var(--crit-text); font-weight: 600; }
-.lugar-mapa { flex: 0 0 auto; font-size: 11.5px; font-weight: 700; color: var(--accent-2); }
-/* En la tabla de asistencia va más discreta: sin fondo, sin «Mapa». */
-.lugar.compacto { margin: 3px 0 0; padding: 0; background: transparent; border: 0; gap: 5px; }
-.lugar.compacto .lugar-ico { width: 18px; height: 18px; border: 0; background: transparent; }
-.lugar.compacto .lugar-dir { font-size: 11.5px; font-weight: 500; color: var(--ink-2); }
+/* En la tabla de asistencia, aún más pequeña, bajo la sede. */
+.lugar.compacto { margin: 3px 0 0; gap: 4px; }
+.lugar.compacto .lugar-dir { font-size: 11.5px; }
 .lugar.compacto .lugar-meta { font-size: 10.5px; }
-.lugar.compacto:hover .lugar-dir { color: var(--accent-2); text-decoration: underline; }
 .tl-actions { display: flex; gap: 6px; }
+.tl-actions .btn.btn-ico { padding: 5px 8px; min-width: 30px; }
 .btn.small { font-size: 12px; padding: 4px 10px; }
 .ev-form { border: 1px solid var(--grid); border-radius: 8px; padding: 12px; background: var(--surface-blanca); display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
 .ev-form h4 { font-size: 13px; font-weight: 700; }
@@ -6076,8 +6074,12 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
      de en qué pantalla estás ahora que el título es la marca. */
   .app-header .date-note { font-size: 10.5px; }
   .head-user-btn { padding: 2px; }
-  /* La tarjeta de ubicación va a todo el ancho de la fila en el celular. */
+  /* La ubicación va a todo el ancho de la fila en el celular. */
   .lugar { margin-left: 0; }
+  /* Fila de marcación: tipo · hora · origen · acciones caben en una línea
+     porque las acciones son iconos; el origen cede si hace falta. */
+  .tl-row { grid-template-columns: 58px auto 1fr auto; gap: 6px; }
+  .tl-flag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 /* ─── Vista PC (≥900px): barra lateral + contenido ancho ─── */
