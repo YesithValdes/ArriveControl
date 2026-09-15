@@ -119,25 +119,20 @@ function Lugar({ lat, lon, direccion, enlace = false, compacto = false }) {
 }
 
 /**
- * El detalle de una ubicación, bajo la marcación: distancia a la sede
- * (verde dentro del radio, roja fuera), precisión del GPS, coordenadas y
- * el botón para abrir el mapa.
+ * El detalle de una ubicación, bajo la marcación: solo qué tan cerca de la
+ * sede quedó (verde dentro del radio, roja fuera) y el botón del mapa. La
+ * dirección ya está en la fila; precisión y coordenadas no le sirven a
+ * quien revisa.
  */
-function LugarDetalle({ lat, lon, precision, direccion, sede }) {
+function LugarDetalle({ lat, lon, sede }) {
   const d = distanciaASede(lat, lon, sede);
   return (
     <div className="lugar-detalle">
-      <dl>
-        <dt>Dirección</dt><dd>{textoLugar(lat, lon, direccion)}</dd>
-        {d && (
-          <>
-            <dt>Sede</dt>
-            <dd className={d.dentro ? 'ok' : 'lejos'}>a {d.metros} m de {sede} {d.dentro ? '· dentro del radio' : `· fuera del radio de ${d.radio} m`}</dd>
-          </>
-        )}
-        {precision != null && <><dt>Precisión</dt><dd>±{Math.round(precision)} m</dd></>}
-        <dt>Coordenadas</dt><dd>{Number(lat).toFixed(6)}, {Number(lon).toFixed(6)}</dd>
-      </dl>
+      <span className={`lugar-sede${d ? (d.dentro ? ' ok' : ' lejos') : ''}`}>
+        {d
+          ? (d.dentro ? `A ${d.metros} m de ${sede}: dentro del radio` : `A ${d.metros} m de ${sede}: fuera del radio de ${d.radio} m`)
+          : (sede ? `${sede} no tiene coordenadas para comparar` : 'Sin sede asignada')}
+      </span>
       <a className="btn small" href={`https://www.google.com/maps?q=${lat},${lon}`} target="_blank" rel="noreferrer">Abrir en el mapa</a>
     </div>
   );
@@ -4456,7 +4451,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                 </span>
                               </div>
                               {lugarAbierto === e.id && e.lat != null && e.lon != null && (
-                                <LugarDetalle lat={e.lat} lon={e.lon} precision={e.precision} direccion={e.direccion} sede={e.sede || drawerPersona?.sede} />
+                                <LugarDetalle lat={e.lat} lon={e.lon} sede={e.sede || drawerPersona?.sede} />
                               )}
 {/* El formulario de edición, JUSTO bajo la marcación editada */}
                               {evForm?.mode === 'edit' && evForm.eventId === e.id && formularioEv}
@@ -6033,12 +6028,10 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .lugar-ico { flex: 0 0 auto; color: var(--accent-2); margin-top: 1px; display: inline-flex; }
 .lugar-dir { font-size: 12px; color: var(--ink-2); min-width: 0; }
 /* Detalle bajo la marcación: ficha de dos columnas + botón del mapa. */
-.lugar-detalle { margin: 0 0 8px 64px; padding: 10px 12px; border-radius: 8px; background: var(--page); border: 1px solid var(--grid); }
-.lugar-detalle dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 8px; font-size: 12px; }
-.lugar-detalle dt { color: var(--muted); }
-.lugar-detalle dd { margin: 0; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.lugar-detalle dd.ok { color: #1fa15f; font-weight: 600; }
-.lugar-detalle dd.lejos { color: var(--crit-text); font-weight: 600; }
+.lugar-detalle { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 0 8px 64px; padding: 8px 12px; border-radius: 8px; background: var(--page); border: 1px solid var(--grid); font-size: 12.5px; }
+.lugar-sede { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.lugar-sede.ok { color: #1fa15f; font-weight: 600; }
+.lugar-sede.lejos { color: var(--crit-text); font-weight: 600; }
 /* En la tabla de asistencia, aún más pequeña, bajo la sede. */
 .lugar.compacto { margin: 3px 0 0; gap: 4px; }
 .lugar.compacto .lugar-dir { font-size: 11.5px; }
