@@ -17,3 +17,4 @@ android/
 # Modelos empaquetados para el APK — se generan con
 # scripts/empaquetar-modelos.mjs desde public/, que sí se sube
 android/app/src/main/assets/modelos/
+.next-verificacion/
