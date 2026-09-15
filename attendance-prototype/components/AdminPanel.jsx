@@ -5954,6 +5954,9 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   font-variant-numeric: tabular-nums; border-radius: 6px;
 }
 .dia-row:hover { background: var(--accent-soft); }
+/* El día abierto se marca a propósito (no solo por el hover, que en el
+   celular se queda pegado tras tocar). */
+.dia.abierto > .dia-row { background: var(--accent-soft); }
 .dia-top { display: flex; align-items: baseline; gap: 8px; }
 .dia-fecha { font-size: 12.5px; font-weight: 700; text-transform: capitalize; white-space: nowrap; }
 .dia-horas { margin-left: auto; font-size: 12.5px; font-weight: 700; color: var(--ink-2); white-space: nowrap; }
@@ -5996,16 +5999,18 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 .bloque.warn { color: var(--crit-text); border-color: var(--crit-soft); background: var(--crit-soft); }
-.dia-detalle { padding: 2px 2px 10px; }
+.dia-detalle { padding: 2px 0 10px; }
 .dia-detalle .ev-form { margin: 6px 0 10px; }
 .btn.small.block { display: block; width: 100%; text-align: center; margin-top: 6px; }
 .drawer-hours { margin-left: auto; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .drawer-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; }
 .tl-row { display: grid; grid-template-columns: 64px 84px 1fr auto; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--grid); font-size: 13px; }
 /* Marcación con novedad: el mismo lavado suave de la tabla de Asistencia. */
+/* Mismo ancho que la caja del encabezado del día (.dia-row: 4 px de borde
+   interno, sin márgenes negativos): las dos cajas quedan alineadas. */
 .tl-row.con-novedad {
   background: color-mix(in srgb, var(--crit-soft) 55%, transparent);
-  border-radius: 8px; padding-left: 8px; padding-right: 8px; margin: 0 -8px;
+  border-radius: 6px; padding-left: 4px; padding-right: 4px; margin: 0;
 }
 .tl-type { font-weight: 700; font-size: 12px; }
 .tl-type.in { color: var(--good-text); }
