@@ -85,37 +85,61 @@ function Icon({ name, size = 17 }) {
  * angostas obligarían a scroll horizontal). Cabecera = lo esencial;
  * al expandir se ven los demás campos y las acciones.
  */
-/**
- * Desde dónde se marcó: dirección legible (o coordenadas), precisión del
- * GPS, distancia a la sede si la sede tiene coordenadas, y el enlace al
- * mapa. Una sola pieza para el cajón y para la tabla (`compacto`).
- */
-function Lugar({ lat, lon, precision, direccion, sede, compacto = false }) {
+/** Texto corto de una ubicación: la dirección legible o, sin ella, las coordenadas. */
+const textoLugar = (lat, lon, direccion) => direccion || `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`;
+
+/** Distancia (m) del punto a la sede con ese nombre, o null si la sede no tiene coordenadas. */
+function distanciaASede(lat, lon, sede) {
   const sedeObj = sede ? getSedes().find((x) => x.name === sede) : null;
-  const dist = sedeObj && Number.isFinite(Number(sedeObj.lat)) && Number.isFinite(Number(sedeObj.lon))
-    ? Math.round(haversineDistance(Number(lat), Number(lon), Number(sedeObj.lat), Number(sedeObj.lon)))
-    : null;
-  const dentro = dist != null && dist <= (Number(sedeObj.radius) || 50);
-  const texto = direccion || `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`;
-  return (
-    <a
-      className={`lugar${compacto ? ' compacto' : ''}`}
-      href={`https://www.google.com/maps?q=${lat},${lon}`}
-      target="_blank" rel="noreferrer"
-      title="Abrir en Google Maps"
-      onClick={(ev) => ev.stopPropagation()}
-    >
+  if (!sedeObj || !Number.isFinite(Number(sedeObj.lat)) || !Number.isFinite(Number(sedeObj.lon))) return null;
+  const metros = Math.round(haversineDistance(Number(lat), Number(lon), Number(sedeObj.lat), Number(sedeObj.lon)));
+  return { metros, dentro: metros <= (Number(sedeObj.radius) || 50), radio: Number(sedeObj.radius) || 50 };
+}
+
+/**
+ * Desde dónde se marcó, en UNA línea: el pin y la dirección. Nada más —
+ * la distancia, la precisión y el mapa viven en `LugarDetalle`, que se
+ * abre con el botón del pin en la fila. Con `enlace` (tabla de
+ * asistencia, donde no hay botón) la línea misma abre el mapa.
+ */
+function Lugar({ lat, lon, direccion, enlace = false, compacto = false }) {
+  const cuerpo = (
+    <>
       <span className="lugar-ico" aria-hidden="true"><Icon name="pin" size={12} /></span>
-      <span className="lugar-txt">
-        <span className="lugar-dir">{texto}</span>
-        {(precision != null || dist != null) && (
-          <span className="lugar-meta">
-            {dist != null && <em className={dentro ? 'ok' : 'lejos'}>a {dist} m de {sede}</em>}
-            {precision != null && <em>±{Math.round(precision)} m</em>}
-          </span>
-        )}
-      </span>
+      <span className="lugar-dir">{textoLugar(lat, lon, direccion)}</span>
+    </>
+  );
+  const clase = `lugar${compacto ? ' compacto' : ''}`;
+  if (!enlace) return <span className={clase}>{cuerpo}</span>;
+  return (
+    <a className={clase} href={`https://www.google.com/maps?q=${lat},${lon}`} target="_blank" rel="noreferrer" title="Abrir en Google Maps" onClick={(ev) => ev.stopPropagation()}>
+      {cuerpo}
     </a>
+  );
+}
+
+/**
+ * El detalle de una ubicación, bajo la marcación: distancia a la sede
+ * (verde dentro del radio, roja fuera), precisión del GPS, coordenadas y
+ * el botón para abrir el mapa.
+ */
+function LugarDetalle({ lat, lon, precision, direccion, sede }) {
+  const d = distanciaASede(lat, lon, sede);
+  return (
+    <div className="lugar-detalle">
+      <dl>
+        <dt>Dirección</dt><dd>{textoLugar(lat, lon, direccion)}</dd>
+        {d && (
+          <>
+            <dt>Sede</dt>
+            <dd className={d.dentro ? 'ok' : 'lejos'}>a {d.metros} m de {sede} {d.dentro ? '· dentro del radio' : `· fuera del radio de ${d.radio} m`}</dd>
+          </>
+        )}
+        {precision != null && <><dt>Precisión</dt><dd>±{Math.round(precision)} m</dd></>}
+        <dt>Coordenadas</dt><dd>{Number(lat).toFixed(6)}, {Number(lon).toFixed(6)}</dd>
+      </dl>
+      <a className="btn small" href={`https://www.google.com/maps?q=${lat},${lon}`} target="_blank" rel="noreferrer">Abrir en el mapa</a>
+    </div>
   );
 }
 
@@ -1073,6 +1097,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [drawer, setDrawer] = useState(null); // { personId, personName, desde, hasta }
   const [evForm, setEvForm] = useState(null); // { mode:'add'|'edit', eventId?, fecha, type, time, reason }
   const [openDia, setOpenDia] = useState(null); // día expandido dentro del drawer
+  const [lugarAbierto, setLugarAbierto] = useState(null); // marcación con el detalle de ubicación abierto
   // refresh = re-sincronizar desde Postgres y re-renderizar.
   const refresh = () => {
     syncPanel()
@@ -2277,7 +2302,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                   <td className="att-sede">
                                     {r.sede || (r.lugar ? '' : '—')}
                                     {r.lugar && (
-                                      <Lugar compacto lat={r.lugar.lat} lon={r.lugar.lon} precision={r.lugar.precision} direccion={r.lugar.direccion} sede={r.lugar.sede || r.sede} />
+                                      <Lugar compacto enlace lat={r.lugar.lat} lon={r.lugar.lon} direccion={r.lugar.direccion} />
                                     )}
                                   </td>
                                 </tr>
@@ -2301,7 +2326,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               ...(novedadDe(r) ? [['Novedad', novedadDe(r)]] : []),
                               ['Sede', r.sede || '—'],
                               ...(r.lugar ? [['Marcó desde', (
-                                <Lugar key="l" lat={r.lugar.lat} lon={r.lugar.lon} precision={r.lugar.precision} direccion={r.lugar.direccion} sede={r.lugar.sede || r.sede} />
+                                <Lugar key="l" enlace lat={r.lugar.lat} lon={r.lugar.lon} direccion={r.lugar.direccion} />
                               )]] : []),
                             ],
                             actions: (
@@ -4393,8 +4418,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               <div className={`tl-row${novedad ? ' con-novedad' : ''}`}>
                                 <span className={`tl-type ${e.type}`}>{e.type === 'in' ? 'Entrada' : 'Salida'}</span>
                                 <span className="tl-time">{fmt12(e.ts)}</span>
-                                <span className="tl-flag">
-                                  {e.flag === 'manual' ? 'manual' : e.flag === 'corrected' ? 'corregida' : e.flag === 'late-entry' ? 'tardía' : 'kiosco'}
+                                {/* En medio va lo que SÍ informa: el origen solo cuando no es el
+                                    kiosco (manual, corregida, tardía) y desde dónde se marcó. */}
+                                <span className="tl-info">
+                                  {e.flag === 'manual' && <span className="tl-flag">manual</span>}
+                                  {e.flag === 'corrected' && <span className="tl-flag">corregida</span>}
+                                  {e.flag === 'late-entry' && <span className="tl-flag">tardía</span>}
+                                  {e.lat != null && e.lon != null && (
+                                    <Lugar lat={e.lat} lon={e.lon} direccion={e.direccion} />
+                                  )}
                                 </span>
                                 {/* Solo iconos: el nombre va en el title y para el lector de pantalla. */}
                                 <span className="tl-actions">
@@ -4411,15 +4443,23 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                   <button className="btn small danger-btn btn-ico" title="Eliminar" aria-label="Eliminar marcación" onClick={() => removeEv(e)}>
                                     <Icon name="trash" size={14} />
                                   </button>
+                                  {/* Detalle de la ubicación (distancia, precisión, mapa): se abre aquí. */}
+                                  {e.lat != null && e.lon != null && (
+                                    <button
+                                      className={`btn small btn-ico${lugarAbierto === e.id ? ' primary' : ''}`}
+                                      title="Ubicación" aria-label="Ver detalle de la ubicación"
+                                      aria-expanded={lugarAbierto === e.id}
+                                      onClick={() => setLugarAbierto(lugarAbierto === e.id ? null : e.id)}
+                                    >
+                                      <Icon name="pin" size={14} />
+                                    </button>
+                                  )}
                                 </span>
                               </div>
-                              {/* Desde dónde se marcó. Solo aparece si el
-                                  empleado tiene «validar ubicación»: sin
-                                  eso el kiosco no guarda el punto. */}
-                              {e.lat != null && e.lon != null && (
-                                <Lugar lat={e.lat} lon={e.lon} precision={e.precision} direccion={e.direccion} sede={e.sede || drawerPersona?.sede} />
+                              {lugarAbierto === e.id && e.lat != null && e.lon != null && (
+                                <LugarDetalle lat={e.lat} lon={e.lon} precision={e.precision} direccion={e.direccion} sede={e.sede || drawerPersona?.sede} />
                               )}
-                              {/* El formulario de edición, JUSTO bajo la marcación editada */}
+{/* El formulario de edición, JUSTO bajo la marcación editada */}
                               {evForm?.mode === 'edit' && evForm.eventId === e.id && formularioEv}
                               {/* (el alta con fecha libre —conFecha— se pinta abajo, no aquí) */}
                             </div>
@@ -5978,6 +6018,8 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .tl-type.out { color: var(--warn-text); }
 .tl-time { font-variant-numeric: tabular-nums; font-weight: 600; }
 .tl-flag { color: var(--muted); font-size: 11.5px; }
+.tl-info { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
+.tl-info .lugar { margin: 0; align-items: baseline; }
 /* Desde dónde se marcó: renglón discreto bajo la marcación, con enlace al mapa. */
 /* Desde dónde se marcó (componente Lugar): discreto, sin tarjeta. Una
    línea con el pin y la dirección completa (envuelve, no se corta) y debajo
@@ -5990,16 +6032,17 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 }
 .lugar:hover .lugar-dir { color: var(--accent-2); text-decoration: underline; }
 .lugar-ico { flex: 0 0 auto; color: var(--accent-2); margin-top: 1px; display: inline-flex; }
-.lugar-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.lugar-dir { font-size: 12px; color: var(--ink-2); }
-.lugar-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.lugar-meta em { font-style: normal; }
-.lugar-meta em.ok { color: #1fa15f; font-weight: 600; }
-.lugar-meta em.lejos { color: var(--crit-text); font-weight: 600; }
+.lugar-dir { font-size: 12px; color: var(--ink-2); min-width: 0; }
+/* Detalle bajo la marcación: ficha de dos columnas + botón del mapa. */
+.lugar-detalle { margin: 0 0 8px 64px; padding: 10px 12px; border-radius: 8px; background: var(--page); border: 1px solid var(--grid); }
+.lugar-detalle dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 8px; font-size: 12px; }
+.lugar-detalle dt { color: var(--muted); }
+.lugar-detalle dd { margin: 0; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.lugar-detalle dd.ok { color: #1fa15f; font-weight: 600; }
+.lugar-detalle dd.lejos { color: var(--crit-text); font-weight: 600; }
 /* En la tabla de asistencia, aún más pequeña, bajo la sede. */
 .lugar.compacto { margin: 3px 0 0; gap: 4px; }
 .lugar.compacto .lugar-dir { font-size: 11.5px; }
-.lugar.compacto .lugar-meta { font-size: 10.5px; }
 .tl-actions { display: flex; gap: 6px; }
 .tl-actions .btn.btn-ico { padding: 5px 8px; min-width: 30px; }
 .btn.small { font-size: 12px; padding: 4px 10px; }
@@ -6078,8 +6121,11 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .lugar { margin-left: 0; }
   /* Fila de marcación: tipo · hora · origen · acciones caben en una línea
      porque las acciones son iconos; el origen cede si hace falta. */
-  .tl-row { grid-template-columns: 58px auto 1fr auto; gap: 6px; }
-  .tl-flag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tl-row { grid-template-columns: 58px auto 1fr auto; gap: 4px 6px; }
+  /* La info (origen + ubicación) baja a una segunda línea de la fila. */
+  .tl-info { grid-column: 1 / -1; }
+  .tl-info:empty { display: none; }
+  .lugar-detalle { margin-left: 0; }
 }
 
 /* ─── Vista PC (≥900px): barra lateral + contenido ancho ─── */
