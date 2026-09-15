@@ -22,7 +22,7 @@ import { cargarV2, descriptorV2, puntos5DeMediaPipe, similitudV2, promedioV2, V2
 import {
   cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
   getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
-  olvidarActivacion, ClaveRechazada,
+  olvidarActivacion, ClaveRechazada, getPruebaToken,
 } from '../services/kioskoApi.js';
 
 /**
@@ -230,12 +230,14 @@ export default function KioskMode() {
     navigator.serviceWorker?.register?.('/sw.js').catch(() => { /* sin SW el kiosco funciona igual */ });
   }, []);
 
-  // MODO PRUEBA (/?prueba=1): el mismo flujo completo de reconocimiento
-  // (parpadeo, captura, decisión v2), pero al confirmar identidad SOLO dice
-  // quién es — nunca registra marcaciones ni alimenta la telemetría. Es el
-  // ambiente de ensayo del panel («Probar reconocimiento» en Ajustes).
+  // MODO PRUEBA (/?prueba=1 o /?prueba=<token>): el mismo flujo completo de
+  // reconocimiento (parpadeo, captura, decisión v2), pero al confirmar
+  // identidad SOLO dice quién es — nunca registra marcaciones ni alimenta la
+  // telemetría. Es el ambiente de ensayo del panel («Probar reconocimiento»
+  // en Ajustes). Con el TOKEN firmado se abre en cualquier celular sin
+  // iniciar sesión (services/kioskoApi.js lo manda en vez de la clave).
   const [esPrueba] = useState(() =>
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('prueba') === '1');
+    typeof window !== 'undefined' && Boolean(new URLSearchParams(window.location.search).get('prueba')));
 
   // Modelo v2 listo (se comprueba en caliente dentro del bucle de captura).
   const v2ListoRef = useRef(false);
@@ -564,7 +566,9 @@ export default function KioskMode() {
     // Roster desde la BASE DE DATOS (con caché local para cortes de red).
     let all = [];
     try {
-      const { empleados, deCache } = await cargarRoster();
+      // En modo prueba no se deja copia del roster en este navegador: es el
+      // celular de cualquiera, no un kiosco.
+      const { empleados, deCache } = await cargarRoster({ guardar: !esPrueba });
       all = empleados;
       if (deCache) setStatusNote('Sin conexión: usando la última copia.');
     } catch (e) {
@@ -575,7 +579,9 @@ export default function KioskMode() {
         if (esPrueba) {
           // Sin sesión del panel no hay roster que probar; aquí no se
           // desactiva nada — este navegador no es un kiosco.
-          setStatusNote('Para el modo prueba, inicia sesión en el panel en esta misma pestaña.');
+          setStatusNote(getPruebaToken()
+            ? 'Este enlace de prueba venció o no es válido. Genera uno nuevo en el panel: Ajustes → Probar reconocimiento.'
+            : 'Para el modo prueba, abre el enlace que genera el panel (Ajustes → Probar reconocimiento) o inicia sesión en esta misma pestaña.');
           setArranqueFallo(true);
           soltarCamara();
           return;

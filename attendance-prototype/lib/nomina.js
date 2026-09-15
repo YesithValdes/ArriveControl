@@ -9,6 +9,7 @@
 import { conEmpresa } from './db.js'
 import { configLaboral, vigenciasPago, pagoVigenteEn } from './configLaboral.js'
 import { calcularRegistros } from './calculoHoras.js'
+import { lunesDe, domingoDe } from './semanaLaboral.js'
 import { valorizarRegistro } from './tiposHora.js'
 
 /**
@@ -26,10 +27,17 @@ export async function construirLote(esquema, rango = null) {
   const historicoPago = await vigenciasPago(esquema).catch(() => [])
   const pagoDe = (fecha) => pagoVigenteEn(historicoPago, fecha, actualPago)
 
+  // La hora extra se decide POR SEMANA (lunes → domingo), así que las marcas
+  // se leen por semanas ENTERAS aunque el rango pedido corte una a la mitad:
+  // una quincena que empieza en miércoles necesita el lunes y el martes para
+  // saber si esa semana pasó de las 42 h. Al final se devuelven solo los
+  // tramos cuya fecha cae dentro del rango pedido: cada tramo pertenece a un
+  // único período, y el de una semana que cierra en el período siguiente
+  // sale allá, cuando la semana ya cerró.
   const cond = ['not m.eliminada']
   const args = []
-  if (rango?.desde) { args.push(rango.desde); cond.push(`(m.ts at time zone 'America/Bogota')::date >= $${args.length}::date`) }
-  if (rango?.hasta) { args.push(rango.hasta); cond.push(`(m.ts at time zone 'America/Bogota')::date <= $${args.length}::date`) }
+  if (rango?.desde) { args.push(lunesDe(rango.desde)); cond.push(`(m.ts at time zone 'America/Bogota')::date >= $${args.length}::date`) }
+  if (rango?.hasta) { args.push(domingoDe(rango.hasta)); cond.push(`(m.ts at time zone 'America/Bogota')::date <= $${args.length}::date`) }
 
   // Todo en hora Bogotá desde SQL: fecha, minutos del día y timestamp.
   const { rows } = await conEmpresa(esquema, (db) => db.query(
@@ -83,7 +91,7 @@ export async function construirLote(esquema, rango = null) {
     festivos,
     vigencias,
     nocturno: (fecha) => pagoDe(fecha).nocturno,
-  })
+  }).filter((r) => (!rango?.desde || r.fecha >= rango.desde) && (!rango?.hasta || r.fecha <= rango.hasta))
 
   // Valor en pesos de cada tramo, con los factores y el divisor vigentes EN LA
   // FECHA del tramo. Quien no tenga salario registrado sale con `valor: null`

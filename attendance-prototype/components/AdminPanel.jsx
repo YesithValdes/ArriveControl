@@ -19,7 +19,7 @@ import {
   updateEventType,
   deleteEvent,
   NIGHT_WINDOW_MS,
-  listPeople, listArchivados, removePerson, updatePerson, expectedDailyHours, jornadaDelDia,
+  listPeople, listArchivados, removePerson, updatePerson, expectedDailyHours,
   listarRostros, agregarRostro, quitarRostro,
   franjaEsperada, finJornadaMs, horasFranja, horasSemanaDias, resumenDias, DIAS_CORTOS, ORDEN_SEMANA,
   getLaborConfig, saveLaborConfig, getHorasValorizadas, getEventosRango, marcarHorasPagadas,
@@ -29,12 +29,17 @@ import {
 // valorizarRegistro es LA MISMA función que usa el servidor para poner el
 // valor en pesos (lib/nomina.js). El simulador de Ajustes la llama directo:
 // si probara con una fórmula escrita aparte, no estaría probando nada.
-import { TIPOS_HORA, CODIGOS_HORA, valorizarRegistro } from '../lib/tiposHora.js';
-// calcularRegistros es el motor de CLASIFICACIÓN (marcaciones → qué horas son
-// extra y de qué código). El simulador lo llama tal cual, sin base de datos:
-// entra una lista de marcas, sale la lista de tramos.
-import { calcularRegistros } from '../lib/calculoHoras.js';
-import { vigenciasDeHorasSemana } from '../lib/jornada.js';
+import { TIPOS_HORA, CODIGOS_HORA, nombreTipo, valorizarRegistro } from '../lib/tiposHora.js';
+// emparejarMarcas + tramosDeSemana son el motor de CLASIFICACIÓN (marcaciones
+// → qué horas son extra y de qué código). El simulador los llama tal cual, sin
+// base de datos: entra un turno y cuántas horas lleva la semana, sale la
+// lista de tramos.
+import { emparejarMarcas, tramosDeSemana } from '../lib/calculoHoras.js';
+// La SEMANA es la unidad de la hora extra (lib/semanaLaboral.js): el detalle
+// de una persona se agrupa por semanas y la extra solo aparece en las que ya
+// cerraron. Los festivos legales se calculan aquí igual que en el servidor.
+import { resumenSemana, lunesDe, domingoDe, EXTRA_MINIMA_H } from '../lib/semanaLaboral.js';
+import { getHolidaysForYear } from 'colombian-holidays';
 import { rutaDe, tabDeRuta } from '../lib/rutasPanel.js';
 import { signOut } from '../lib/auth-client';
 // Diagnóstico GPS embebido en Ajustes (la página /gps sigue existiendo).
@@ -62,6 +67,8 @@ function Icon({ name, size = 17 }) {
     users: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>,
     chevronLeft: <polyline points="15 18 9 12 15 6" />,
     chevronRight: <polyline points="9 18 15 12 9 6" />,
+    userPlus: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" /></>,
+    archive: <><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></>,
     check: <polyline points="20 6 9 17 4 12" />,
   };
   return (
@@ -390,13 +397,27 @@ const fmtHoras = (n) => `${(Math.round(n * 100) / 100).toLocaleString('es-CO')} 
  * Sin esto, un día pasado sin salida mostraba CERO horas trabajadas aquí
  * mientras Reportes ya contaba las del cierre: el mismo día con dos cifras.
  */
-function pairedHours(events, nowMs, person = null) {
-  let total = 0;
+/**
+ * Pares entrada→salida de una lista de eventos, en la MISMA forma que
+ * entiende el motor de nómina (lib/calculoHoras.js: fecha, desde/hasta en
+ * minutos desde las 0:00 del día de entrada, horas, dow). Así el cajón puede
+ * pedirle a `tramosDeSemana` el reparto por código (HED, HEN, HEDDF, HENDF)
+ * sin tener una segunda copia de esa regla.
+ */
+function paresDe(events, nowMs, person = null) {
+  const pares = [];
   let openIn = null;
+  const cerrar = (inEv, finMs) => {
+    const inicio = new Date(inEv.ts).getTime();
+    const fecha = dayKey(inEv.ts);
+    const desde = (inicio - new Date(`${fecha}T00:00:00-05:00`).getTime()) / 60000;
+    const horas = (finMs - inicio) / 3600000;
+    pares.push({ fecha, desde, hasta: desde + horas * 60, horas, dow: new Date(`${fecha}T12:00:00Z`).getUTCDay() });
+  };
   for (const e of events) {
     if (e.type === 'in') openIn = e;
     else if (e.type === 'out' && openIn) {
-      total += (new Date(e.ts) - new Date(openIn.ts)) / 3600000;
+      cerrar(openIn, new Date(e.ts).getTime());
       openIn = null;
     }
   }
@@ -405,7 +426,7 @@ function pairedHours(events, nowMs, person = null) {
     const diaEntrada = dayKey(openIn.ts);
     if (diaEntrada >= dayKey(new Date(nowMs).toISOString())) {
       const span = nowMs - inicio;
-      if (span < NIGHT_WINDOW_MS) total += span / 3600000;
+      if (span < NIGHT_WINDOW_MS) cerrar(openIn, nowMs);
     } else {
       // Día terminado: cierra con el horario. Si entró DESPUÉS de su hora de
       // salida, `fin` queda antes que la entrada y no suma nada — que es la
@@ -414,10 +435,14 @@ function pairedHours(events, nowMs, person = null) {
       // entró antes) o el final de la jornada.
       const entradaMin = (inicio - new Date(`${diaEntrada}T00:00:00-05:00`).getTime()) / 60000;
       const fin = finJornadaMs(person, diaEntrada, entradaMin);
-      if (fin != null && fin > inicio) total += (fin - inicio) / 3600000;
+      if (fin != null && fin > inicio) cerrar(openIn, fin);
     }
   }
-  return total;
+  return pares;
+}
+
+function pairedHours(events, nowMs, person = null) {
+  return paresDe(events, nowMs, person).reduce((s, p) => s + p.horas, 0);
 }
 
 /**
@@ -609,7 +634,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [simSalario, setSimSalario] = useState('1500000');
   const [simHoras, setSimHoras] = useState(() => Object.fromEntries(CODIGOS_HORA.map((c) => [c, ''])));
   // Simulador de turno: fecha + entrada + salida → códigos que emite el motor.
-  const [simTurno, setSimTurno] = useState({ fecha: todayKey(), entrada: '08:00', salida: '20:00', jornada: '' });
+  // `acumuladas`: horas que la semana ya lleva antes del turno simulado. Con
+  // 42 (la jornada completa) todo el turno sale como extra, que es lo útil
+  // para ver en qué códigos lo parte el sistema.
+  const [simTurno, setSimTurno] = useState({ fecha: todayKey(), entrada: '08:00', salida: '20:00', acumuladas: '42' });
 
   // Quién tiene acceso a esta empresa. Con Google no se crean cuentas: se
   // invita un correo, y la cuenta nace cuando esa persona entra.
@@ -706,6 +734,20 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     setApiKeyVisible(true);
     showToast('Clave regenerada');
     cargarMiEmpresa();
+  };
+
+  // Enlace del MODO PRUEBA del kiosco (reconoce sin registrar). Lo firma el
+  // servidor y vale 24 h: se abre en cualquier celular sin iniciar sesión.
+  const [pruebaEnlace, setPruebaEnlace] = useState(null);
+  const abrirPruebaReconocimiento = async () => {
+    try {
+      const r = await fetch('/api/prueba-reconocimiento');
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'sin respuesta');
+      setPruebaEnlace({ url: new URL(d.url, window.location.origin).toString(), vence: d.vence, horas: d.horas, copiado: false });
+    } catch (e) {
+      showToast(`No se pudo generar el enlace de prueba: ${e.message}`);
+    }
   };
 
   // Dispositivos del kiosco activados (para listar y revocar).
@@ -1389,14 +1431,28 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     setTimeout(() => setToast(null), 2600);
   };
 
+  /**
+   * El rango del drawer siempre son SEMANAS ENTERAS (lunes → domingo, sin
+   * pasar de hoy). La hora extra se decide por semana cerrada, y una semana
+   * a medias mostraría un total que no es el que se liquida.
+   */
+  const rangoSemanas = (desde, hasta) => {
+    const hoy = todayKey();
+    const dom = domingoDe(hasta);
+    return { desde: lunesDe(desde), hasta: dom < hoy ? dom : hoy };
+  };
+
   // Abre el drawer de detalle de una persona en un día concreto.
-  // Rango por defecto: los últimos 7 días — perspectiva amplia de la semana.
+  // Rango por defecto: la semana en curso Y la anterior, para que siempre
+  // haya a la vista una semana ya cerrada, con su extra definida.
   const openDrawer = (personId, personName, day = null) => {
     setEvForm(null);
     setOpenDia(day);
-    const hasta = day ?? todayKey();
-    const desde = day ?? dayKey(new Date(Date.now() - 6 * 24 * 3600000).toISOString());
-    setDrawer({ personId, personName, desde, hasta });
+    const hoy = todayKey();
+    const rango = day
+      ? rangoSemanas(day, day)
+      : rangoSemanas(dayKey(new Date(Date.now() - 7 * 24 * 3600000).toISOString()), hoy);
+    setDrawer({ personId, personName, ...rango });
   };
 
   /**
@@ -1409,7 +1465,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     if (!persona) { showToast('Ese empleado ya no está activo.'); return; }
     setEvForm(null);
     setOpenDia(null);
-    setDrawer({ personId: persona.id, personName: persona.name, desde: repFrom, hasta: repTo });
+    setDrawer({ personId: persona.id, personName: persona.name, ...rangoSemanas(repFrom, repTo) });
   };
 
   // Anomalías: abren el drawer en el día del evento, con el formulario
@@ -1486,6 +1542,51 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       .map(([fecha, evs]) => ({ fecha, evs, horas: pairedHours(evs, Date.now(), drawerPersona) }))
       .sort((a, b) => b.fecha.localeCompare(a.fecha));
   }, [drawerEvents, drawerPersona]);
+
+  // Los días, agrupados por SEMANA (lunes → domingo), de la más reciente a la
+  // más vieja, y cada semana con sus cuentas cerradas —o en curso—. Solo
+  // aparecen las semanas donde hubo marcaciones.
+  const drawerSemanas = useMemo(() => {
+    if (!drawer) return [];
+    // Festivos legales de los años que toca el rango + los de la empresa: el
+    // mismo conjunto con el que el servidor liquida (lib/configLaboral.js).
+    const festivos = new Set(cfg.holidays ?? []);
+    for (let a = Number(drawer.desde.slice(0, 4)); a <= Number(drawer.hasta.slice(0, 4)); a++) {
+      for (const h of getHolidaysForYear(a)) festivos.add(h.celebrationDate);
+    }
+    const porSemana = new Map();
+    for (const d of drawerDias) {
+      const lunes = lunesDe(d.fecha);
+      if (!porSemana.has(lunes)) porSemana.set(lunes, []);
+      porSemana.get(lunes).push(d);
+    }
+    const aMinutos = (hhmm, defecto) => {
+      const [h, m] = String(hhmm ?? '').split(':').map(Number);
+      return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : defecto;
+    };
+    const nocturno = { inicio: aMinutos(cfg.nocturnoInicio, 21 * 60), fin: aMinutos(cfg.nocturnoFin, 6 * 60) };
+    const ahora = Date.now();
+    return [...porSemana.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([lunes, dias]) => {
+        const semana = resumenSemana({
+          lunes,
+          horasPorDia: new Map(dias.map((d) => [d.fecha, d.horas])),
+          festivos,
+          horasHorario: (fecha) => horasFranja(franjaEsperada(drawerPersona, fecha)),
+          horasSemana: cfg.weeklyHours ?? 42,
+          hoy: todayKey(),
+        });
+        // Reparto por CÓDIGO (HED, HEN, HEDDF, HENDF) con la misma función
+        // del motor: la extra semanal cae en las últimas horas de la semana y
+        // toma su tipo por el reloj; domingo y festivo salen siempre.
+        const pares = dias.flatMap((d) => paresDe(d.evs, ahora, drawerPersona)
+          .map((p) => ({ ...p, dominical: p.dow === 0 || festivos.has(p.fecha) })));
+        const porCodigo = Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0]));
+        for (const t of tramosDeSemana({ pares, extra: semana.extra, franjaDe: () => nocturno })) porCodigo[t.tipoHora] += t.horas;
+        return { dias, ...semana, porCodigo };
+      });
+  }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin]);
 
   const saveEvForm = async () => {
     if (!evForm?.time || !evForm.reason.trim()) return;
@@ -1994,7 +2095,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <Icon name="file" size={16} /> Simulador
             </button>
             <h4>Herramientas</h4>
-            <Link className="cfg-item" href="/?prueba=1"><Icon name="monitor" size={16} /> Probar reconocimiento</Link>
+            <button className="cfg-item" onClick={abrirPruebaReconocimiento}><Icon name="monitor" size={16} /> Probar reconocimiento</button>
             <button className={`cfg-item${tab === 'cfg-gps' ? ' on' : ''}`} onClick={() => setTab('cfg-gps')}>
               <Icon name="pin" size={16} /> Diagnóstico GPS
             </button>
@@ -2011,8 +2112,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   {esHoy ? 'Asistencia de hoy' : `Asistencia — ${new Date(`${diaAsistencia}T12:00:00-05:00`).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}`}
                   {' '}<span className="muted-count">{attRows.length}</span>
                 </h2>
-                <p className="hint">Toca una fila para ver sus marcaciones.</p>
-                <div className="att-controls">
+<div className="att-controls">
                   <input
                     className="att-search mini" type="search" placeholder="Buscar…"
                     value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
@@ -2349,8 +2449,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'anomalias' && (
           <section className="card grow">
             <h2>Anomalías por resolver <span className="muted-count">{view.anomalies.length}</span></h2>
-            <p className="hint">Corrígelas aquí mismo; lo resuelto sale de la bandeja.</p>
-            {/* Filtro por tipo (aplica a la bandeja de PC y a la lista móvil) */}
+{/* Filtro por tipo (aplica a la bandeja de PC y a la lista móvil) */}
             <div className="att-controls">
               {[['all', 'Todas'], ['missing-exit', 'Salida faltante'], ['late-entry', 'Entrada tardía'], ['early-exit', 'Salida temprana']].map(([id, lbl]) => (
                 <button key={id} className="fchip" aria-pressed={anomFiltro === id} onClick={() => { setAnomFiltro(id); setAnomAbierta(null); setAnomPage(0); }}>
@@ -2379,7 +2478,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       ? `Salió ${fmt12(a.event.ts)}, esperada ${a.person.expectedExit || '—'}.`
                       : `Entró ${fmt12(a.event.ts)}.`;
                 const aDay = (a) => new Date(a.event.ts).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
-                if (view.anomalies.length === 0) return <p className="empty">🎉 Bandeja en cero. Sin anomalías pendientes.</p>;
+                if (view.anomalies.length === 0) return <p className="empty">🎉 Sin anomalías pendientes.</p>;
                 if (casos.length === 0) return <p className="empty">Sin anomalías de este tipo.</p>;
                 return (
                   <>
@@ -2457,15 +2556,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             {sesion?.planEstado && !sesion.planEstado.acceso && (
               <p className="hint" style={{ color: 'var(--crit-text)' }}>
                 {sesion.planEstado.pruebaVencida
-                  ? 'Para registrar empleados necesitas un plan activo.'
-                  : 'Tu suscripción venció: no puedes registrar empleados nuevos hasta renovarla.'}
+                  ? 'Necesitas un plan activo para registrar.'
+                  : 'Suscripción vencida: no se pueden registrar empleados.'}
                 {' '}
                 <button className="btn small" style={{ marginLeft: 6 }} onClick={() => setTab('cfg-empresa')}>Ver planes</button>
               </p>
             )}
             {sesion?.limiteEmpleados != null && allPeople.length >= sesion.limiteEmpleados && (
               <p className="hint" style={{ color: 'var(--crit-text)' }}>
-                Llegaste al tope acordado de {sesion.limiteEmpleados} empleados. Escríbenos para ampliarlo.
+                Tope de {sesion.limiteEmpleados} empleados alcanzado. Escríbenos para ampliarlo.
               </p>
             )}
             {/* Migración al modelo facial v2: el contador baja con cada foto
@@ -2475,28 +2574,35 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               if (sinV2 === 0) return null;
               return (
                 <p className="hint">
-                  📷 <b>{sinV2} empleado{sinV2 === 1 ? '' : 's'}</b> sin foto nueva para el reconocimiento v2 —
-                  agrégala desde su ficha (fila → rostros). Cuando todos la tengan, el kiosco decide con el modelo nuevo.
+                  📷 <b>{sinV2}</b> sin foto nueva (v2): agrégala desde su ficha.
                 </p>
               );
             })()}
-            <p className="hint">Quiénes pueden marcar en el kiosco. Toca una fila para editar.</p>
-            <div className="att-controls">
+            {/* Una sola fila: buscar + dos botones de icono (el texto solo
+                en PC, donde sobra sitio). En el celular cada palabra cuesta. */}
+            <div className="att-controls emp-controles">
               <input
-                className="att-search mini" type="search" placeholder="Buscar…"
+                className="att-search mini" type="search" placeholder="Buscar…" aria-label="Buscar empleado"
                 value={empSearch} onChange={(e) => { setEmpSearch(e.target.value); setEmpPage(0); }}
               />
-              <button className="btn primary" onClick={() => setRegAbierto(true)}>Registrar empleado</button>
+              <button className="btn primary btn-ico" onClick={() => setRegAbierto(true)} title="Registrar empleado" aria-label="Registrar empleado">
+                <Icon name="userPlus" size={18} />
+                <span className="solo-pc">Registrar</span>
+              </button>
               {/* Con la vista abierta el botón se queda aunque la lista quede
                   en cero (al reactivar al último hay que poder volver). */}
               {(listArchivados().length > 0 || verArchivados) && (
                 <button
-                  className="btn"
+                  className="btn btn-ico"
                   aria-pressed={verArchivados}
-                  title="Desactivados; su historial se conserva y no ocupan cupo"
+                  title={verArchivados ? 'Volver a los activos' : `Archivados (${listArchivados().length}): desactivados; su historial se conserva y no ocupan cupo`}
+                  aria-label={verArchivados ? 'Volver a los activos' : `Ver archivados (${listArchivados().length})`}
                   onClick={() => { setVerArchivados(!verArchivados); setArchPage(0); }}
                 >
-                  {verArchivados ? '‹ Volver a activos' : `Archivados (${listArchivados().length})`}
+                  <Icon name={verArchivados ? 'chevronLeft' : 'archive'} size={18} />
+                  {verArchivados
+                    ? <span className="solo-pc">Activos</span>
+                    : <><span className="ico-num">{listArchivados().length}</span><span className="solo-pc">Archivados</span></>}
                 </button>
               )}
             </div>
@@ -2639,8 +2745,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 const archPagina = archivados.slice(archSafe * ARCH_PAGE, (archSafe + 1) * ARCH_PAGE);
                 return (
                   <>
-                    <p className="hint">Desactivados: no pueden marcar ni ocupan cupo, y su historial se conserva.</p>
-                    {archivados.length === 0 && <p className="empty">No hay empleados archivados.</p>}
+{archivados.length === 0 && <p className="empty">No hay empleados archivados.</p>}
                     {archPagina.map((p) => (
                       <div key={p.id} className="arch-fila">
                         <span className="emp-cell">
@@ -2683,12 +2788,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'horarios' && (
           <section className="card grow">
             <h2>Horarios <span className="muted-count">{horarios.length}</span></h2>
-            <p className="hint">
-              Plantillas de jornada por cargo o turno, personalizadas POR DÍA: cada día
-              puede tener su propia franja (o quedar libre). Al registrar o editar un
-              empleado se le asigna una, y su semana queda copiada en su ficha.
-            </p>
-            <div className="att-controls">
+<div className="att-controls">
               <button
                 className="btn primary"
                 onClick={() => setHorForm({ nombre: '', dias: diasLunesAViernes() })}
@@ -2699,7 +2799,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
             <div className="scrollable">
               {horarios.length === 0 && !horForm && (
-                <p className="empty">Aún no hay horarios. Crea el primero: por ejemplo «Administrativo, Lun–Vie 08:00 – 17:00».</p>
+                <p className="empty">Aún no hay horarios.</p>
               )}
               {horarios.length > 0 && (
                 <>
@@ -2760,10 +2860,16 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'reportes' && (
           <section className="card grow">
             <h2>Horas extra por período</h2>
-            <p className="hint">
-              Lo calcula el servidor con las mismas reglas que consume nómina. Clic en un nombre
-              para abrir su ficha; el CSV incluye la asistencia completa y el valor por categoría.
-            </p>
+            <p className="hint">Extra = lo que pasa de {cfg.weeklyHours ?? 42} h de lunes a sábado, por semana cerrada.</p>
+{/* La semana en curso no tiene extra todavía (domingo y festivo sí:
+                esos no dependen de la cuenta). Se avisa para que un reporte
+                que la incluya no se lea como «no hubo». */}
+            {repTo >= lunesDe(todayKey()) && (
+              <p className="cfg-note rep-en-curso">
+                La semana del {Number(lunesDe(todayKey()).slice(8, 10))} al {Number(domingoDe(todayKey()).slice(8, 10))} sigue en curso:
+                sus horas extra de lunes a sábado aparecerán aquí cuando cierre el domingo.
+              </p>
+            )}
             <div className="rep-controls">
               <label>Desde <input type="date" value={repFrom} max={repTo} onChange={(e) => setRepFrom(e.target.value)} /></label>
               <label>Hasta <input type="date" value={repTo} min={repFrom} max={todayKey()} onChange={(e) => setRepTo(e.target.value)} /></label>
@@ -2934,8 +3040,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           return (
           <section className="card grow">
             <h2>Historial de ajustes <span className="muted-count">{filtrados.length}</span></h2>
-            <p className="hint">Quién cambió qué y cuándo.</p>
-            <div className="att-controls">
+<div className="att-controls">
               <label className="hist-fecha">Desde{' '}
                 <input
                   className="att-fecha" type="date" value={histFiltro.desde} max={histFiltro.hasta || todayKey()}
@@ -3026,11 +3131,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
               <div className="tools-grupo">
                 <h3>Herramientas</h3>
-                <Link className="tool" href="/?prueba=1">
+                <button className="tool" onClick={abrirPruebaReconocimiento}>
                   <span className="icon"><Icon name="monitor" size={19} /></span>
-                  <span className="tool-txt"><b>Probar reconocimiento</b><small>Ambiente de ensayo: identifica el rostro pero NO registra marcaciones</small></span>
+                  <span className="tool-txt"><b>Probar reconocimiento</b><small>Reconoce sin registrar; sin iniciar sesión</small></span>
                   <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
-                </Link>
+                </button>
                 <button className="tool" onClick={() => setTab('cfg-gps')}>
                   <span className="icon"><Icon name="pin" size={19} /></span>
                   <span className="tool-txt"><b>Diagnóstico GPS</b><small>Precisión y distancia a cada sede</small></span>
@@ -3046,7 +3151,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
             <h2>Acceso al panel <span className="muted-count">{usuarios.length}</span></h2>
-            <p className="hint">Todos entran con Google y pueden lo mismo.</p>
 
             {usrError && <p className="empty">⚠ {usrError}</p>}
             <div className="att-controls">
@@ -3209,13 +3313,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <>
                 {catalogo.conEntrada && (
                   <p className="hint">
-                    <b>Precio de entrada:</b> US${catalogo.precioEntrada} al mes durante los primeros{' '}
-                    {catalogo.maxMesesEntrada} meses, en el plan que elijas. Es por una sola vez.
+                    <b>Precio de entrada:</b> US${catalogo.precioEntrada}/mes los primeros {catalogo.maxMesesEntrada} meses, por una sola vez.
                   </p>
                 )}
                 <p className="hint">
-                  Tienes <b>{catalogo.empleados} empleado{catalogo.empleados === 1 ? '' : 's'}</b> registrado{catalogo.empleados === 1 ? '' : 's'}.
-                  Elige el plan que los cubra.
+                  <b>{catalogo.empleados}</b> empleado{catalogo.empleados === 1 ? '' : 's'}: elige el plan que los cubra.
                 </p>
 
                 {/* Cuántos meses adelantar. Con el precio de entrada, cada mes
@@ -3267,10 +3369,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
                 <p className="cfg-note" style={{ marginTop: 14 }}>
                   {catalogo.conEntrada
-                    ? `Después de los meses de entrada, la renovación cuesta el precio normal del plan.`
-                    : 'Se cobra por mes. Sin permanencia: renuevas cuando quieras.'}
-                  {' '}Se paga en dólares con tarjeta. ¿Más de {catalogo.contactoDesde} empleados?{' '}
-                  <b>Escríbenos</b> y armamos un plan.
+                    ? 'Luego, la renovación va al precio normal.'
+                    : 'Mensual, sin permanencia.'}
+                  {' '}Se paga en dólares con tarjeta. ¿Más de {catalogo.contactoDesde} empleados? <b>Escríbenos</b>.
                 </p>
                 {sesion?.pagoDePrueba && (
                   <p className="cfg-note" style={{ color: 'var(--warn-text)' }}>
@@ -3354,8 +3455,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <div className="cfg-group">
                   <h3>Clave de API</h3>
                   <p className="cfg-note" style={{ marginTop: 0 }}>
-                    Con ella el sistema de nómina consulta <code>GET /api/horas</code> (encabezado <code>X-API-Key</code>).
-                  </p>
+                      Para que nómina consulte <code>GET /api/horas</code> (encabezado <code>X-API-Key</code>).
+                    </p>
                   <div className="api-key-row">
                     <code className="api-key">{apiKeyVisible ? miEmpresa.apiKey : '••••••••••••••••••••'}</code>
                     <button className="btn small" onClick={() => setApiKeyVisible((v) => !v)}>
@@ -3376,9 +3477,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
                 <div className="cfg-group">
                   <h3>Mis datos</h3>
-                  <p className="cfg-note" style={{ marginTop: 0 }}>
-                    Descarga todo en un JSON. Los rostros no van: son datos biométricos.
-                  </p>
+                  <p className="cfg-note" style={{ marginTop: 0 }}>Todo en un JSON, sin rostros (dato biométrico).</p>
                   <div className="att-controls">
                     <a className="btn" href="/api/empresa/exportar" download>Exportar datos</a>
                   </div>
@@ -3392,11 +3491,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'cfg-dispositivos' && (
           <section className="card grow">
             <h2>Dispositivos del kiosco <span className="muted-count">{dispositivos.length}</span></h2>
-            <p className="hint">
-              Cada aparato tiene su propia clave: revoca el que se pierda y los demás siguen
-              trabajando.
-            </p>
-            {dispError && <p className="empty">⚠ {dispError}</p>}
+{dispError && <p className="empty">⚠ {dispError}</p>}
 
             <div className="att-controls">
               <button className="btn primary" onClick={() => { setVinculando({ nombre: '', sedeId: '' }); setCodigoVinc(null); }}>
@@ -3431,8 +3526,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       <div className="codigo-vinc">
                         <div className="codigo-num">{codigoVinc.codigoLegible}</div>
                         <p className="cfg-note">
-                          Escríbelo en el aparato, en la pantalla del kiosco. Vale una sola vez y
-                          vence {new Date(codigoVinc.expira_en).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}.
+                          Escríbelo en el kiosco. Vale una vez y vence a las {new Date(codigoVinc.expira_en).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}.
                           {codigoVinc.reconectando && ' Al usarlo, la clave anterior de este aparato deja de servir.'}
                         </p>
                         <button className="btn primary block" onClick={() => { setCodigoVinc(null); cargarDispositivos(); }}>
@@ -3509,6 +3603,32 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </table>
                 </div>
               )}
+              {/* En móvil la tabla se oculta (.att-tablewrap) y manda esta
+                  lista, como en las demás pestañas. Sin ella, Dispositivos
+                  salía vacía en el celular. */}
+              {dispositivos.length > 0 && (
+                <AccList
+                  items={dispositivos.map((d) => ({
+                    id: d.id,
+                    title: d.nombre,
+                    right: <span className={`punto-estado ${d.activo ? 'on' : 'off'}`} title={d.activo ? 'activo' : 'revocado'} />,
+                    fields: [
+                      ['Sede', d.sede_nombre ?? '—'],
+                      ['Estado', d.activo ? 'activo' : 'revocado'],
+                      ['Último uso', d.ultimo_uso ? fmtTs(d.ultimo_uso) : 'nunca'],
+                      ['Activado por', d.activado_por ?? '—'],
+                    ],
+                    actions: (
+                      <>
+                        <button className="btn primary block" onClick={() => reconectarDispositivo(d)}>Reconectar</button>
+                        {d.activo && (
+                          <button className="btn danger-btn block" onClick={() => revocarDispositivo(d)}>Revocar</button>
+                        )}
+                      </>
+                    ),
+                  }))}
+                />
+              )}
             </div>
           </section>
         )}
@@ -3519,12 +3639,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
             <h2>Valorización de horas extra</h2>
-            <p className="hint">Los cambios se aplican de inmediato.</p>
-            <div className="scrollable">
+<div className="scrollable">
               <div className="cfg-group">
                 <h3>Porcentaje por tipo de hora</h3>
                 <p className="cfg-note" style={{ marginTop: 0, marginBottom: 10 }}>
-                  Porcentaje <b>total</b>, no el recargo: 125&nbsp;% ya incluye la hora.
+                  Porcentaje <b>total</b>: 125&nbsp;% ya incluye la hora.
                 </p>
                 {TIPOS_HORA.map((t) => {
                   const factor = cfg.factores?.[t.codigo] ?? t.factor;
@@ -3587,9 +3706,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
               <div className="cfg-group">
                 <h3>Franja nocturna</h3>
-                <p className="cfg-note" style={{ marginTop: 0, marginBottom: 10 }}>
-                  La extra dentro de la franja se paga como nocturna. Por ley, 21:00–06:00.
-                </p>
+                <p className="cfg-note" style={{ marginTop: 0, marginBottom: 10 }}>Por ley, 21:00–06:00.</p>
                 <div className="cfg-row">
                   <label htmlFor="cfg-noc-ini">Empieza</label>
                   <div className="cfg-input">
@@ -3610,9 +3727,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     />
                   </div>
                 </div>
-                <p className="cfg-note">
-                  Un turno que cruce la franja se parte solo: 20:00–23:00 → 1 h diurna + 2 h nocturnas.
-                </p>
+                <p className="cfg-note">Un turno que cruce la franja se parte solo.</p>
               </div>
             </div>
           </section>
@@ -3627,11 +3742,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'cfg-gps' && (
           <section className="card grow">
             <h2>Diagnóstico GPS</h2>
-            <p className="hint">
-              Coordenadas crudas, precisión y distancia a cada sede en vivo. Ábrelo desde el
-              dispositivo con dudas: sirve para saber si una «distancia errónea» es culpa del GPS.
-            </p>
-            <div className="scrollable">
+            <p className="hint">Coordenadas, precisión y distancia a cada sede, en vivo. Ábrelo en el aparato con dudas.</p>
+<div className="scrollable">
               <GpsDebug />
             </div>
           </section>
@@ -3684,26 +3796,28 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             return d.getTime() / 1000 + (minutos + diaExtra * 1440) * 60;
           };
 
+          const horasSemana = cfg.weeklyHours ?? 42;
+          const acumuladas = Math.max(0, Number(simTurno.acumuladas) || 0);
           let tramosTurno = [];
           if (duracion > 0) {
-            const jornadaPactada = Number(simTurno.jornada) > 0 ? Number(simTurno.jornada) : null;
-            const porEmpleado = new Map([['SIM', {
-              cedula: 'SIM', nombre: 'Simulación', sede: '',
-              jornadaSemanal: jornadaPactada == null ? null : Array(6).fill(jornadaPactada),
-              marcas: [
-                { tipo: 'entrada', fecha: simTurno.fecha, minutos: minEntrada, epoch: epochDe(simTurno.fecha, minEntrada), dow },
-                { tipo: 'salida', fecha: simTurno.fecha, minutos: minSalida, epoch: epochDe(simTurno.fecha, minSalida, cruzaMedianoche ? 1 : 0), dow },
-              ],
-            }]]);
+            // El turno pasa por el MISMO emparejador que las marcaciones reales
+            // (así un turno que cruza medianoche se trata igual que en nómina).
+            const pares = emparejarMarcas({ jornadaDias: null, marcas: [
+              { tipo: 'entrada', fecha: simTurno.fecha, minutos: minEntrada, epoch: epochDe(simTurno.fecha, minEntrada), dow },
+              { tipo: 'salida', fecha: simTurno.fecha, minutos: minSalida, epoch: epochDe(simTurno.fecha, minSalida, cruzaMedianoche ? 1 : 0), dow },
+            ] }, { festivos });
+            // La regla es por semana: extra es lo que este turno haga pasar
+            // de la jornada semanal, sumado a lo que la semana ya llevaba.
+            // Domingo y festivo no entran en esa cuenta (van con recargo
+            // desde la primera hora, y tramosDeSemana los saca solos).
+            const ordinarias = pares.filter((p) => !p.dominical).reduce((s, p) => s + p.horas, 0);
+            const extra = Math.max(0, acumuladas + ordinarias - horasSemana);
             const nocturnoCfg = {
               inicio: aMin(cfg.nocturnoInicio ?? '21:00') ?? 21 * 60,
               fin: aMin(cfg.nocturnoFin ?? '06:00') ?? 6 * 60,
             };
-            tramosTurno = calcularRegistros(porEmpleado, {
-              festivos,
-              vigencias: vigenciasDeHorasSemana(cfg.weeklyHours ?? 42),
-              nocturno: nocturnoCfg,
-            }).map((r) => valorizarRegistro(r, { salarioMensual: salario, factores, divisor }));
+            tramosTurno = tramosDeSemana({ pares, extra, franjaDe: () => nocturnoCfg })
+              .map((r) => valorizarRegistro(r, { salarioMensual: salario, factores, divisor }));
           }
           const turnoSim = { duracion, cruzaMedianoche, tramos: tramosTurno };
 
@@ -3711,8 +3825,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             <section className="card grow">
               <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
               <h2>Simulador de horas extra</h2>
-              <p className="hint">Prueba el cálculo sin tocar datos reales.</p>
-              <div className="scrollable">
+<div className="scrollable">
                 <div className="cfg-group">
                   <div className="cfg-row">
                     <label htmlFor="sim-salario">
@@ -3780,9 +3893,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         <span className="val-money">{salario == null ? 'sin salario' : fmtCOP(totalValor)}</span>
                       </div>
                     </div>
-                    <p className="cfg-note">
-                      Cada línea es hora ordinaria × factor × horas, redondeado al peso.
-                    </p>
+                    <p className="cfg-note">Hora ordinaria × factor × horas.</p>
                   </div>
                 )}
 
@@ -3791,10 +3902,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     motor decide, igual que con una marcación real. */}
                 <div className="cfg-group">
                   <h3>Turno → categorías</h3>
-                  <p className="cfg-note" style={{ marginTop: 0, marginBottom: 10 }}>
-                    Escribe un turno y mira en qué códigos lo parte el sistema.
-                  </p>
-                  <div className="cfg-row">
+<div className="cfg-row">
                     <label htmlFor="sim-fecha">
                       Día
                       <small>{diaSimulado.etiqueta}</small>
@@ -3822,14 +3930,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     </div>
                   </div>
                   <div className="cfg-row">
-                    <label htmlFor="sim-jornada">
-                      Jornada pactada del día
-                      <small>Vacío = la legal ({fmtHoras((cfg.weeklyHours ?? 42) / 6)}).</small>
+                    <label htmlFor="sim-acumuladas">
+                      Horas que ya lleva la semana
+                      <small>Lunes a sábado, antes de este turno. Con {horasSemana} h, el turno entero es extra.</small>
                     </label>
                     <div className="cfg-input">
-                      <input id="sim-jornada" type="number" min="0" max="12" step="0.5" placeholder="—"
-                        value={simTurno.jornada}
-                        onChange={(e) => setSimTurno({ ...simTurno, jornada: e.target.value })} /> h
+                      <input id="sim-acumuladas" type="number" min="0" max="80" step="0.5"
+                        value={simTurno.acumuladas}
+                        onChange={(e) => setSimTurno({ ...simTurno, acumuladas: e.target.value })} /> h
                     </div>
                   </div>
 
@@ -3837,7 +3945,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <p className="cfg-note">
                       {turnoSim.duracion <= 0
                         ? 'Turno vacío.'
-                        : `Sin horas extra: ${fmtHoras(turnoSim.duracion)} no superan la jornada del día.`}
+                        : `Sin horas extra: con ${fmtHoras(acumuladas)} ya trabajadas, ${fmtHoras(turnoSim.duracion)} más no pasan de las ${horasSemana} h de la semana.`}
                     </p>
                   ) : (
                     <>
@@ -3846,7 +3954,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           <span>Código</span><span>Desde</span><span>Hasta</span><span>Horas</span><span className="val-money">Valor</span>
                         </div>
                         {turnoSim.tramos.map((t) => (
-                          <div className="sim-row" role="row" key={t.referenciaExterna}>
+                          <div className="sim-row" role="row" key={`${t.tipoHora}-${t.horaInicio}`}>
                             <span><code>{t.tipoHora}</code></span>
                             <span>{t.horaInicio}</span>
                             <span>{t.horaFin}</span>
@@ -3880,8 +3988,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
             <h2>Reglamento laboral</h2>
-            <p className="hint">Horas extra y puntualidad.</p>
-            <div className="scrollable">
+<div className="scrollable">
               <div className="cfg-group">
                 <div className="cfg-row">
                   <label htmlFor="cfg-week">
@@ -3912,9 +4019,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <div className="cfg-group">
                 <h3>Días festivos y dominicales</h3>
                 <p className="cfg-note">
-                  Los festivos oficiales de Colombia (Ley 51 de 1983, con traslado al lunes) se
-                  calculan solos. Agrega aquí únicamente los decretados aparte o los días que tu
-                  empresa trate como festivos.
+                  Los festivos oficiales de Colombia se calculan solos; agrega solo los propios de tu empresa.
                 </p>
                 <div className="holiday-add">
                   <input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} aria-label="Nuevo festivo" />
@@ -3944,8 +4049,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'cfg-sedes' && (
           <section className="card grow">
             <h2>Sedes <span className="muted-count">{sedes.length}</span></h2>
-            <p className="hint">Toca una sede para editarla.</p>
-            <div className="att-controls">
+<div className="att-controls">
               <button className="btn primary" onClick={() => setNewSedeOpen(true)}>Nueva sede</button>
             </div>
             <div className="scrollable">
@@ -4033,16 +4137,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <button className="btn" onClick={() => setDrawer(null)}>Cerrar</button>
             </div>
 
-            {/* Rango de días + total del rango */}
+            {/* Rango de semanas + total del rango. Las fechas se ajustan solas
+                al lunes y al domingo: el cajón se lee por semanas enteras. */}
             <div className="drawer-day">
               <input
                 type="date" value={drawer.desde} max={drawer.hasta} aria-label="Desde"
-                onChange={(e) => { setDrawer({ ...drawer, desde: e.target.value }); setEvForm(null); }}
+                onChange={(e) => { if (!e.target.value) return; setDrawer({ ...drawer, ...rangoSemanas(e.target.value, drawer.hasta) }); setEvForm(null); }}
               />
               <span className="range-sep">–</span>
               <input
                 type="date" value={drawer.hasta} min={drawer.desde} max={todayKey()} aria-label="Hasta"
-                onChange={(e) => { setDrawer({ ...drawer, hasta: e.target.value }); setEvForm(null); }}
+                onChange={(e) => { if (!e.target.value) return; setDrawer({ ...drawer, ...rangoSemanas(drawer.desde, e.target.value) }); setEvForm(null); }}
               />
               <span className="drawer-hours">{fmtH(pairedHours(drawerEvents, Date.now(), drawerPersona))}</span>
             </div>
@@ -4087,16 +4192,57 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     </div>
                   </div>
                 );
-                const persona = listPeople().find((p) => p.id === drawer.personId);
                 const hh = (ts) => fmt12(ts).replace(/ [ap]\. m\./, '');
+                const fmtDM = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' });
+                const etiquetaSemana = (s) => (s.lunes.slice(0, 7) === s.domingo.slice(0, 7)
+                  ? `${Number(s.lunes.slice(8, 10))} – ${fmtDM(s.domingo)}`
+                  : `${fmtDM(s.lunes)} – ${fmtDM(s.domingo)}`);
+                const horasSem = cfg.weeklyHours ?? 42;
 
                 return (
                   <>
-                    {drawerDias.map((d) => {
+                    {drawerSemanas.map((s) => (
+                    <section className={`sem-bloque ${s.cerrada ? 'cerrada' : 'curso'}`} key={s.lunes}>
+                      {/* Las cuentas de la semana. La extra NO se estima por
+                          día: solo existe cuando la semana cerró (domingo
+                          terminado). Mientras tanto, se acumula y punto. */}
+                      <header className="sem-head">
+                        {/* El estado se ve en el COLOR de la cabecera: azul la
+                            semana en curso, gris las que ya cerraron. */}
+                        <span className="sem-top">
+                          <span className="sem-titulo" title={s.cerrada ? 'Semana cerrada: la extra es definitiva' : 'Semana en curso: la extra se define al cerrar el domingo'}>{etiquetaSemana(s)}</span>
+                          <span className="sem-total">{fmtH(s.trabajado)}</span>
+                        </span>
+                        {/* Solo códigos y horas; la explicación, al pasar el mouse. */}
+                        <span className="sem-chips">
+                          {!s.cerrada && (
+                            <span className="sem-chip" title={`Lunes a sábado, sobre las ${horasSem} h de la semana`}>{fmtH(s.cuenta)} / {horasSem} h</span>
+                          )}
+                          {CODIGOS_HORA.filter((c) => s.porCodigo[c] > 0.001).map((c) => (
+                            <span key={c} className={`sem-chip ${c.endsWith('DF') ? 'dom' : 'extra'}`} title={nombreTipo(c)}>
+                              {c} {fmtH(s.porCodigo[c])}
+                            </span>
+                          ))}
+                          {s.cerrada && s.extra < EXTRA_MINIMA_H && (
+                            <span
+                              className="sem-chip"
+                              title={s.extra > 0.001
+                                ? `Sobraron ${fmtH(s.extra)}: menos del mínimo de ${Math.round(EXTRA_MINIMA_H * 60)} min`
+                                : s.faltante > 0.001 ? `Faltaron ${fmtH(s.faltante)} para ${horasSem} h` : `${horasSem} h justas`}
+                            >
+                              Sin extra
+                            </span>
+                          )}
+                          {s.festivosAcreditados.map((f) => (
+                            <span className="sem-chip festivo" key={f.fecha} title={`Festivo del ${fmtDM(f.fecha)}: ${fmtH(f.horas)} acreditadas por horario en la cuenta de la semana`}>
+                              F {fmtDM(f.fecha)} +{fmtH(f.horas)}
+                            </span>
+                          ))}
+                        </span>
+                      </header>
+
+                    {s.dias.map((d) => {
                       const abierto = openDia === d.fecha;
-                      // (+X) = exceso sobre la jornada del día — la MISMA regla
-                      // con que nómina liquida la extra, no el horario esperado.
-                      const exceso = Math.max(0, d.horas - jornadaDelDia(persona, d.fecha));
                       // Bloques como CHIPS (envuelven a varias líneas: soporta
                       // cualquier número de pares sin superponerse).
                       const bloques = [];
@@ -4115,10 +4261,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               <span className="dia-fecha">
                                 {new Date(`${d.fecha}T12:00:00`).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })}
                               </span>
-                              <span className={`dia-horas${exceso > 0.05 ? ' extra' : ''}`}>
-                                {fmtH(d.horas)}
-                                {exceso > 0.05 && <em className="dia-exceso"> (+{fmtH(exceso)})</em>}
-                              </span>
+                              <span className="dia-horas">{fmtH(d.horas)}</span>
                               <span className="dia-chev">›</span>
                             </span>
                             <span className="dia-bloques">
@@ -4193,6 +4336,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         </div>
                       );
                     })}
+                    </section>
+                    ))}
 
     {/* Alta con fecha libre: el formulario vive AQUÍ abajo siempre que
                         se abrió desde este botón — antes, si la fecha elegida ya
@@ -4207,6 +4352,40 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </>
                 );
               })()}
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Enlace del modo prueba: se muestra para abrirlo aquí mismo o copiarlo
+          al celular. No pide sesión allá: el token firmado va en la URL. */}
+      {pruebaEnlace && (
+        <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setPruebaEnlace(null)}>
+          <aside className="drawer" role="dialog" aria-modal="true" aria-label="Probar reconocimiento">
+            <div className="drawer-head">
+              <div><h3>Probar reconocimiento</h3></div>
+              <button className="btn" onClick={() => setPruebaEnlace(null)}>Cerrar</button>
+            </div>
+            <div className="drawer-body">
+              <p className="cfg-note" style={{ marginTop: 0 }}>
+                Reconoce y dice quién es; <b>no registra marcaciones</b>. Se abre en cualquier celular sin iniciar sesión.
+                Vale hasta {new Date(pruebaEnlace.vence).toLocaleString('es-CO', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}.
+              </p>
+              <div className="field">
+                <label htmlFor="prueba-url">Enlace</label>
+                <input id="prueba-url" type="text" readOnly value={pruebaEnlace.url} onFocus={(e) => e.target.select()} />
+              </div>
+              <a className="btn primary block" href={pruebaEnlace.url} target="_blank" rel="noreferrer">Abrir aquí</a>
+              <button
+                className="btn block"
+                onClick={async () => {
+                  try { await navigator.clipboard.writeText(pruebaEnlace.url); setPruebaEnlace({ ...pruebaEnlace, copiado: true }); }
+                  catch { showToast('No se pudo copiar: selecciona el enlace y cópialo a mano.'); }
+                }}
+              >
+                {pruebaEnlace.copiado ? '✓ Copiado' : 'Copiar para el celular'}
+              </button>
+              <p className="cfg-note">Compártelo solo con quien deba: cualquiera con el enlace puede usarlo mientras valga.</p>
             </div>
           </aside>
         </div>
@@ -4350,8 +4529,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <button className="btn" onClick={() => setEditSede(null)}>Cerrar</button>
             </div>
             <div className="drawer-body">
-            <p className="hint">Al renombrar, los empleados se actualizan solos.</p>
-            <div className="field">
+<div className="field">
               <label htmlFor="s-nombre">Nombre</label>
               <input id="s-nombre" type="text" value={editSede.name} onChange={(e) => setEditSede({ ...editSede, name: e.target.value })} />
             </div>
@@ -4473,7 +4651,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <label htmlFor="e-correo">Correo</label>
                     <input id="e-correo" type="email" placeholder="ana@correo.com" value={editEmp.correo}
                       onChange={(e) => setEditEmp({ ...editEmp, correo: e.target.value })} />
-                    <small className="field-hint">Recibirá el comprobante de cada entrada y salida. Vacío = no se envía.</small>
+                    <small className="field-hint">Para el resumen diario de sus marcaciones. Vacío = no se envía.</small>
                   </div>
                 </div>
                 {/* El rostro es un ESTADO, no una instrucción suelta: lo primero
@@ -4517,10 +4695,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </div>
                 )}
                 {rostros.length === 1 && (
-                  <small className="field-hint">
-                    Con una sola foto el kiosco puede confundirlo con otra persona. Agrega dos más,
-                    tomadas con distinta luz y la cara grande en el encuadre.
-                  </small>
+                  <small className="field-hint">Con una sola foto puede confundirlo: agrega dos más, con distinta luz.</small>
                 )}
               </section>
 
@@ -4583,7 +4758,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 ) : (
                   <p className="hint">
                     Sin horario asignado
-                    <Q texto="Elige una plantilla en «Asignar un horario…». Los horarios se crean y editan en su pestaña; la jornada del empleado siempre sale de una plantilla." />
+                    <Q texto="Elige una plantilla en «Asignar un horario…». Se crean y editan en la pestaña Horarios." />
                   </p>
                 )}
               </section>
@@ -4615,7 +4790,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     ))}
                   </div>
                 ) : (
-                  <p className="hint">Sin salario, sus horas se cuentan pero no se valorizan.</p>
+                  <p className="hint">Sin salario no se valorizan las horas.</p>
                 )}
               </section>
 
@@ -4698,13 +4873,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setGuiaAbierta(false)}>
           <div className="dialog" role="dialog" aria-modal="true" aria-label="Cómo empezar">
             <h3>¡Bienvenido a AsistencIA!</h3>
-            <p className="hint">Cuatro pasos y tu empresa queda marcando asistencia.</p>
-            <ol className="pasos">
+<ol className="pasos">
               <li className={horarios.length > 0 ? 'hecho' : ''}>
                 <span className="paso-num">{horarios.length > 0 ? '✓' : '1'}</span>
                 <span className="paso-txt">
                   <b>Crea los horarios</b>
-                  <small>Las plantillas de jornada por cargo o turno. Se asignan al registrar a cada persona.</small>
+                  <small>Plantillas de jornada por cargo o turno.</small>
                 </span>
                 {horarios.length === 0 && (
                   <button className="btn primary" onClick={() => { setGuiaAbierta(false); setTab('horarios'); }}>Crear horario</button>
@@ -4714,7 +4888,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <span className="paso-num">{sedes.length > 0 ? '✓' : '2'}</span>
                 <span className="paso-txt">
                   <b>Crea tu primera sede <span className="libre">opcional</span></b>
-                  <small>Dónde queda y su radio GPS. Sin sede, tu gente marca desde cualquier lugar.</small>
+                  <small>Ubicación y radio GPS. Sin sede, marcan desde cualquier lugar.</small>
                 </span>
                 {sedes.length === 0 && (
                   <button className="btn primary" onClick={() => { setGuiaAbierta(false); setTab('cfg-sedes'); }}>Crear sede</button>
@@ -4724,7 +4898,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <span className="paso-num">{allPeople.length > 0 ? '✓' : '3'}</span>
                 <span className="paso-txt">
                   <b>Registra a tu gente</b>
-                  <small>Con una foto por persona y su horario asignado.</small>
+                  <small>Una foto y su horario.</small>
                 </span>
                 {allPeople.length === 0 && horarios.length > 0 && (
                   <button className="btn primary" onClick={() => { setGuiaAbierta(false); setTab('empleados'); setRegAbierto(true); }}>Registrar</button>
@@ -4734,7 +4908,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <span className="paso-num">{dispositivos.length > 0 ? '✓' : '4'}</span>
                 <span className="paso-txt">
                   <b>Vincula el dispositivo de marcación</b>
-                  <small>Tablet fija en una sede, o un celular que registra desde cualquier lugar.</small>
+                  <small>Tablet en la sede o celular en campo.</small>
                 </span>
                 {dispositivos.length === 0 && allPeople.length > 0 && (
                   <button className="btn primary" onClick={() => { setGuiaAbierta(false); setTab('cfg-dispositivos'); cargarDispositivos(); }}>Vincular</button>
@@ -4796,6 +4970,10 @@ const CSS = `
    espacio a la pantalla en la que estás. */
 @media (max-width: 430px) {
   .head-brand { display: none; }
+}
+/* Teléfono muy angosto: tampoco cabe el logo junto a la guía y el avatar. */
+@media (max-width: 360px) {
+  .head-logo { display: none; }
 }
 /* Flecha de regresar (historial interno del panel), sobre la barra acero. */
 .head-back {
@@ -5033,6 +5211,7 @@ const CSS = `
 .cfg-sede:first-of-type { border-top: 0; }
 .cfg-sede small { color: var(--muted); font-variant-numeric: tabular-nums; }
 .cfg-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.rep-en-curso { margin: 0 0 10px; padding: 8px 10px; background: #fdf3d3; border: 1px solid #eedfa8; border-radius: 6px; color: #8a6100; }
 .cfg-note code { background: var(--grid); padding: 1px 5px; border-radius: 4px; }
 .cfg-time { width: 106px !important; } /* un <input type="time"> no cabe en los 64px de .cfg-input */
 
@@ -5481,6 +5660,12 @@ img.sesion-avatar { object-fit: cover; display: block; }
 
 /* Tabla de asistencia: controles, tabla, paginación */
 .att-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+/* Botón de ICONO: cuadrado en móvil (solo el dibujo, el nombre va en el
+   title), icono + palabra en PC. El número (archivados) va siempre. */
+.btn.btn-ico { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 9px; min-width: 36px; line-height: 1; }
+.btn.btn-ico .ico-num { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.emp-controles { flex-wrap: nowrap; }
+.emp-controles .att-search.mini { flex: 1 1 auto; min-width: 0; }
 .att-search { flex: 1 1 180px; font: inherit; font-size: 13.5px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
 .fchip { border: 1px solid var(--grid); background: var(--surface); color: var(--ink-2); font-family: var(--f-data); font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
 .fchip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
@@ -5550,7 +5735,34 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .dia-top { display: flex; align-items: baseline; gap: 8px; }
 .dia-fecha { font-size: 12.5px; font-weight: 700; text-transform: capitalize; white-space: nowrap; }
 .dia-horas { margin-left: auto; font-size: 12.5px; font-weight: 700; color: var(--ink-2); white-space: nowrap; }
-.dia-horas.extra { color: var(--accent); }
+/* Bloque de SEMANA del cajón de una persona: cabecera con las cuentas y,
+   debajo, sus días. La extra solo aparece aquí (semana cerrada), nunca junto
+   a un día suelto. OJO: «.semana» a secas es la rejilla del editor de
+   horarios; por eso estas clases van con el prefijo sem-. */
+/* flex-shrink: 0 es obligatorio. El cuerpo del cajón es una columna flex con
+   scroll, y un hijo con overflow:hidden se ENCOGE para caber (su min-height
+   pasa a 0): el bloque se recortaba y perdía sus últimos días. */
+.sem-bloque { flex: 0 0 auto; border: 1px solid var(--grid); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.sem-head { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--grid); }
+/* Azul solo la semana EN CURSO; las cerradas, en gris. */
+.sem-bloque.curso .sem-head { background: var(--page); }
+.sem-bloque.cerrada { border-color: #e2e6eb; }
+.sem-bloque.cerrada .sem-head { background: #eef1f4; border-bottom-color: #e2e6eb; }
+.sem-bloque.cerrada .sem-titulo, .sem-bloque.cerrada .sem-total { color: var(--ink-2); }
+.sem-top { display: flex; align-items: baseline; gap: 10px; }
+.sem-titulo { font-size: 13.5px; font-weight: 700; color: var(--ink); text-transform: capitalize; }
+.sem-total { margin-left: auto; font-size: 14px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sem-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.sem-chip {
+  font-size: 11.5px; font-weight: 600; color: var(--ink-2); background: var(--surface);
+  border: 1px solid var(--grid); border-radius: 999px; padding: 2px 9px;
+  white-space: nowrap; font-variant-numeric: tabular-nums; cursor: default;
+}
+.sem-chip.extra { color: #fff; background: var(--btn-primary); border-color: var(--btn-primary); }
+.sem-chip.dom { color: #6b21a8; background: #f3e8ff; border-color: #e9d5ff; }
+.sem-chip.festivo { color: #8a6100; background: #fdf3d3; border-color: #eedfa8; }
+.sem-bloque .dia { padding: 0 8px; }
+.sem-bloque .dia:last-child { border-bottom: 0; }
 .dia-chev { color: var(--muted); font-size: 14px; transition: transform .15s; flex: 0 0 auto; }
 .dia.abierto .dia-chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .dia-chev { transition: none; } }
@@ -5622,7 +5834,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .acc-field { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; }
 .acc-field b { color: var(--muted); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; flex: 0 0 auto; }
 .acc-field span { color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums; }
-.acc-actions { margin-top: 4px; }
+.acc-actions { margin-top: 4px; display: flex; flex-direction: column; gap: 6px; }
 .acc-actions .btn.block { margin-top: 0; }
 
 /* ─── Móvil (<900px): los drawers laterales se vuelven hojas inferiores ─── */
@@ -5643,6 +5855,24 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   }
   @keyframes sheet-up { from { transform: translateY(40px); opacity: .6; } to { transform: none; opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .drawer { animation: none; } }
+
+  /* Móvil: la barra es angosta — todo se compacta. Estas reglas estuvieron
+     un tiempo metidas por error en el bloque de PC: en el celular no
+     aplicaban y el avatar se salía del borde redondeado de la barra. */
+  .app-header { gap: 6px; padding: 8px 8px; }
+  .menu-btn { width: 36px; height: 36px; }
+  .head-back { width: 34px; height: 34px; }
+  .head-marca { gap: 7px; }
+  .head-titles { flex: 1 1 0; }
+  /* La derecha puede ENCOGERSE (la guía cede con elipsis) y el avatar nunca
+     se encoge: nada se sale. */
+  .head-right { gap: 6px; min-width: 0; flex: 0 1 auto; }
+  .head-guia { flex: 0 1 auto; min-width: 0; font-size: 11px; padding: 5px 9px; max-width: 36vw; overflow: hidden; text-overflow: ellipsis; }
+  .head-user { flex: 0 0 auto; }
+  /* En móvil el subtítulo (pestaña · fecha) SÍ se muestra: es la única señal
+     de en qué pantalla estás ahora que el título es la marca. */
+  .app-header .date-note { font-size: 10.5px; }
+  .head-user-btn { padding: 2px; }
 }
 
 /* ─── Vista PC (≥900px): barra lateral + contenido ancho ─── */
@@ -5695,6 +5925,8 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 
   /* PC: tablas visibles, acordeón oculto */
   .att-tablewrap { display: block; }
+  /* En PC el buscador vuelve a su ancho fijo; en móvil ocupa lo que dejan los iconos. */
+  .emp-controles .att-search.mini { flex: 0 1 260px; }
   .rep-table { display: flex; }
   .solo-pc { display: inline-flex; }
   .acc { display: none; }
@@ -5740,21 +5972,6 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   /* sidebar y encabezado separados por línea divisoria sobria */
   .tabbar { background: var(--surface); border-right: 1px solid var(--grid); box-shadow: none; }
   .app-header { box-shadow: none; position: relative; z-index: 2; }
-  /* Móvil: la barra es angosta — todo se compacta y el logo se oculta
-     (la marca completa vive en el menú); sin esto el avatar se salía del
-     borde redondeado de la barra. */
-  .app-header { gap: 6px; padding: 8px 8px; }
-  .head-logo { display: none; }
-  .menu-btn { width: 36px; height: 36px; }
-  .head-back { width: 34px; height: 34px; }
-  .head-marca { gap: 7px; }
-  /* La derecha puede ENCOGERSE (la guía cede con elipsis): nada se sale. */
-  .head-right { gap: 8px; min-width: 0; flex: 0 1 auto; }
-  .head-guia { font-size: 11px; padding: 5px 9px; max-width: 36vw; overflow: hidden; text-overflow: ellipsis; }
-  /* En móvil el subtítulo (pestaña · fecha) SÍ se muestra: es la única señal
-     de en qué pantalla estás ahora que el título es la marca. */
-  .app-header .date-note { font-size: 10.5px; }
-  .head-user-btn { padding: 2px; }
   .card { padding: 18px 22px; }
   .card h2 { font-size: 16px; }
 
@@ -6054,13 +6271,10 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 
 /* ── Cajón de marcaciones: colores semánticos (el sistema monocromo pintaba
    entrada/salida/extras con azules casi iguales). Verde = entrada,
-   naranja = salida, azul marino = horas extra, amarillo suave = marcación
+   naranja = salida, azul marino = extra de la semana, amarillo suave = marcación
    con anomalía (huérfana o señalada). ─────────────────────────────── */
 .tl-type.in { color: #1fa15f; }
 .tl-type.out { color: #d97706; }
-/* Total del día en azul claro; SOLO el exceso (+X) en azul marino. */
-.dia-horas.extra { color: var(--accent); }
-.dia-exceso { font-style: normal; color: var(--btn-primary); }
 .bloque.warn { background: #fdf3d3; border-color: #eedfa8; color: #8a6100; }
 
 /* ── Móvil: el panel crece con el contenido y la página entera hace scroll.

@@ -174,15 +174,21 @@ await test('CON horario configurado, la entrada tardía sí se marca', () => {
 // ── Cálculo de horas con recargo ────────────────────────────────────────
 // Es la ÚNICA implementación de esta regla en todo el producto (la nómina la
 // consume por API), así que un error aquí llega directo al pago.
-console.log('\n💵 Cálculo de horas con recargo');
-const { calcularRegistros } = await import('../lib/calculoHoras.js');
+//
+// La regla es POR SEMANA: las primeras 42 h de lunes a sábado son ordinarias
+// y lo que sigue es extra; domingo y festivo van aparte. La semana de las
+// pruebas es la del lunes 3 de agosto de 2026, y «hoy» es el lunes siguiente
+// para que ya esté cerrada.
+console.log('\n💵 Cálculo de horas con recargo (por semana)');
+const { calcularRegistros, emparejarMarcas, horasDeHorario } = await import('../lib/calculoHoras.js');
 
-// Vigencias de jornada como las publica el gestor: 7 h/día desde jul-2026.
+// Jornada de la empresa: 42 h/semana (Ley 2101 desde jul-2026).
 const VIGENCIAS = [
   { desde: '2026-07-15', horasSemana: 42, horasDia: 7 },
   { desde: '1950-01-01', horasSemana: 48, horasDia: 8 },
 ];
 const SIN_FESTIVOS = new Set();
+const CERRADA = { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS, hoy: '2026-08-10' };
 
 /** Una marcación como la devuelve SQL (hora Bogotá + epoch absoluto). */
 const marca = (tipo, fecha, hora, dow, diasExtra = 0) => {
@@ -193,85 +199,172 @@ const marca = (tipo, fecha, hora, dow, diasExtra = 0) => {
     epoch: Date.parse(`${fecha}T00:00:00Z`) / 1000 + diasExtra * 86400 + h * 3600 + mi * 60,
   };
 };
-const unEmpleado = (marcas, jornadaSemanal = null) =>
-  new Map([['E1', { cedula: '111', nombre: 'Ana', sede: 'Sede', jornadaSemanal, marcas }]]);
+const dowDe = (fecha) => new Date(`${fecha}T12:00:00Z`).getUTCDay();
+/** Un turno entrada→salida en un día; si la salida es menor, cruza medianoche. */
+const turno = (fecha, entrada, salida) => {
+  const cruza = salida <= entrada;
+  const manana = new Date(Date.parse(`${fecha}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
+  return [
+    marca('entrada', fecha, entrada, dowDe(fecha)),
+    marca('salida', cruza ? manana : fecha, salida, cruza ? dowDe(manana) : dowDe(fecha)),
+  ];
+};
+const unEmpleado = (marcas, extra = {}) =>
+  new Map([['E1', { cedula: '111', nombre: 'Ana', sede: 'Sede', marcas, ...extra }]]);
+const SEMANA = { lun: '2026-08-03', mar: '2026-08-04', mie: '2026-08-05', jue: '2026-08-06', vie: '2026-08-07', sab: '2026-08-08', dom: '2026-08-09' };
+/** Suma de horas de todos los tramos que salieron. */
+const totalExtra = (regs) => Math.round(regs.reduce((s, r) => s + r.horas, 0) * 10000) / 10000;
+/** 42 h justas: 7h 30 de lunes a viernes y 4h 30 el sábado. */
+const SEMANA_42 = [
+  ...turno(SEMANA.lun, '09:00', '16:30'), ...turno(SEMANA.mar, '09:00', '16:30'), ...turno(SEMANA.mie, '09:00', '16:30'),
+  ...turno(SEMANA.jue, '09:00', '16:30'), ...turno(SEMANA.vie, '09:00', '16:30'), ...turno(SEMANA.sab, '09:00', '13:30'),
+];
 
-await test('día normal: lo que pasa de la jornada es extra, al final del día', () => {
-  // Lunes 08:00–18:00 = 10 h; jornada 7 h → 3 h extra (15:00 a 18:00).
-  const regs = calcularRegistros(
-    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '18:00', 1)]),
-    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
-  );
-  assert.equal(regs.length, 1);
-  assert.equal(regs[0].tipoHora, 'HED');
-  assert.equal(regs[0].horas, 3);
-  assert.equal(regs[0].horaInicio, '15:00');
-  assert.equal(regs[0].horaFin, '18:00');
+await test('42 h justas de lunes a sábado: sin extra', () => {
+  assert.equal(calcularRegistros(unEmpleado(SEMANA_42), CERRADA).length, 0);
 });
 
-await test('jornada por debajo del límite no genera extra', () => {
-  const regs = calcularRegistros(
-    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '15:00', 1)]),
-    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
-  );
+await test('lo que pasa de 42 es extra y cae en las ÚLTIMAS horas de la semana', () => {
+  // 9 h de lunes a viernes = 45 h → 3 h extra: las últimas del viernes.
+  const regs = calcularRegistros(unEmpleado([
+    ...turno(SEMANA.lun, '08:00', '17:00'), ...turno(SEMANA.mar, '08:00', '17:00'), ...turno(SEMANA.mie, '08:00', '17:00'),
+    ...turno(SEMANA.jue, '08:00', '17:00'), ...turno(SEMANA.vie, '08:00', '17:00'),
+  ]), CERRADA);
+  assert.deepEqual(regs.map((r) => [r.fecha, r.tipoHora, r.horaInicio, r.horaFin, r.horas]), [[SEMANA.vie, 'HED', '14:00', '17:00', 3]]);
+  assert.equal(regs[0].observaciones, 'Sede · semana del 2026-08-03');
+});
+
+await test('un día largo y uno corto se compensan: sin extra si no pasa de 42', () => {
+  // Lunes 11 h y martes 4 h; el resto normal → 42 h justas.
+  const regs = calcularRegistros(unEmpleado([
+    ...turno(SEMANA.lun, '08:00', '19:00'), ...turno(SEMANA.mar, '08:00', '12:00'),
+    ...turno(SEMANA.mie, '09:00', '16:30'), ...turno(SEMANA.jue, '09:00', '16:30'), ...turno(SEMANA.vie, '09:00', '16:30'),
+    ...turno(SEMANA.sab, '09:00', '13:30'),
+  ]), CERRADA);
+  assert.equal(regs.length, 0, 'las 4 h de más del lunes pagaron las 3,5 h de menos del martes');
+});
+
+await test('quien no llega a 42 no tiene extra aunque un día se haya quedado hasta tarde', () => {
+  const regs = calcularRegistros(unEmpleado([...turno(SEMANA.lun, '08:00', '20:00'), ...turno(SEMANA.mar, '08:00', '15:00')]), CERRADA);
   assert.equal(regs.length, 0);
 });
 
+await test('el cruce de las 42 parte un turno a la mitad; los pedazos anteriores entran completos', () => {
+  // 45 h de lunes a viernes + 12 min el sábado = 45,2 h → 3,2 h extra:
+  // el sábado entero (0,2 h, aunque no llegue a media hora) y las últimas
+  // 3 h del viernes. El mínimo de 0,5 h es sobre la extra de la semana.
+  const regs = calcularRegistros(unEmpleado([
+    ...turno(SEMANA.lun, '08:00', '17:00'), ...turno(SEMANA.mar, '08:00', '17:00'), ...turno(SEMANA.mie, '08:00', '17:00'),
+    ...turno(SEMANA.jue, '08:00', '17:00'), ...turno(SEMANA.vie, '08:00', '17:00'), ...turno(SEMANA.sab, '08:00', '08:12'),
+  ]), CERRADA);
+  assert.deepEqual(
+    regs.map((r) => [r.fecha, r.horaInicio, r.horaFin, r.horas]),
+    [[SEMANA.vie, '14:00', '17:00', 3], [SEMANA.sab, '08:00', '08:12', 0.2]],
+  );
+  assert.equal(totalExtra(regs), 3.2, 'no se pierde ni un minuto');
+});
+
+await test('una extra semanal menor a 0,5 h se descarta (mínimo del contrato RH)', () => {
+  const regs = calcularRegistros(unEmpleado([...SEMANA_42.slice(0, 10), ...turno(SEMANA.sab, '09:00', '13:50')]), CERRADA);
+  assert.equal(regs.length, 0, '20 minutos de más en la semana no llegan al mínimo');
+});
+
+await test('semana EN CURSO: nada de lunes a sábado, aunque ya vaya por encima de 42', () => {
+  const marcas = [...turno(SEMANA.lun, '06:00', '21:00'), ...turno(SEMANA.mar, '06:00', '21:00'), ...turno(SEMANA.mie, '06:00', '21:00')];
+  assert.equal(calcularRegistros(unEmpleado(marcas), { ...CERRADA, hoy: '2026-08-07' }).length, 0, 'jueves: la semana sigue abierta');
+  assert.equal(calcularRegistros(unEmpleado(marcas), { ...CERRADA, hoy: '2026-08-09' }).length, 0, 'domingo: todavía no cerró');
+  assert.equal(totalExtra(calcularRegistros(unEmpleado(marcas), CERRADA)), 3, 'lunes siguiente: 45 h − 42');
+});
+
+await test('la cantidad de extra es la MISMA que muestra el panel (lib/semanaLaboral.js)', async () => {
+  const { resumenSemana } = await import('../lib/semanaLaboral.js');
+  const marcas = [
+    ...turno(SEMANA.lun, '08:00', '17:00'), ...turno(SEMANA.mar, '08:00', '17:00'), ...turno(SEMANA.mie, '08:00', '17:00'),
+    ...turno(SEMANA.jue, '08:00', '17:00'), ...turno(SEMANA.vie, '08:00', '15:00'), ...turno(SEMANA.sab, '08:00', '09:00'),
+  ];
+  const regs = calcularRegistros(unEmpleado(marcas), CERRADA);
+  const horasPorDia = new Map([[SEMANA.lun, 9], [SEMANA.mar, 9], [SEMANA.mie, 9], [SEMANA.jue, 9], [SEMANA.vie, 7], [SEMANA.sab, 1]]);
+  const panel = resumenSemana({ lunes: SEMANA.lun, horasPorDia, festivos: SIN_FESTIVOS, horasHorario: () => null, hoy: '2026-08-10' });
+  assert.equal(totalExtra(regs), panel.extra);
+  assert.equal(panel.extra, 2);
+});
+
+await test('domingo: HEDDF desde la primera hora, y sale aunque la semana siga en curso', () => {
+  const regs = calcularRegistros(unEmpleado(turno(SEMANA.dom, '08:00', '12:00')), { ...CERRADA, hoy: '2026-08-09' });
+  assert.deepEqual(regs.map((r) => [r.tipoHora, r.horas]), [['HEDDF', 4]]);
+});
+
+await test('el domingo NO entra en las 42: no se compensa con los días cortos', () => {
+  // 42 h justas de lunes a sábado + 3 h el domingo: 0 extra semanal y las 3 h
+  // del domingo con recargo dominical.
+  const regs = calcularRegistros(unEmpleado([...SEMANA_42, ...turno(SEMANA.dom, '09:00', '12:00')]), CERRADA);
+  assert.deepEqual(regs.map((r) => [r.fecha, r.tipoHora, r.horas]), [[SEMANA.dom, 'HEDDF', 3]]);
+});
+
+await test('festivo entre semana: lo trabajado es festiva, y su horario se acredita a las 42', () => {
+  // Lunes festivo con horario de 7h 30. Martes a viernes 9 h (36 h) y sábado
+  // 4h 30 = 40,5 h reales; con las 7,5 h acreditadas son 48 → 6 h extra. Sin
+  // el crédito, 40,5 h no habrían generado nada.
+  const LV = { entrada: '09:00', salida: '17:30', almuerzo_min: 60 };
+  const horario = { 1: LV, 2: LV, 3: LV, 4: LV, 5: LV, 6: { entrada: '09:00', salida: '13:30', almuerzo_min: 0 } };
+  const semana = [
+    ...turno(SEMANA.mar, '08:00', '17:00'), ...turno(SEMANA.mie, '08:00', '17:00'),
+    ...turno(SEMANA.jue, '08:00', '17:00'), ...turno(SEMANA.vie, '08:00', '17:00'), ...turno(SEMANA.sab, '09:00', '13:30'),
+  ];
+  const cfg = { ...CERRADA, festivos: new Set([SEMANA.lun]) };
+  const sinMarcar = calcularRegistros(unEmpleado(semana, { jornadaDias: horario }), cfg);
+  assert.equal(totalExtra(sinMarcar), 6);
+  assert.ok(sinMarcar.every((r) => r.tipoHora === 'HED'));
+
+  const trabajado = calcularRegistros(unEmpleado([...turno(SEMANA.lun, '10:00', '12:00'), ...semana], { jornadaDias: horario }), cfg);
+  assert.deepEqual(trabajado.filter((r) => r.fecha === SEMANA.lun).map((r) => [r.tipoHora, r.horas]), [['HEDDF', 2]]);
+  assert.equal(totalExtra(trabajado), 8, 'las 2 h festivas + las mismas 6 h de la semana');
+
+  const sinHorario = calcularRegistros(unEmpleado(semana), cfg);
+  assert.equal(sinHorario.length, 0, 'sin horario no hay nada que acreditar: 40,5 h no pasan de 42');
+});
+
+await test('horas del horario de un día: salida − entrada − almuerzo', () => {
+  const e = { jornadaDias: {
+    1: { entrada: '09:00', salida: '17:30', almuerzo_min: 60 },
+    2: { entrada: '09:00', salida: '17:30', almuerzo_min: 0, almuerzo_desde: '12:00', almuerzo_hasta: '14:00' },
+    3: { entrada: '22:00', salida: '06:00', almuerzo_min: 0 },
+    6: { entrada: '09:00', salida: '13:30', almuerzo_min: 0 },
+  } };
+  assert.equal(horasDeHorario(e, SEMANA.lun), 7.5);
+  assert.equal(horasDeHorario(e, SEMANA.mar), 6.5, 'sin minutos calculados, se toma el rango');
+  assert.equal(horasDeHorario(e, SEMANA.mie), 8, 'turno que cruza medianoche');
+  assert.equal(horasDeHorario(e, SEMANA.sab), 4.5);
+  assert.equal(horasDeHorario(e, SEMANA.dom), null, 'día sin horario');
+  assert.equal(horasDeHorario({ jornadaDias: null, entradaEsperada: '08:00', salidaEsperada: '17:00', almuerzoMin: 60 }, SEMANA.lun), 8, 'respaldo uniforme');
+});
+
 await test('turno que CRUZA MEDIANOCHE no produce horas negativas', () => {
-  // Lunes 16:00 → martes 02:00 = 10 h; 3 h extra deben quedar 23:00–02:00.
-  // Antes de la corrección esto daba "-1:00" (bug de medianoche).
-  const regs = calcularRegistros(
-    unEmpleado([marca('entrada', '2026-08-03', '16:00', 1), marca('salida', '2026-08-04', '02:00', 2, 0)]),
-    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
-  );
-  assert.equal(regs.length, 1);
-  assert.equal(regs[0].horas, 3);
-  assert.equal(regs[0].horaInicio, '23:00', 'el inicio debe ser una hora válida, no negativa');
-  assert.equal(regs[0].horaFin, '02:00');
-  assert.match(regs[0].horaInicio, /^\d{2}:\d{2}$/);
-  assert.equal(regs[0].tipoHora, 'HEN', '23:00–02:00 cae entero en la franja nocturna');
-});
-
-await test('domingo: todo lo trabajado es extra dominical diurna (HEDDF)', () => {
-  const regs = calcularRegistros(
-    unEmpleado([marca('entrada', '2026-08-02', '08:00', 0), marca('salida', '2026-08-02', '12:00', 0)]),
-    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
-  );
-  assert.equal(regs.length, 1);
-  assert.equal(regs[0].tipoHora, 'HEDDF');
-  assert.equal(regs[0].horas, 4);
-});
-
-await test('festivo entre semana se trata como dominical', () => {
-  const regs = calcularRegistros(
-    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '12:00', 1)]),
-    { festivos: new Set(['2026-08-03']), vigencias: VIGENCIAS },
-  );
-  assert.equal(regs.length, 1);
-  assert.equal(regs[0].tipoHora, 'HEDDF');
-});
-
-await test('jornada especial: la extra empieza donde termina lo pactado', () => {
-  // Martes con 7,5 h pactadas; trabaja 8 h → 0,5 h extra (no 1 h).
-  const regs = calcularRegistros(
-    unEmpleado(
-      [marca('entrada', '2026-08-04', '08:00', 2), marca('salida', '2026-08-04', '16:00', 2)],
-      [7.5, 7.5, 7.5, 7.5, 7.5, 4.5],
-    ),
-    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
-  );
-  assert.equal(regs.length, 1);
-  assert.equal(regs[0].horas, 0.5);
-  assert.equal(regs[0].horaInicio, '15:30');
+  // 36 h de lunes a jueves + viernes 16:00 → sábado 02:00 (10 h) = 46 h →
+  // 4 h extra: 22:00–02:00, enteras en la franja nocturna. Antes de la
+  // corrección esto daba "-1:00" (bug de medianoche).
+  const regs = calcularRegistros(unEmpleado([
+    ...turno(SEMANA.lun, '08:00', '17:00'), ...turno(SEMANA.mar, '08:00', '17:00'), ...turno(SEMANA.mie, '08:00', '17:00'),
+    ...turno(SEMANA.jue, '08:00', '17:00'), ...turno(SEMANA.vie, '16:00', '02:00'),
+  ]), CERRADA);
+  assert.deepEqual(regs.map((r) => [r.fecha, r.tipoHora, r.horaInicio, r.horaFin, r.horas]), [[SEMANA.vie, 'HEN', '22:00', '02:00', 4]]);
 });
 
 await test('la referencia externa es estable y única por tramo', () => {
-  const hacer = () => calcularRegistros(
-    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '18:00', 1)]),
-    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
-  )[0].referenciaExterna;
+  const hacer = () => calcularRegistros(unEmpleado([
+    ...turno(SEMANA.lun, '08:00', '17:00'), ...turno(SEMANA.mar, '08:00', '17:00'), ...turno(SEMANA.mie, '08:00', '17:00'),
+    ...turno(SEMANA.jue, '08:00', '17:00'), ...turno(SEMANA.vie, '08:00', '17:00'),
+  ]), CERRADA)[0].referenciaExterna;
   assert.equal(hacer(), hacer(), 'el mismo tramo debe dar SIEMPRE la misma referencia');
-  assert.equal(hacer(), 'arrive-111-20260803-1500-1800-HED');
+  assert.equal(hacer(), 'arrive-111-20260807-1400-1700-HED');
+});
+
+await test('la jornada semanal de la empresa es la que manda (44 h)', () => {
+  const regs = calcularRegistros(unEmpleado([
+    ...turno(SEMANA.lun, '08:00', '17:00'), ...turno(SEMANA.mar, '08:00', '17:00'), ...turno(SEMANA.mie, '08:00', '17:00'),
+    ...turno(SEMANA.jue, '08:00', '17:00'), ...turno(SEMANA.vie, '08:00', '17:00'),
+  ]), { ...CERRADA, vigencias: [{ desde: '1950-01-01', horasSemana: 44, horasDia: 44 / 6 }] });
+  assert.equal(totalExtra(regs), 1);
 });
 
 // ── Franja nocturna y valorización ──────────────────────────────────────
@@ -282,39 +375,35 @@ console.log('\n🌙 Franja nocturna y valorización');
 const { partirPorNocturno, valorizarRegistro, valorHoraOrdinaria, normalizarFactores, NOCTURNO_DEFECTO } =
   await import('../lib/tiposHora.js');
 
+// 36 h de lunes a jueves; el viernes es el turno que cada prueba varía.
+const LUN_JUE = [
+  ...turno(SEMANA.lun, '08:00', '17:00'), ...turno(SEMANA.mar, '08:00', '17:00'),
+  ...turno(SEMANA.mie, '08:00', '17:00'), ...turno(SEMANA.jue, '08:00', '17:00'),
+];
+
 await test('un tramo extra que atraviesa las 21:00 se parte en diurno y nocturno', () => {
-  // Lunes 08:00–23:00 = 15 h; jornada 7 h → 8 h extra desde las 15:00.
-  // 15:00–21:00 diurnas (HED) y 21:00–23:00 nocturnas (HEN).
-  const regs = calcularRegistros(
-    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '23:00', 1)]),
-    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
-  );
-  assert.equal(regs.length, 2);
+  // Viernes 08:00–23:00 = 15 h → 51 h → 9 h extra desde las 14:00:
+  // 14:00–21:00 diurnas (HED) y 21:00–23:00 nocturnas (HEN).
+  const regs = calcularRegistros(unEmpleado([...LUN_JUE, ...turno(SEMANA.vie, '08:00', '23:00')]), CERRADA);
   assert.deepEqual(
     regs.map((r) => [r.tipoHora, r.horaInicio, r.horaFin, r.horas]),
-    [['HED', '15:00', '21:00', 6], ['HEN', '21:00', '23:00', 2]],
+    [['HED', '14:00', '21:00', 7], ['HEN', '21:00', '23:00', 2]],
   );
 });
 
 await test('domingo de madrugada a mañana: HENDF y HEDDF en el mismo turno', () => {
   // Domingo 04:00–09:00: 04:00–06:00 nocturno, 06:00–09:00 diurno.
-  const regs = calcularRegistros(
-    unEmpleado([marca('entrada', '2026-08-02', '04:00', 0), marca('salida', '2026-08-02', '09:00', 0)]),
-    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
-  );
-  assert.deepEqual(
-    regs.map((r) => [r.tipoHora, r.horas]),
-    [['HENDF', 2], ['HEDDF', 3]],
-  );
+  const regs = calcularRegistros(unEmpleado(turno(SEMANA.dom, '04:00', '09:00')), CERRADA);
+  assert.deepEqual(regs.map((r) => [r.tipoHora, r.horas]), [['HENDF', 2], ['HEDDF', 3]]);
 });
 
 await test('la franja nocturna es configurable', () => {
-  // Con corte 22:00–05:00, el mismo turno 08:00–23:00 deja 7 h diurnas y 1 h nocturna.
+  // Con corte 22:00–05:00, el mismo viernes deja 8 h diurnas y 1 h nocturna.
   const regs = calcularRegistros(
-    unEmpleado([marca('entrada', '2026-08-03', '08:00', 1), marca('salida', '2026-08-03', '23:00', 1)]),
-    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS, nocturno: { inicio: 22 * 60, fin: 5 * 60 } },
+    unEmpleado([...LUN_JUE, ...turno(SEMANA.vie, '08:00', '23:00')]),
+    { ...CERRADA, nocturno: { inicio: 22 * 60, fin: 5 * 60 } },
   );
-  assert.deepEqual(regs.map((r) => [r.tipoHora, r.horas]), [['HED', 7], ['HEN', 1]]);
+  assert.deepEqual(regs.map((r) => [r.tipoHora, r.horas]), [['HED', 8], ['HEN', 1]]);
 });
 
 await test('partir un tramo conserva TODAS las horas', () => {
@@ -331,16 +420,13 @@ await test('un tramo que no toca la franja no se parte', () => {
 });
 
 await test('el mínimo de 0,5 h se mide ANTES de partir, no por pedazo', () => {
-  // Jornada 7 h con entrada 13:20 y salida 21:20 → 8 h, 1 h extra (20:20–21:20)
-  // que se parte en 0,67 h diurnas + 0,33 h nocturnas. Ninguna llega a 0,5 h;
-  // si el mínimo se aplicara a los pedazos se perdería la hora extra entera.
-  const regs = calcularRegistros(
-    unEmpleado([marca('entrada', '2026-08-03', '13:20', 1), marca('salida', '2026-08-03', '21:20', 1)]),
-    { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS },
-  );
+  // 36 h + viernes 14:20–21:20 (7 h) = 43 h → 1 h extra (20:20–21:20), que
+  // se parte en 0,67 h diurnas + 0,33 h nocturnas. Ninguna llega a 0,5 h; si
+  // el mínimo se aplicara a los pedazos se perdería la hora extra entera.
+  const regs = calcularRegistros(unEmpleado([...LUN_JUE, ...turno(SEMANA.vie, '14:20', '21:20')]), CERRADA);
   assert.equal(regs.length, 2);
   assert.deepEqual(regs.map((r) => r.tipoHora), ['HED', 'HEN']);
-  assert.equal(regs.reduce((s, r) => s + r.horas, 0), 1, 'no se puede perder ni un minuto de la extra');
+  assert.equal(totalExtra(regs), 1, 'no se puede perder ni un minuto de la extra');
 });
 
 await test('valor hora ordinaria = salario ÷ divisor configurable', () => {
@@ -379,7 +465,8 @@ await test('un factor corrupto cae al de fábrica, no rompe la liquidación', ()
 // Antes, olvidar marcar la salida costaba el día ENTERO: el par no se cerraba
 // y ese día valía cero. Ahora se cierra en la hora en que terminaba su
 // jornada. El horario de las pruebas es el real de un cliente: L–V 09:00–17:30
-// y sábado 09:00–13:30.
+// y sábado 09:00–13:30. Se prueba sobre los PARES (`emparejarMarcas`), que
+// es donde vive el cierre; qué es extra ya no depende del día.
 console.log('\n🕗 Entrada sin salida: cierre con el horario');
 
 const LV = { entrada: '09:00', salida: '17:30', almuerzo_min: 60, almuerzo_desde: '13:00', almuerzo_hasta: '14:00' };
@@ -390,22 +477,21 @@ const HORARIO = {
 };
 // Un día cualquiera POSTERIOR a las marcaciones: así el día ya terminó y el
 // cierre aplica. Fijo, para que la prueba no dependa de cuándo se ejecute.
-const DESPUES = { festivos: SIN_FESTIVOS, vigencias: VIGENCIAS, hoy: '2026-08-10' };
+const DESPUES = { festivos: SIN_FESTIVOS, hoy: '2026-08-10' };
 
-const conHorario = (marcas, jornadaDias = HORARIO, jornadaSemanal = null) =>
-  new Map([['E1', { cedula: '111', nombre: 'Ana', sede: 'Sede', jornadaSemanal, jornadaDias, marcas }]]);
-/** Suma de horas de todos los tramos extra que salieron. */
-const totalExtra = (regs) => Math.round(regs.reduce((s, r) => s + r.horas, 0) * 10000) / 10000;
-// Jornada pactada CORTA (2 h/día): así el cierre siempre deja horas extra y la
-// prueba puede leer en qué hora exacta cerró, que es lo que se quiere fijar.
-const CORTA = [2, 2, 2, 2, 2, 2];
+const pares = (marcas, jornadaDias = HORARIO, cfg = DESPUES) =>
+  emparejarMarcas({ jornadaDias, marcas }, cfg);
+const horasTotales = (ps) => Math.round(ps.reduce((s, p) => s + p.horas, 0) * 10000) / 10000;
+const min = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
 
 await test('entró en la mañana y no volvió a marcar: cuenta hasta el almuerzo', () => {
   // Nunca marcó su salida a almorzar, así que solo consta la mañana. La hora
   // (13:00) sale del HORARIO, no de ningún cálculo.
-  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '09:00', 1)], HORARIO, CORTA), DESPUES);
-  assert.equal(regs[regs.length - 1].horaFin, '13:00', 'debe cerrar al almuerzo, no al final del día');
-  assert.equal(totalExtra(regs), 2, '4 h trabajadas − 2 h de jornada');
+  const ps = pares([marca('entrada', '2026-08-03', '09:00', 1)]);
+  assert.equal(ps.length, 1);
+  assert.equal(ps[0].hasta, min('13:00'), 'debe cerrar al almuerzo, no al final del día');
+  assert.equal(ps[0].horas, 4);
+  assert.equal(ps[0].automatico, true, 'queda señalado como cierre por horario');
 });
 
 await test('la hora de almuerzo se respeta tal cual, no se deduce', () => {
@@ -413,120 +499,105 @@ await test('la hora de almuerzo se respeta tal cual, no se deduce', () => {
   // cerrar en horas distintas: es justo lo que no lograba el punto medio.
   const temprano = { ...LV, almuerzo_desde: '11:30' };
   const tarde = { ...LV, almuerzo_min: 120, almuerzo_desde: '14:00' };
-  const cierre = (dia) => calcularRegistros(
-    conHorario([marca('entrada', '2026-08-03', '09:00', 1)], { 1: dia }, CORTA), DESPUES,
-  ).at(-1).horaFin;
-  assert.equal(cierre(temprano), '11:30');
-  assert.equal(cierre(tarde), '14:00', 'dos horas de almuerzo y a otra hora: también se respeta');
+  const cierre = (dia) => pares([marca('entrada', '2026-08-03', '09:00', 1)], { 1: dia })[0].hasta;
+  assert.equal(cierre(temprano), min('11:30'));
+  assert.equal(cierre(tarde), min('14:00'), 'dos horas de almuerzo y a otra hora: también se respeta');
 });
 
 await test('entró DESPUÉS del almuerzo y olvidó la salida: cierra al final', () => {
   // Ya pasó la hora de almorzar, así que su tope es el final de la jornada.
-  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '14:00', 1)], HORARIO, CORTA), DESPUES);
-  assert.equal(regs[regs.length - 1].horaFin, '17:30');
-  assert.equal(totalExtra(regs), 1.5, '3 h 30 trabajadas − 2 h de jornada');
+  const ps = pares([marca('entrada', '2026-08-03', '14:00', 1)]);
+  assert.equal(ps[0].hasta, min('17:30'));
+  assert.equal(ps[0].horas, 3.5);
 });
 
 await test('entró DESPUÉS de su hora de salida: ese día no cuenta', () => {
   // Su jornada termina 17:30 y marca entrada a las 18:00: no abre día nuevo.
-  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '18:00', 1)]), DESPUES);
-  assert.equal(regs.length, 0);
+  assert.equal(pares([marca('entrada', '2026-08-03', '18:00', 1)]).length, 0);
 });
 
 await test('salió a almorzar y olvidó la salida final', () => {
   // 09:00–13:00 (4 h) + 14:00 sin cerrar → cierra 17:30 (3,5 h) = 7,5 h.
-  const regs = calcularRegistros(conHorario([
+  const ps = pares([
     marca('entrada', '2026-08-03', '09:00', 1),
     marca('salida', '2026-08-03', '13:00', 1),
     marca('entrada', '2026-08-03', '14:00', 1),
-  ]), DESPUES);
-  assert.equal(totalExtra(regs), 0.5, '7,5 h trabajadas − 7 h de jornada');
+  ]);
+  assert.equal(horasTotales(ps), 7.5);
 });
 
 await test('una entrada tardía suelta no borra lo que ya había marcado', () => {
   // 09:00–16:00 son 7 h reales; la entrada de las 18:00 se descarta y el día
   // se queda con esas 7 h, no en cero.
-  const regs = calcularRegistros(conHorario([
+  const ps = pares([
     marca('entrada', '2026-08-03', '09:00', 1),
     marca('salida', '2026-08-03', '16:00', 1),
     marca('entrada', '2026-08-03', '18:00', 1),
-  ]), DESPUES);
-  assert.equal(totalExtra(regs), 0, 'trabajó exactamente su jornada: sin extras');
+  ]);
+  assert.equal(horasTotales(ps), 7);
 });
 
 await test('sin horario configurado el día queda en cero', () => {
-  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-03', '09:00', 1)], null), DESPUES);
-  assert.equal(regs.length, 0, 'sin hora pactada no hay con qué cerrar');
+  assert.equal(pares([marca('entrada', '2026-08-03', '09:00', 1)], null).length, 0, 'sin hora pactada no hay con qué cerrar');
 });
 
 await test('día libre (no está en su horario): tampoco se cierra', () => {
   // El sábado existe en el horario pero el domingo no: es día libre.
-  const regs = calcularRegistros(conHorario([marca('entrada', '2026-08-02', '09:00', 0)]), DESPUES);
-  assert.equal(regs.length, 0);
+  assert.equal(pares([marca('entrada', '2026-08-02', '09:00', 0)]).length, 0);
 });
 
 await test('el día EN CURSO no se cierra: todavía puede marcar', () => {
-  const regs = calcularRegistros(
-    conHorario([marca('entrada', '2026-08-03', '09:00', 1)]),
-    { ...DESPUES, hoy: '2026-08-03' },
-  );
-  assert.equal(regs.length, 0, 'la jornada de hoy sigue abierta');
+  assert.equal(pares([marca('entrada', '2026-08-03', '09:00', 1)], HORARIO, { ...DESPUES, hoy: '2026-08-03' }).length, 0, 'la jornada de hoy sigue abierta');
 });
 
 await test('turno nocturno: cierra en la madrugada del día siguiente', () => {
   // Horario 22:00–06:00: la salida del horario es del día siguiente.
   const noche = { 1: { entrada: '22:00', salida: '06:00', almuerzo_min: 0 } };
-  const regs = calcularRegistros(
-    conHorario([marca('entrada', '2026-08-03', '22:00', 1)], noche),
-    DESPUES,
-  );
-  assert.equal(totalExtra(regs), 1, '8 h de turno − 7 h de jornada');
-  assert.equal(regs[regs.length - 1].horaFin, '06:00', 'cruza la medianoche');
+  const ps = pares([marca('entrada', '2026-08-03', '22:00', 1)], noche);
+  assert.equal(ps[0].horas, 8);
+  assert.equal(ps[0].hasta, 30 * 60, 'cruza la medianoche: minuto 1800 del día de entrada');
 });
 
 await test('la salida del día siguiente NO se empareja con la entrada de ayer', () => {
   // Antes esto producía un turno de ~32 h. Ahora el lunes se cierra solo
   // —al almuerzo, porque no marcó nada más— y la salida suelta del martes
   // se descarta.
-  const regs = calcularRegistros(conHorario([
+  const ps = pares([
     marca('entrada', '2026-08-03', '09:00', 1),
     marca('salida', '2026-08-04', '17:30', 2, 1),
-  ], HORARIO, CORTA), DESPUES);
-  assert.equal(regs[regs.length - 1].horaFin, '13:00', 'el lunes cierra al almuerzo');
-  assert.equal(totalExtra(regs), 2);
-  assert.ok(regs.every((r) => r.fecha === '2026-08-03'), 'nada debe atribuirse al martes');
+  ]);
+  assert.equal(ps.length, 1);
+  assert.equal(ps[0].fecha, '2026-08-03', 'nada debe atribuirse al martes');
+  assert.equal(ps[0].hasta, min('13:00'), 'el lunes cierra al almuerzo');
 });
 
 await test('una salida MARCADA nunca se recorta al horario', () => {
   // Se quedó hasta las 20:00 y sí marcó: son 11 h reales, no 8,5.
-  const regs = calcularRegistros(conHorario([
-    marca('entrada', '2026-08-03', '09:00', 1),
-    marca('salida', '2026-08-03', '20:00', 1),
-  ]), DESPUES);
-  assert.equal(totalExtra(regs), 4, '11 h trabajadas − 7 h de jornada');
+  const ps = pares([marca('entrada', '2026-08-03', '09:00', 1), marca('salida', '2026-08-03', '20:00', 1)]);
+  assert.equal(ps[0].horas, 11);
+  assert.equal(ps[0].automatico, undefined);
 });
 
 await test('dos entradas seguidas no cierran las DOS: nada se cuenta dos veces', () => {
   // Faltó una salida en medio. Cerrar la de 09:00 en su horario la solaparía
   // con la de 11:00 y el mismo rato se pagaría dos veces (llegó a dar 8 h de
-  // extra en un día de 6,5 h trabajadas). La primera se descarta.
-  const regs = calcularRegistros(conHorario([
-    marca('entrada', '2026-08-03', '09:00', 1),
-    marca('entrada', '2026-08-03', '11:00', 1),
-  ]), DESPUES);
-  assert.equal(totalExtra(regs), 0, '11:00–17:30 son 6,5 h: por debajo de la jornada');
-  assert.ok(!regs.some((r) => r.horaInicio < '11:00'), 'nada puede empezar antes de la última entrada');
+  // extra en un día de 6,5 h trabajadas). La primera se descarta; la segunda
+  // cierra al almuerzo, como cualquier entrada de la mañana sin más marcas.
+  const ps = pares([marca('entrada', '2026-08-03', '09:00', 1), marca('entrada', '2026-08-03', '11:00', 1)]);
+  assert.equal(ps.length, 1);
+  assert.equal(ps[0].desde, min('11:00'), 'nada puede empezar antes de la última entrada');
+  assert.equal(ps[0].hasta, min('13:00'));
+  assert.equal(horasTotales(ps), 2);
 });
 
 await test('respaldo: empleados viejos sin horario por día', () => {
   // Los registrados antes de los horarios por día solo tienen los campos
   // uniformes; deben cerrarse igual.
-  const viejo = new Map([['E1', {
-    cedula: '111', nombre: 'Ana', sede: 'Sede', jornadaSemanal: null, jornadaDias: null,
-    entradaEsperada: '09:00', salidaEsperada: '17:30',
-    marcas: [marca('entrada', '2026-08-03', '09:00', 1)],
-  }]]);
-  assert.equal(totalExtra(calcularRegistros(viejo, DESPUES)), 1.5);
+  const ps = emparejarMarcas(
+    { jornadaDias: null, entradaEsperada: '09:00', salidaEsperada: '17:30', marcas: [marca('entrada', '2026-08-03', '09:00', 1)] },
+    DESPUES,
+  );
+  assert.equal(ps[0].horas, 8.5);
 });
 
 // ── Umbrales del reconocimiento v2 ──────────────────────────────────────
@@ -827,6 +898,73 @@ await test('el dashboard conserva sus dos columnas en PC', () => {
   assert.equal(dentro, true, 'las dos columnas quedaron fuera del @media de PC');
 });
 
+await test('las reglas de la barra en móvil viven en el @media de móvil, no en el de PC', () => {
+  // Estuvieron dentro de @media (min-width: 900px): en el celular no
+  // aplicaban, la derecha de la barra no podía encogerse y el avatar se salía
+  // del borde redondeado. Se localiza en qué @media cae cada regla clave.
+  const css = cssDelPanel('../components/AdminPanel.jsx');
+  const enBloque = {};
+  let actual = null;
+  let profundidad = 0;
+  for (const linea of css.split('\n')) {
+    const m = linea.match(/@media \((max|min)-width: (\d+)px\)/);
+    if (m && profundidad === 0) actual = `${m[1]}${m[2]}`;
+    if (profundidad === 1 && actual) {
+      for (const clave of ['.head-right {', '.head-guia {', '.head-user-btn {']) {
+        if (linea.trim().startsWith(clave)) (enBloque[clave] ??= new Set()).add(actual);
+      }
+    }
+    for (const c of linea) {
+      if (c === '{') profundidad++;
+      else if (c === '}') { profundidad--; if (profundidad === 0) actual = null; }
+    }
+  }
+  for (const clave of ['.head-right {', '.head-guia {', '.head-user-btn {']) {
+    assert.ok(enBloque[clave]?.has('max899'), `${clave} debe tener su versión en @media (max-width: 899px)`);
+    assert.ok(!enBloque[clave]?.has('min900'), `${clave} no debe redefinirse en el bloque de PC`);
+  }
+});
+
+await test('los bloques de semana del cajón no se encogen dentro del scroll', () => {
+  // El cuerpo del cajón es una columna flex con scroll. Un hijo con
+  // overflow:hidden (los bloques lo llevan para redondear las esquinas) se
+  // encoge para caber y RECORTA su contenido: la semana en curso salía con el
+  // lunes a medias y a la anterior le faltaba el último día.
+  const css = cssDelPanel('../components/AdminPanel.jsx');
+  const regla = css.match(/^\.sem-bloque \{([^}]*)\}/m)?.[1] ?? '';
+  assert.match(regla, /overflow:\s*hidden/, 'si deja de recortar, esta prueba ya no aplica');
+  assert.match(regla, /flex:\s*0 0 auto|flex-shrink:\s*0/, 'debe llevar flex-shrink: 0');
+});
+
+await test('una clase nueva no reutiliza el nombre de otra que ya tiene reglas', () => {
+  // El cajón por semanas nació con la clase «semana»… que ya era la rejilla
+  // de 6 columnas del editor de horarios: los días de cada semana salieron
+  // repartidos en columnas. En un CSS de este tamaño nadie se acuerda de
+  // todos los nombres, así que se comprueba: una clase simple (`.x {`) solo
+  // puede definirse UNA vez en el nivel superior. Las que ya estaban
+  // repetidas antes de esta prueba quedan como lista conocida; no crece.
+  const YA_REPETIDAS = new Set(['.admin-root', '.head-badge', '.rep-table', '.drawer', '.tabbar', '.side-foot', '.att-tablewrap', '.costo-tipos', '.costo-tipo']);
+  const css = cssDelPanel('../components/AdminPanel.jsx');
+  const vistas = new Map();
+  let profundidad = 0;
+  for (const [n, cruda] of css.split('\n').entries()) {
+    const linea = cruda.replace(/\/\*.*?\*\//g, '').trim();
+    if (profundidad === 0) {
+      const m = linea.match(/^(\.[a-zA-Z0-9_-]+)\s*\{/);
+      if (m) {
+        if (!vistas.has(m[1])) vistas.set(m[1], []);
+        vistas.get(m[1]).push(n + 1);
+      }
+    }
+    for (const c of linea) {
+      if (c === '{') profundidad++;
+      else if (c === '}') profundidad--;
+    }
+  }
+  const nuevas = [...vistas].filter(([clase, lineas]) => lineas.length > 1 && !YA_REPETIDAS.has(clase));
+  assert.deepEqual(nuevas, [], `clases definidas dos veces: ${nuevas.map(([c, l]) => `${c} (líneas ${l.join(', ')})`).join('; ')}`);
+});
+
 // ── Novedades deducidas del horario ─────────────────────────────────────
 // «Salida temprana» aparecía en el panel pero NUNCA se marcaba: la regla se
 // quedó en journeyService.js, el servicio del prototipo que panelStore
@@ -928,6 +1066,151 @@ await test('turno nocturno: el almuerzo de madrugada es válido', () => {
 });
 await test('una hora mal escrita se rechaza', () => {
   assert.match(validarDias(dia({ almuerzo_desde: '13', almuerzo_hasta: '14:00' })).error ?? '', /HH:MM/);
+});
+
+// ── La semana como unidad de la hora extra ──────────────────────────────
+console.log('\n📆 Semana laboral: la extra se define al cerrar');
+const { resumenSemana, lunesDe, domingoDe } = await import('../lib/semanaLaboral.js');
+
+// Horario de 7h 30 lunes–viernes y 4h 30 el sábado (= 42 h), como el de la
+// mayoría en la empresa; el domingo no tiene horario.
+const HORARIO_42 = (fecha) => {
+  const dow = new Date(`${fecha}T12:00:00Z`).getUTCDay();
+  return dow === 0 ? null : dow === 6 ? 4.5 : 7.5;
+};
+const semana = (dias, extra = {}) => resumenSemana({
+  lunes: '2026-09-07',
+  horasPorDia: new Map(Object.entries(dias)),
+  festivos: new Set(),
+  horasHorario: HORARIO_42,
+  hoy: '2026-09-14', // lunes siguiente: la semana YA cerró
+  ...extra,
+});
+
+await test('lunes y domingo de cualquier fecha', () => {
+  assert.equal(lunesDe('2026-09-12'), '2026-09-07'); // sábado
+  assert.equal(lunesDe('2026-09-13'), '2026-09-07'); // domingo sigue en la misma semana
+  assert.equal(lunesDe('2026-09-14'), '2026-09-14'); // lunes es su propio lunes
+  assert.equal(domingoDe('2026-09-09'), '2026-09-13');
+});
+await test('días largos compensan días cortos: sin extra si no pasa de 42', () => {
+  // 9 h el lunes, 6 h el martes y lo normal el resto: 42 h justas.
+  const r = semana({ '2026-09-07': 9, '2026-09-08': 6, '2026-09-09': 7.5, '2026-09-10': 7.5, '2026-09-11': 7.5, '2026-09-12': 4.5 });
+  assert.equal(r.cerrada, true);
+  assert.equal(r.ordinarias, 42);
+  assert.equal(r.extra, 0);
+  assert.equal(r.faltante, 0);
+});
+await test('lo que pasa de 42 en la semana es extra', () => {
+  const r = semana({ '2026-09-07': 8, '2026-09-08': 8, '2026-09-09': 8, '2026-09-10': 8, '2026-09-11': 8, '2026-09-12': 4.5 });
+  assert.equal(r.extra, 2.5);
+});
+await test('quien no llega a 42 no tiene extra aunque un día se haya quedado tarde', () => {
+  const r = semana({ '2026-09-07': 10, '2026-09-08': 7, '2026-09-09': 7 });
+  assert.equal(r.extra, 0);
+  assert.equal(r.faltante, 18);
+});
+await test('en curso: la extra NO se estima (null), solo se acumula', () => {
+  const r = semana({ '2026-09-07': 10, '2026-09-08': 10 }, { hoy: '2026-09-10' });
+  assert.equal(r.cerrada, false);
+  assert.equal(r.trabajado, 20);
+  assert.equal(r.extra, null);
+  assert.equal(r.faltante, null);
+});
+await test('el domingo que termina la semana todavía cuenta como en curso', () => {
+  assert.equal(semana({}, { hoy: '2026-09-13' }).cerrada, false);
+  assert.equal(semana({}, { hoy: '2026-09-14' }).cerrada, true);
+});
+await test('el domingo va aparte: no entra en las 42 y es dominical siempre', () => {
+  // 42 h exactas de lunes a sábado + 3 h el domingo: la extra por semana es
+  // 0 y las 3 h del domingo salen como dominicales, no se «compensan».
+  const r = semana({ '2026-09-07': 7.5, '2026-09-08': 7.5, '2026-09-09': 7.5, '2026-09-10': 7.5, '2026-09-11': 7.5, '2026-09-12': 4.5, '2026-09-13': 3 });
+  assert.equal(r.ordinarias, 42);
+  assert.equal(r.dominicales, 3);
+  assert.equal(r.extra, 0);
+  assert.equal(r.trabajado, 45);
+});
+await test('festivo entre semana: se acreditan las horas de su horario, con aviso', () => {
+  // Lunes festivo sin marcar. Trabaja normal martes a sábado (34,5 h). Sin
+  // el crédito quedaría 7,5 h por debajo de 42; con él, la semana cuadra.
+  const r = semana(
+    { '2026-09-08': 7.5, '2026-09-09': 7.5, '2026-09-10': 7.5, '2026-09-11': 7.5, '2026-09-12': 4.5 },
+    { festivos: new Set(['2026-09-07']) },
+  );
+  assert.equal(r.acreditadas, 7.5);
+  assert.deepEqual(r.festivosAcreditados, [{ fecha: '2026-09-07', horas: 7.5 }]);
+  assert.equal(r.cuenta, 42);
+  assert.equal(r.extra, 0);
+  assert.equal(r.faltante, 0);
+});
+await test('festivo trabajado: lo marcado es dominical Y el horario se acredita igual', () => {
+  const r = semana(
+    { '2026-09-07': 3, '2026-09-08': 7.5, '2026-09-09': 7.5, '2026-09-10': 7.5, '2026-09-11': 7.5, '2026-09-12': 4.5 },
+    { festivos: new Set(['2026-09-07']) },
+  );
+  assert.equal(r.dominicales, 3);
+  assert.equal(r.ordinarias, 34.5);
+  assert.equal(r.acreditadas, 7.5);
+  assert.equal(r.extra, 0);
+});
+await test('festivo en un día sin horario no acredita nada', () => {
+  // Alguien de lunes a viernes: un sábado festivo no le cambia la cuenta.
+  const soloLV = (f) => (HORARIO_42(f) === 4.5 ? null : HORARIO_42(f));
+  const r = semana({}, { festivos: new Set(['2026-09-12']), horasHorario: soloLV });
+  assert.equal(r.acreditadas, 0);
+  assert.deepEqual(r.festivosAcreditados, []);
+});
+await test('la jornada semanal de la empresa es configurable', () => {
+  const r = semana({ '2026-09-07': 8, '2026-09-08': 8, '2026-09-09': 8, '2026-09-10': 8, '2026-09-11': 8, '2026-09-12': 8 }, { horasSemana: 44 });
+  assert.equal(r.extra, 4);
+});
+
+// ── Enlace firmado del modo prueba ──────────────────────────────────────
+// El roster facial es dato biométrico: solo lo baja un aparato activado, una
+// sesión o este enlace, que firma el servidor y vence solo. Si la firma no
+// se comprobara bien, cualquiera con la URL tendría los rostros de todos.
+console.log('\n🧪 Enlace del modo prueba');
+process.env.BETTER_AUTH_SECRET ??= 'secreto-de-pruebas';
+const { firmarEnlacePrueba, empresaDelEnlacePrueba, VIGENCIA_PRUEBA_H } = await import('../lib/pruebaReconocimiento.js');
+const EMPRESA = '4d0c9c4a-0000-4000-8000-000000000001';
+
+await test('un enlace recién firmado identifica a su empresa', () => {
+  const { token, vence } = firmarEnlacePrueba(EMPRESA);
+  assert.equal(empresaDelEnlacePrueba(token), EMPRESA);
+  const horas = (Date.parse(vence) - Date.now()) / 3600000;
+  assert.ok(horas > VIGENCIA_PRUEBA_H - 0.01 && horas <= VIGENCIA_PRUEBA_H, `vence en ${VIGENCIA_PRUEBA_H} h`);
+});
+await test('cambiar una letra del token lo invalida', () => {
+  const { token } = firmarEnlacePrueba(EMPRESA);
+  const [cuerpo, sello] = token.split('.');
+  const otroCuerpo = Buffer.from(JSON.stringify({ e: EMPRESA.replace('1', '2'), x: Date.now() + 3600000 })).toString('base64url');
+  assert.equal(empresaDelEnlacePrueba(`${otroCuerpo}.${sello}`), null, 'otra empresa con la misma firma: no');
+  assert.equal(empresaDelEnlacePrueba(`${cuerpo}.${sello.slice(0, -1)}x`), null, 'firma tocada: no');
+});
+await test('un enlace vencido ya no sirve', () => {
+  const { token } = firmarEnlacePrueba(EMPRESA, -1); // venció hace una hora
+  assert.equal(empresaDelEnlacePrueba(token), null);
+});
+await test('basura no revienta: simplemente no es válida', () => {
+  for (const t of ['', '1', 'a.b', 'x'.repeat(50), null, undefined, 'eyJ9.']) assert.equal(empresaDelEnlacePrueba(t), null);
+});
+await test('«prueba=1» a secas NO es un token', async () => {
+  // Es el modo prueba de siempre, que necesita sesión o aparato. El cliente
+  // solo manda X-Prueba-Token cuando el valor es más largo que «1».
+  const src = leerCss(new URL('../services/kioskoApi.js', import.meta.url), 'utf8');
+  assert.match(src, /t\.length > 1 \? t : ''/);
+  assert.equal(empresaDelEnlacePrueba('1'), null);
+});
+await test('solo el roster acepta el token: ninguna otra API lo lee', async () => {
+  // Si mañana alguien lo mete en empresaDeLaPeticion, todas las APIs del
+  // kiosco (marcar incluida) lo aceptarían. Se comprueba que el nombre del
+  // encabezado aparezca ÚNICAMENTE en la ruta del roster.
+  const { readdirSync, statSync } = await import('node:fs');
+  const archivos = [];
+  const recorrer = (dir) => { for (const n of readdirSync(dir)) { const p = `${dir}/${n}`; if (statSync(p).isDirectory()) recorrer(p); else if (/\.(js|jsx|mjs)$/.test(n)) archivos.push(p); } };
+  for (const d of ['app', 'lib', 'services']) recorrer(new URL(`../${d}`, import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+  const conToken = archivos.filter((p) => /x-prueba-token/i.test(leerCss(p, 'utf8')) && !p.endsWith('kioskoApi.js'));
+  assert.deepEqual(conToken.map((p) => p.split('/').slice(-3).join('/')), ['api/empleados/route.js']);
 });
 
 // ── Qué guarda el Service Worker ────────────────────────────────────────

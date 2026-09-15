@@ -3,6 +3,9 @@
  * GET  — roster de empleados de la empresa.
  *        · Con X-Device-Key (kiosco): INCLUYE descriptor facial (lo necesita
  *          para la comparación 1:N local).
+ *        · Con X-Prueba-Token (modo prueba del kiosco, enlace firmado desde
+ *          Ajustes): lo mismo que el kiosco. Es la ÚNICA ruta que acepta ese
+ *          token — con él se reconoce, nunca se marca.
  *        · Con sesión (panel): SIN descriptores (no los necesita y son el 95%
  *          del peso).
  * POST — alta de empleado (registro por foto). Sesión + permiso `empleados`.
@@ -10,21 +13,39 @@
 import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../lib/db.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
-import { cabeOtroEmpleado } from '../../../lib/empresas.js'
+import { cabeOtroEmpleado, empresaPorId, tieneAcceso } from '../../../lib/empresas.js'
+import { empresaDelEnlacePrueba } from '../../../lib/pruebaReconocimiento.js'
 import { validarDias } from '../../../lib/horariosDias.js'
 import { esDescriptorV2 } from '../../../utils/faceMath.js'
 
 export const runtime = 'nodejs'
+
+/**
+ * Quién pide el roster. El enlace de prueba se resuelve AQUÍ y no en
+ * empresaDeLaPeticion a propósito: así ninguna otra API (marcar, sedes,
+ * intentos) lo acepta por accidente. Un token vencido o mal firmado se
+ * responde como no autorizado, igual que una clave de aparato muerta.
+ */
+async function contextoDelRoster(req) {
+  const token = req.headers.get('x-prueba-token')
+  if (token) {
+    const empresa = await empresaPorId(empresaDelEnlacePrueba(token))
+    if (!empresa || !tieneAcceso(empresa)) return null
+    return { empresa, esquema: empresa.esquema, dispositivo: null }
+  }
+  return empresaDeLaPeticion(req)
+}
 
 export async function GET(req) {
   // ?rostros=1 → modo KIOSCO: id + nombre + descriptor para la comparación 1:N.
   // Los descriptores son DATO BIOMÉTRICO (Ley 1581): solo los baja un
   // dispositivo activado o una sesión del panel.
   if (new URL(req.url).searchParams.get('rostros') === '1') {
-    // La empresa sale de la clave del dispositivo, o de la sesión cuando es el
-    // administrador. Es doblemente importante aquí: bajar el roster de la
-    // empresa equivocada entregaría los rostros de otro cliente.
-    const ctx = await empresaDeLaPeticion(req)
+    // La empresa sale de la clave del dispositivo, del enlace de prueba o de
+    // la sesión cuando es el administrador. Es doblemente importante aquí:
+    // bajar el roster de la empresa equivocada entregaría los rostros de otro
+    // cliente.
+    const ctx = await contextoDelRoster(req)
     if (!ctx) {
       return NextResponse.json(
         { ok: false, error: 'DISPOSITIVO_NO_ACTIVADO', detalle: 'Solo un dispositivo activado puede descargar el roster facial.' },

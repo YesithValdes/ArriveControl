@@ -164,8 +164,7 @@ function LoginForm() {
             Asistenc<span style={{ color: '#9fdcca' }}>IA</span>
           </h1>
           <p style={{ margin: '8px 0 0', fontSize: 16, opacity: 0.85, maxWidth: 420 }}>
-            Registro y control de asistencia para tu empresa: entradas, salidas
-            y novedades de tus colaboradores en un solo lugar.
+            Entradas, salidas y novedades de tu equipo en un solo lugar.
           </p>
         </div>
         <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, fontSize: 15, opacity: 0.9 }}>

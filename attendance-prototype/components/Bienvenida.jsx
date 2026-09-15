@@ -103,17 +103,13 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
           </dl>
 
           <p className="bv-nota">
-            {empresa} está en prueba. Si prefieres mirar primero, omite este paso: podrás
-            suscribirte cuando quieras desde Ajustes → Plan.
+            {empresa} está en prueba. Puedes omitir esto y suscribirte luego desde Ajustes → Plan.
           </p>
         </section>
 
         <section className="bv-der">
           {!hayPlanes && (
-            <p className="bv-vacio">
-              Los pagos en línea todavía no están habilitados. Entra al panel y escríbenos
-              cuando quieras activar tu plan.
-            </p>
+            <p className="bv-vacio">Pagos en línea aún no habilitados. Entra al panel y escríbenos para activar tu plan.</p>
           )}
 
           {hayPlanes && (

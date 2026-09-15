@@ -23,6 +23,18 @@ const hasLS = typeof localStorage !== 'undefined';
 export const getSedeId = () => (hasLS ? localStorage.getItem(KEY_SEDE) || '' : '');
 export const setSedeId = (id) => hasLS && localStorage.setItem(KEY_SEDE, id);
 export const getDeviceKey = () => (hasLS ? localStorage.getItem(KEY_DEVICE) || '' : '');
+
+/**
+ * Token del ENLACE DE PRUEBA (/?prueba=<token>), si esta pestaña se abrió con
+ * uno. Lo firma el servidor desde Ajustes → Probar reconocimiento, vale 24 h
+ * y solo sirve para bajar el roster: con él se reconoce, nunca se marca.
+ * «prueba=1» a secas es el modo prueba SIN token (necesita sesión o aparato).
+ */
+export const getPruebaToken = () => {
+  if (typeof window === 'undefined') return '';
+  const t = new URLSearchParams(window.location.search).get('prueba') || '';
+  return t.length > 1 ? t : '';
+};
 export const setDeviceKey = (k) => hasLS && localStorage.setItem(KEY_DEVICE, k);
 
 /**
@@ -55,9 +67,13 @@ export class ClaveRechazada extends Error {
   }
 }
 
+// Con enlace de prueba se manda SOLO el token: si este navegador además fuera
+// un kiosco con clave revocada, la clave mandaría y tumbaría la prueba.
 const headers = () => ({
   'Content-Type': 'application/json',
-  ...(getDeviceKey() ? { 'X-Device-Key': getDeviceKey() } : {}),
+  ...(getPruebaToken()
+    ? { 'X-Prueba-Token': getPruebaToken() }
+    : (getDeviceKey() ? { 'X-Device-Key': getDeviceKey() } : {})),
 });
 
 /**
@@ -85,9 +101,12 @@ export async function cargarSedes() {
 /**
  * Roster de empleados con descriptor. Red primero; caché local como respaldo
  * (el kiosco debe reconocer gente aunque se caiga el internet).
+ * @param {{guardar?: boolean}} [opciones]  `guardar: false` no deja copia
+ *        local: el modo prueba corre en el celular de cualquiera y no debe
+ *        dejar datos biométricos guardados ahí.
  * @returns {{empleados: Array, deCache: boolean}}
  */
-export async function cargarRoster() {
+export async function cargarRoster({ guardar = true } = {}) {
   try {
     const r = await fetch('/api/empleados?rostros=1', { headers: headers() });
     let d = null;
@@ -115,11 +134,11 @@ export async function cargarRoster() {
       // Para exigir (si el flag está activo) que marque en SU sede.
       sedeId: e.sede_id || null, validarSede: e.validar_sede === true,
     }));
-    if (hasLS) localStorage.setItem(KEY_ROSTER, JSON.stringify(empleados));
+    if (hasLS && guardar) localStorage.setItem(KEY_ROSTER, JSON.stringify(empleados));
     return { empleados, deCache: false };
   } catch (e) {
     if (e instanceof ClaveRechazada) throw e; // nunca se cae al caché por esto
-    if (hasLS) {
+    if (hasLS && guardar) {
       try {
         const cache = JSON.parse(localStorage.getItem(KEY_ROSTER) || '[]');
         if (cache.length > 0) return { empleados: cache, deCache: true };

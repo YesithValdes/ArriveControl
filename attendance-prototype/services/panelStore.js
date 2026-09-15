@@ -515,21 +515,6 @@ export async function addPerson(name, descriptor, extra = {}) {
   }
 }
 
-/**
- * Jornada del DÍA para efectos de horas extra — la MISMA regla que usa
- * lib/nomina.js al liquidar, para que el panel y la nómina siempre cuadren:
- * la pactada del empleado para ese día de la semana (jornada distribuida)
- * o, sin pacto, la legal diaria (semanal / 6). Domingo: 0 (todo es extra).
- * @param {object} person  con jornadaSemanal ([lun..sáb] o null)
- * @param {string} fechaISO  YYYY-MM-DD (día Bogotá)
- */
-export function jornadaDelDia(person, fechaISO) {
-  const dow = new Date(`${fechaISO}T12:00:00Z`).getUTCDay(); // 0=dom … 6=sáb
-  if (dow === 0) return 0;
-  const pactada = person?.jornadaSemanal?.[dow - 1];
-  return pactada ?? (store.cfg.weeklyHours ?? 42) / 6;
-}
-
 /** Horas de jornada esperada al día (o null si el horario es libre). */
 export function expectedDailyHours(person) {
   const HHMM = /^\d{2}:\d{2}$/;

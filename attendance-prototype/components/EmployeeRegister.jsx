@@ -299,7 +299,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
             id="rf-correo" type="email" placeholder="ana@correo.com" value={correo}
             onChange={(e) => setCorreo(e.target.value)} autoComplete="off"
           />
-          <small className="regf-hint">Si lo pones, recibirá el comprobante de cada entrada y salida.</small>
+          <small className="regf-hint">Para el resumen diario de sus marcaciones.</small>
         </div>
       </section>
 
@@ -395,7 +395,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
           />
           <span className="prefijo">$</span>
         </div>
-        <small className="regf-hint">Sin salario, sus horas se cuentan pero no se valorizan.</small>
+        <small className="regf-hint">Sin salario no se valorizan las horas.</small>
       </section>
 
       <section className="regf-sec">
@@ -405,7 +405,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
             <span className="regf-drop-ico">{analyzing ? '⏳' : '📷'}</span>
             <span>
               <b>{analyzing ? 'Analizando…' : ready ? `Tomar o subir ${FOTOS_RECOMENDADAS} fotos` : 'Cargando modelo facial…'}</b>
-              <small>Frontales, con la cara grande y buena luz. Las imágenes no se guardan.</small>
+              <small>De frente, cara grande, buena luz. No se guardan.</small>
             </span>
           </button>
         ) : (
@@ -427,8 +427,8 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
             </div>
             <small className={fotos.length < FOTOS_RECOMENDADAS ? 'regf-err' : 'regf-hint'}>
               {fotos.length < FOTOS_RECOMENDADAS
-                ? `${fotos.length} de ${FOTOS_RECOMENDADAS}. Con una sola foto el kiosco puede confundirlo con otra persona: agrega otra con distinta luz, y una con gafas o gorra si las usa a diario.`
-                : `${fotos.length} rostros. Cuantas más condiciones distintas, mejor lo reconocerá.`}
+                ? `${fotos.length} de ${FOTOS_RECOMENDADAS}: agrega otra con distinta luz (y con gafas o gorra si las usa).`
+                : `${fotos.length} rostros.`}
             </small>
           </>
         )}
