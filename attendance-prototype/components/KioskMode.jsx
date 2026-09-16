@@ -54,6 +54,26 @@ const CAPTURE_GAP_MS = 450;
 // (un arranque en frío de la función serverless puede tardar varios segundos).
 const ESPERA_RED_MS = 8800;
 
+/** El icono de la app en línea: el mismo símbolo «Presente ✓» de public/icon.svg. */
+function LogoApp({ size = 40 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true" style={{ flex: '0 0 auto', borderRadius: size * 0.22, boxShadow: '0 2px 8px rgba(16,24,40,.25)' }}>
+      <defs>
+        <linearGradient id="logoFondo" x1="0" y1="64" x2="0" y2="0" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#172e4c" /><stop offset="1" stopColor="#2b6cb0" />
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx="14" fill="url(#logoFondo)" />
+      <g transform="translate(3.2 3.2) scale(0.9)" fill="none">
+        <circle cx="32" cy="31" r="20" stroke="#fff" strokeWidth="4.6" />
+        <circle cx="25.4" cy="27" r="2.2" fill="#fff" />
+        <circle cx="38.6" cy="27" r="2.2" fill="#fff" />
+        <path d="M 24 37 l 6 6 l 12 -12" stroke="#9fdcca" strokeWidth="4.4" strokeLinecap="round" strokeLinejoin="round" />
+      </g>
+    </svg>
+  );
+}
+
 /** Segundos → «8 h 12 min» (o «45 min»), para leerse de un vistazo en la salida. */
 function horasLegibles(seg) {
   const total = Math.max(0, Math.round(seg / 60));
@@ -1188,10 +1208,19 @@ export default function KioskMode() {
         // toques y bloqueaba el botón "Iniciar kiosco" debajo.
         pointerEvents: running ? 'auto' : 'none',
       }}>
-        <span style={s.hudMarca}>ASISTENC<span style={{ color: 'var(--accent)' }}>IA</span></span>
-        {/* Detener es la ÚNICA vía al reposo: marca la parada como manual
-            para que el auto-arranque no vuelva a encender la cámara solo. */}
-        <button style={s.hudDetener} onClick={() => { setDetenido(true); setStatusNote('Kiosco en pausa.'); stopAll(); }}>⏹ Detener</button>
+        {/* Cabecera: el icono de la app (el mismo del launcher) con el nombre
+            grande, y debajo, a la derecha, el botón de detener. Va en el
+            flujo (fila 1 de la rejilla), así el cuadro se centra en lo que
+            queda sin montarse encima. */}
+        <div style={s.kCabecera}>
+          <div style={s.kMarcaFila}>
+            <LogoApp size={40} />
+            <span style={s.kNombreApp}>ASISTENC<span style={{ color: 'var(--accent)' }}>IA</span></span>
+          </div>
+          {/* Detener es la ÚNICA vía al reposo: marca la parada como manual
+              para que el auto-arranque no vuelva a encender la cámara solo. */}
+          <button style={s.hudDetener} onClick={() => { setDetenido(true); setStatusNote('Kiosco en pausa.'); stopAll(); }}>⏹ Detener</button>
+        </div>
         {/* ── El cuadro de la cámara, con TODOS los mensajes DENTRO ──
             Como la cámara de un celular: la instrucción arriba en una
             píldora, el veredicto abajo sobre un velo oscuro. Todo el texto va
@@ -1465,9 +1494,18 @@ const s = {
     background: 'var(--surface-blanca)', color: 'var(--ink)',
     // justifyContent center: el bloque (ventana + barra + textos) queda
     // centrado verticalmente en vez de pegado arriba.
-    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-    padding: 'calc(clamp(24px, 5dvh, 48px) + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px))',
+    // Rejilla de tres filas: cabecera (auto) · cuadro (todo lo que queda,
+    // centrado) · nota de privacidad (auto). Así el cuadro va al centro del
+    // espacio libre y nunca se monta sobre la cabecera.
+    display: 'grid', gridTemplateRows: 'auto 1fr auto', justifyItems: 'center', alignItems: 'center',
+    padding: 'calc(14px + env(safe-area-inset-top, 0px)) 20px calc(12px + env(safe-area-inset-bottom, 0px))',
     zIndex: 2,
+  },
+  kCabecera: { width: '100%', display: 'flex', flexDirection: 'column', gap: 8, alignSelf: 'start' },
+  kMarcaFila: { display: 'flex', alignItems: 'center', gap: 12 },
+  kNombreApp: {
+    fontFamily: 'var(--font-sora), var(--f-body)', fontSize: 'clamp(22px, 6.5vw, 28px)',
+    fontWeight: 800, letterSpacing: '0.06em', color: 'var(--btn-primary)', lineHeight: 1,
   },
   // Veredicto dentro del cuadro: velo de color sobre el video + icono en círculo.
   velo: {
@@ -1479,11 +1517,6 @@ const s = {
     alignItems: 'center', justifyContent: 'center', fontSize: '11cqw',
     color: '#ffffff', fontWeight: 800, boxShadow: '0 6px 20px rgba(0,0,0,.35)',
   },
-  // Marca anclada arriba: fuera del flujo, para no descentrar la ventana.
-  hudMarca: {
-    position: 'absolute', top: 'calc(18px + env(safe-area-inset-top, 0px))', left: 20,
-    fontSize: 12, fontWeight: 800, letterSpacing: '0.12em', color: 'var(--muted)',
-  },
   hudTop: { position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   hudStop: {
     background: 'transparent', border: '1px solid #1e3a5c', color: '#4d6a94',
@@ -1492,7 +1525,7 @@ const s = {
   // Detener vive DENTRO de la pantalla de cámara: es la única salida del modo
   // kiosco. Anclado arriba a la derecha, espejo de la marca.
   hudDetener: {
-    position: 'absolute', top: 'calc(12px + env(safe-area-inset-top, 0px))', right: 16,
+    alignSelf: 'flex-end',
     background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)',
     borderRadius: 8, fontSize: 13, padding: '6px 12px', cursor: 'pointer', fontFamily: 'inherit',
   },
@@ -1521,10 +1554,7 @@ const s = {
   },
   // Anclado abajo, FUERA del flujo: con margin-top auto se comía el espacio
   // libre y empujaba el cuadro de la cámara hasta arriba de la pantalla.
-  hudPrivacidad: {
-    position: 'absolute', left: 0, right: 0, bottom: 'calc(14px + env(safe-area-inset-bottom, 0px))',
-    textAlign: 'center', fontSize: 11, color: 'var(--muted)', pointerEvents: 'none',
-  },
+  hudPrivacidad: { alignSelf: 'end', textAlign: 'center', fontSize: 11, color: 'var(--muted)', paddingTop: 8 },
   hudVentana: {
     // Ahora los mensajes van DENTRO, así que el cuadro puede ser más grande:
     // 3:4 como una cámara de celular. El tope en dvh limita la altura sin
