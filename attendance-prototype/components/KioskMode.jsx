@@ -1497,11 +1497,11 @@ const s = {
     // Rejilla de tres filas: cabecera (auto) · cuadro (todo lo que queda,
     // centrado) · nota de privacidad (auto). Así el cuadro va al centro del
     // espacio libre y nunca se monta sobre la cabecera.
-    display: 'grid', gridTemplateRows: 'auto 1fr auto', justifyItems: 'center', alignItems: 'center',
+    display: 'grid', gridTemplateRows: 'auto 1fr auto', justifyItems: 'center', alignItems: 'start',
     padding: 'calc(14px + env(safe-area-inset-top, 0px)) 20px calc(12px + env(safe-area-inset-bottom, 0px))',
     zIndex: 2,
   },
-  kCabecera: { width: '100%', display: 'flex', flexDirection: 'column', gap: 8, alignSelf: 'start' },
+  kCabecera: { width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, alignSelf: 'start', marginBottom: 10 },
   kMarcaFila: { display: 'flex', alignItems: 'center', gap: 12 },
   kNombreApp: {
     fontFamily: 'var(--font-sora), var(--f-body)', fontSize: 'clamp(22px, 6.5vw, 28px)',
@@ -1525,7 +1525,7 @@ const s = {
   // Detener vive DENTRO de la pantalla de cámara: es la única salida del modo
   // kiosco. Anclado arriba a la derecha, espejo de la marca.
   hudDetener: {
-    alignSelf: 'flex-end',
+    flex: '0 0 auto',
     background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)',
     borderRadius: 8, fontSize: 13, padding: '6px 12px', cursor: 'pointer', fontFamily: 'inherit',
   },
@@ -1559,7 +1559,9 @@ const s = {
     // Ahora los mensajes van DENTRO, así que el cuadro puede ser más grande:
     // 3:4 como una cámara de celular. El tope en dvh limita la altura sin
     // deformar; `containerType` habilita las unidades cqw de los textos.
-    position: 'relative', width: 'min(92vw, 400px, 58dvh)', aspectRatio: '3 / 4',
+    // Más alto que ancho (3:4.4) y con tope generoso en dvh: ocupa casi todo
+    // lo que queda bajo la cabecera, sin salirse en pantallas cortas.
+    position: 'relative', width: 'min(92vw, 440px, 52dvh)', aspectRatio: '3 / 4.4',
     borderRadius: 20, overflow: 'hidden', containerType: 'inline-size',
     background: '#0f151c', color: '#fff',
     fontFamily: 'var(--font-sora), var(--f-body)',
