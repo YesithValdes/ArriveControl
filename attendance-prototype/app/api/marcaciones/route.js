@@ -3,8 +3,8 @@
  *
  * POST — el KIOSCO registra un paso. El servidor decide entrada/salida y pone
  *        la hora; el kiosco solo dice quién y en qué sede. Autenticado con la
- *        clave de dispositivo (X-Device-Key = KIOSCO_DEVICE_KEY), nunca sesión:
- *        la tablet no tiene usuario.
+ *        clave del aparato (X-Device-Key, la que se entrega al activarlo) o,
+ *        desde el celular del administrador, con su sesión.
  * GET  — el PANEL lista marcaciones por rango/empleado. Requiere sesión con
  *        permiso VER.
  */
@@ -17,16 +17,16 @@ import { puedeEscribir } from '../../../lib/empresas.js'
 export const runtime = 'nodejs'
 
 export async function POST(req) {
-  // Autenticación en tres vías (una basta):
-  //  a) Dispositivo ACTIVADO (X-Device-Key registrada en asistencia.dispositivos):
+  // Autenticación en DOS vías (una basta), las mismas que resuelve
+  // empresaDeLaPeticion (lib/sesion.js):
+  //  a) Dispositivo ACTIVADO (X-Device-Key registrada en control.dispositivos):
   //     la vía normal — cada tablet se activa una vez con sesión de admin y su
   //     clave propia se puede revocar individualmente desde el panel.
-  //  b) KIOSCO_DEVICE_KEY (env, clave compartida): compatibilidad con
-  //     dispositivos configurados a mano antes de la activación por aparato.
-  //  c) Sesión con permiso `asistencia` (VER): el celular del administrador.
-  // Sin ninguna se rechaza: una marcación falsa se convierte en horas extra
-  // pagadas (la sincronización con nómina es automática).
-  // En desarrollo, sin KIOSCO_DEVICE_KEY configurada, se permite sin credencial.
+  //  b) Sesión con permiso `asistencia` (VER): el celular del administrador.
+  // Sin ninguna se rechaza con 401, también en desarrollo: una marcación falsa
+  // se convierte en horas extra pagadas. (Hubo una clave compartida por
+  // variable de entorno y un modo abierto en desarrollo; ya no existen, y
+  // este comentario decía que sí.)
   // De qué empresa es esta marcación. Sale de la clave del dispositivo, o de
   // la sesión cuando marca el administrador desde su celular. Sin empresa no
   // hay dónde escribirla: ya no existe una única tabla de marcaciones.
