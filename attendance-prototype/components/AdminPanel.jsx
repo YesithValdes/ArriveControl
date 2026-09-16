@@ -5630,8 +5630,15 @@ const CSS = `
 /* Filtro global de sede (select en el menú lateral, móvil y PC) */
 .side-sede { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 4px 6px 12px; border-bottom: 1px solid var(--grid); margin-bottom: 8px; }
 .side-sede-lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
-.sede-select { flex: 1; min-width: 0; max-width: 100%; font: inherit; font-size: 13px; font-weight: 600; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
-.sede-select:hover { background: var(--accent-soft); }
+.sede-select {
+  flex: 1; min-width: 0; max-width: 100%;
+  font-family: var(--f-body); font-size: 13px; font-weight: 600; line-height: 1.25;
+  padding: 8px 30px 8px 10px; border-radius: 10px; border: 1px solid var(--border);
+  background-color: var(--surface); color: var(--ink); cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23475467' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 10px center;
+}
+.sede-select:hover { background-color: var(--accent-soft); }
 .sede-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .sede-table { display: flex; flex-direction: column; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -6513,10 +6520,11 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
     border-bottom: 1px solid rgba(255,255,255,.16); box-shadow: 0 2px 10px rgba(0,0,0,.22); position: relative; z-index: 1;
   }
   .head-sede {
-    display: block; max-width: 210px; font-size: 13px; padding: 7px 10px;
-    background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.25);
+    display: block; max-width: 210px; font-size: 13px; padding: 7px 30px 7px 10px;
+    background-color: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.25);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
   }
-  .head-sede:hover { background: rgba(255,255,255,.18); }
+  .head-sede:hover { background-color: rgba(255,255,255,.18); }
   .head-sede option { background: var(--surface); color: var(--ink); }
   .head-user-nombre { display: block; }
   .side-sede { display: none; } /* el filtro de sede pasó a la barra */
@@ -6586,7 +6594,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   /* riel colapsado: el select se compacta (muestra solo el emoji al cerrar) */
   .nav-collapsed .side-sede { padding: 0 2px 10px; }
   .nav-collapsed .side-sede-lbl { display: none; }
-  .nav-collapsed .sede-select { padding: 8px 4px; font-size: 12px; }
+  .nav-collapsed .sede-select { padding: 8px 18px 8px 4px; font-size: 12px; background-position: right 4px center; }
   .nav-collapsed .tabbar > button { justify-content: center; padding: 10px 0; }
   /* Con el menú encogido el nombre del grupo no cabe: queda solo la línea. */
   .nav-collapsed .tab-grupo { font-size: 0; margin: 6px 8px 0; padding-top: 6px; }
@@ -6971,7 +6979,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .tabbar > button:hover { background: rgba(255,255,255,.08); }
 .tabbar > button[aria-pressed="true"] { color: #fff; background: rgba(255,255,255,.15); }
 .tabbar .badge { background: var(--crit); }
-.side-sede .sede-select:hover { background: rgba(255,255,255,.18); }
+.side-sede .sede-select:hover { background-color: rgba(255,255,255,.18); }
 .side-sede .sede-select option { background: var(--surface); color: var(--ink); }
 .side-foot { color: rgba(255,255,255,.4); }
 `;
