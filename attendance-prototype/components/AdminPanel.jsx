@@ -7,7 +7,7 @@
  *
  * Datos reales: journeyService (eventos/correcciones) + rosterService (personas).
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 // Todos los datos vienen de POSTGRES vía API (services/panelStore.js), con
 // las mismas formas que los services locales que reemplaza.
@@ -1501,8 +1501,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
    */
   const rangoSemanas = (desde, hasta) => {
     const hoy = todayKey();
-    // Por día no hace falta ajustar: cada día se define solo.
-    if (cfg.modoExtra === 'dia') return { desde, hasta: hasta < hoy ? hasta : hoy };
     const dom = domingoDe(hasta);
     return { desde: lunesDe(desde), hasta: dom < hoy ? dom : hoy };
   };
@@ -1514,10 +1512,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     setEvForm(null);
     setOpenDia(day);
     const hoy = todayKey();
-    // Por día: el día pedido, o los últimos 7 días (como siempre fue).
     const rango = day
       ? rangoSemanas(day, day)
-      : rangoSemanas(dayKey(new Date(Date.now() - (cfg.modoExtra === 'dia' ? 6 : 7) * 24 * 3600000).toISOString()), hoy);
+      : rangoSemanas(dayKey(new Date(Date.now() - 7 * 24 * 3600000).toISOString()), hoy);
     setDrawer({ personId, personName, ...rango });
   };
 
@@ -4480,16 +4477,19 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     </div>
                   );
                 };
-                // En modo POR DÍA no hay cuenta semanal que mostrar: el cajón
-                // vuelve a la lista plana de días de antes, cada uno con su extra.
-                const porDia = cfg.modoExtra === 'dia';
-                const extraDeDia = new Map(drawerSemanas.flatMap((s) => [...s.extraPorDia.entries()]));
+                // El MISMO diseño en los dos modos (bloques por semana, con un
+                // encabezado cada vez que cambia el mes); lo único que cambia
+                // es de dónde salen las extras: al cerrar la semana, o día a día.
+                const mesDe = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
 
                 return (
                   <>
-                    {porDia && drawerDias.map((d) => filaDia(d, extraDeDia.get(d.fecha)))}
-                    {!porDia && drawerSemanas.map((s) => (
-                    <section className={`sem-bloque ${s.cerrada ? 'cerrada' : 'curso'}`} key={s.lunes}>
+                    {drawerSemanas.map((s, i) => (
+                    <Fragment key={s.lunes}>
+                    {(i === 0 || s.lunes.slice(0, 7) !== drawerSemanas[i - 1].lunes.slice(0, 7)) && (
+                      <div className="sem-mes">{mesDe(s.lunes)}</div>
+                    )}
+                    <section className={`sem-bloque ${s.cerrada ? 'cerrada' : 'curso'}`}>
                       {/* Las cuentas de la semana. La extra NO se estima por
                           día: solo existe cuando la semana cerró (domingo
                           terminado). Mientras tanto, se acumula y punto. */}
@@ -4497,7 +4497,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         {/* El estado se ve en el COLOR de la cabecera: azul la
                             semana en curso, gris las que ya cerraron. */}
                         <span className="sem-top">
-                          <span className="sem-titulo" title={s.porDia ? 'Extra por día: cada día se define solo' : s.cerrada ? 'Semana cerrada: la extra es definitiva' : 'Semana en curso: la extra se define al cerrar el domingo'}>{etiquetaSemana(s)}</span>
+                          <span className="sem-titulo" title={s.porDia ? (s.cerrada ? 'Semana cerrada' : 'Semana en curso: cada día se define solo') : s.cerrada ? 'Semana cerrada: la extra es definitiva' : 'Semana en curso: la extra se define al cerrar el domingo'}>{etiquetaSemana(s)}</span>
                           <span className="sem-total">{fmtH(s.trabajado)}</span>
                         </span>
                         {/* Solo códigos y horas; la explicación, al pasar el mouse. */}
@@ -4533,6 +4533,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
                     {s.dias.map((d) => filaDia(d, s.porDia ? s.extraPorDia.get(d.fecha) : 0))}
                     </section>
+                    </Fragment>
                     ))}
 
     {/* Alta con fecha libre: el formulario vive AQUÍ abajo siempre que
@@ -5975,6 +5976,8 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
    scroll, y un hijo con overflow:hidden se ENCOGE para caber (su min-height
    pasa a 0): el bloque se recortaba y perdía sus últimos días. */
 .sem-bloque { flex: 0 0 auto; border: 1px solid var(--grid); border-radius: 10px; overflow: hidden; background: var(--surface); }
+/* Separador de MES entre bloques de semana. */
+.sem-mes { flex: 0 0 auto; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 6px 4px 0; }
 .sem-head { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--grid); }
 /* Azul solo la semana EN CURSO; las cerradas, en gris. */
 .sem-bloque.curso .sem-head { background: var(--page); }
