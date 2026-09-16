@@ -4683,14 +4683,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                 el domingo/festivo, su recargo; y si pasó de la
                                 jornada por menos del mínimo, se dice. */}
                             {extra > 0.001 && (
-                              <em className="dia-extra" title="Extra de este día: lo que pasó de la jornada de su horario">+{fmtHM(extra)}</em>
+                              <em className="dia-extra" title="Extra de este día: lo que pasó de la jornada de su horario">+{fmtH(extra)}</em>
                             )}
                             {dom > 0.001 && (
-                              <em className="dia-extra dom" title="Domingo o festivo: recargo desde la primera hora (HEDDF/HENDF)">D +{fmtHM(dom)}</em>
+                              <em className="dia-extra dom" title="Domingo o festivo: recargo desde la primera hora (HEDDF/HENDF)">D +{fmtH(dom)}</em>
                             )}
                             {bajoMinimo > 0.001 && (
                               <em className="dia-extra min" title={`Pasó ${Math.round(bajoMinimo * 60)} min de su jornada: menos del mínimo de ${cfg.extraMinimaMin ?? 30} min (Reglamento), no cuenta como extra`}>
-                                +{fmtHM(bajoMinimo)} &lt; {cfg.extraMinimaMin ?? 30} min
+                                +{fmtH(bajoMinimo)} &lt; {cfg.extraMinimaMin ?? 30} min
                               </em>
                             )}
                           </span>
