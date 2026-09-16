@@ -1980,9 +1980,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   ];
 
   // Pantallas que muestran el submenú de Ajustes al lado (sedes y
-  // dispositivos ya no: son pestañas del menú principal).
-  const enAjustes = tab === 'ajustes'
-    || (tab.startsWith('cfg-') && tab !== 'cfg-sedes' && tab !== 'cfg-dispositivos');
+  // dispositivos ya no: son pestañas del menú principal). La portada de
+  // Ajustes no lo lleva: ella misma es la lista, en tarjetas a todo el ancho.
+  const enAjustes = tab.startsWith('cfg-') && tab !== 'cfg-sedes' && tab !== 'cfg-dispositivos';
 
   // Presionar Ajustes abre de una la PRIMERA opción del submenú (Mi empresa,
   // o la primera disponible según permisos) — en PC el submenú queda al lado,
@@ -2243,39 +2243,51 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             de pantalla. En móvil se mantiene lista → subpantalla con volver. */}
         {enAjustes && (
           <aside className="cfg-menu" aria-label="Opciones de ajustes">
-            {(permisos.usuarios || permisos.config) && <h4>Cuenta y acceso</h4>}
-            {permisos.config && (
-              <button className={`cfg-item${tab === 'cfg-plan' ? ' on' : ''}`} onClick={() => setTab('cfg-plan')}>
-                <Icon name="file" size={16} /> Plan
-                {/* El punto avisa sin gritar cuando hay algo que atender. */}
-                {sesion?.planEstado && !sesion.planEstado.pagada && <span className="cfg-punto" />}
-              </button>
+            {/* Mismo diseño que la lista del celular: una tarjeta por grupo,
+                con su título y las opciones con el icono en caja. */}
+            {(permisos.usuarios || permisos.config) && (
+              <div className="cfg-grupo">
+                <h4>Cuenta y acceso</h4>
+                {permisos.config && (
+                  <button className={`cfg-item${tab === 'cfg-plan' ? ' on' : ''}`} onClick={() => setTab('cfg-plan')}>
+                    <span className="cfg-ico"><Icon name="file" size={16} /></span> Plan
+                    {/* El punto avisa sin gritar cuando hay algo que atender. */}
+                    {sesion?.planEstado && !sesion.planEstado.pagada && <span className="cfg-punto" />}
+                  </button>
+                )}
+                {permisos.config && (
+                  <button className={`cfg-item${tab === 'cfg-empresa' ? ' on' : ''}`} onClick={() => { setTab('cfg-empresa'); cargarMiEmpresa(); }}>
+                    <span className="cfg-ico"><Icon name="database" size={16} /></span> Mi empresa
+                  </button>
+                )}
+                {permisos.usuarios && (
+                  <button className={`cfg-item${tab === 'cfg-usuarios' ? ' on' : ''}`} onClick={() => { setTab('cfg-usuarios'); cargarUsuarios(); }}>
+                    <span className="cfg-ico"><Icon name="users" size={16} /></span> Acceso al panel
+                  </button>
+                )}
+              </div>
             )}
-            {permisos.config && (
-              <button className={`cfg-item${tab === 'cfg-empresa' ? ' on' : ''}`} onClick={() => { setTab('cfg-empresa'); cargarMiEmpresa(); }}>
-                <Icon name="database" size={16} /> Mi empresa
+            <div className="cfg-grupo">
+              <h4>Reglas de la empresa</h4>
+              <button className={`cfg-item${tab === 'cfg-reglamento' ? ' on' : ''}`} onClick={() => setTab('cfg-reglamento')}>
+                <span className="cfg-ico"><Icon name="file" size={16} /></span> Reglamento laboral
               </button>
-            )}
-            {permisos.usuarios && (
-              <button className={`cfg-item${tab === 'cfg-usuarios' ? ' on' : ''}`} onClick={() => { setTab('cfg-usuarios'); cargarUsuarios(); }}>
-                <Icon name="users" size={16} /> Acceso al panel
+              <button className={`cfg-item${tab === 'cfg-nomina' ? ' on' : ''}`} onClick={() => setTab('cfg-nomina')}>
+                <span className="cfg-ico"><Icon name="clock" size={16} /></span> Valorización
               </button>
-            )}
-            <h4>Reglas de la empresa</h4>
-            <button className={`cfg-item${tab === 'cfg-reglamento' ? ' on' : ''}`} onClick={() => setTab('cfg-reglamento')}>
-              <Icon name="file" size={16} /> Reglamento laboral
-            </button>
-            <button className={`cfg-item${tab === 'cfg-nomina' ? ' on' : ''}`} onClick={() => setTab('cfg-nomina')}>
-              <Icon name="clock" size={16} /> Valorización
-            </button>
-            <button className={`cfg-item${tab === 'cfg-simulador' ? ' on' : ''}`} onClick={() => setTab('cfg-simulador')}>
-              <Icon name="file" size={16} /> Simulador
-            </button>
-            <h4>Herramientas</h4>
-            <button className="cfg-item" onClick={abrirPruebaReconocimiento}><Icon name="monitor" size={16} /> Probar reconocimiento</button>
-            <button className={`cfg-item${tab === 'cfg-gps' ? ' on' : ''}`} onClick={() => setTab('cfg-gps')}>
-              <Icon name="pin" size={16} /> Diagnóstico GPS
-            </button>
+              <button className={`cfg-item${tab === 'cfg-simulador' ? ' on' : ''}`} onClick={() => setTab('cfg-simulador')}>
+                <span className="cfg-ico"><Icon name="file" size={16} /></span> Simulador
+              </button>
+            </div>
+            <div className="cfg-grupo">
+              <h4>Herramientas</h4>
+              <button className="cfg-item" onClick={abrirPruebaReconocimiento}>
+                <span className="cfg-ico"><Icon name="monitor" size={16} /></span> Probar reconocimiento
+              </button>
+              <button className={`cfg-item${tab === 'cfg-gps' ? ' on' : ''}`} onClick={() => setTab('cfg-gps')}>
+                <span className="cfg-ico"><Icon name="pin" size={16} /></span> Diagnóstico GPS
+              </button>
+            </div>
           </aside>
         )}
 
@@ -5434,22 +5446,36 @@ const CSS = `
     display: grid; grid-template-columns: 225px minmax(0, 1fr);
     gap: 18px; align-items: stretch;
   }
-  .cfg-menu { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+  .cfg-menu { display: flex; flex-direction: column; gap: 12px; padding: 0; }
+  .cfg-grupo {
+    display: flex; flex-direction: column; gap: 2px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 10px 8px; box-shadow: var(--elev-1);
+  }
   .cfg-menu h4 {
-    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
-    color: var(--muted); font-weight: 700; margin: 14px 0 4px; padding: 0 12px;
+    font-family: var(--f-display); font-size: 13.5px; font-weight: 700; letter-spacing: .02em;
+    color: var(--ink); margin: 0 4px 6px;
   }
   .cfg-item {
     display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; text-align: left;
-    padding: 8px 12px; border: 0; border-radius: 9px; background: transparent;
+    padding: 5px 8px 5px 5px; border: 0; border-radius: 9px; background: transparent;
     font: inherit; font-size: 13px; font-weight: 500; color: var(--ink-2);
     cursor: pointer; text-decoration: none;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .cfg-item:hover { background: var(--accent-soft); }
-  .cfg-item.on { background: var(--accent-soft); color: var(--btn-primary); font-weight: 600; }
+  .cfg-ico {
+    flex: 0 0 auto; width: 30px; height: 30px; border-radius: 8px;
+    display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--btn-primary);
+  }
+  .cfg-item:hover { background: var(--accent-soft); color: var(--ink); }
+  .cfg-item.on { background: var(--btn-primary); color: #fff; font-weight: 600; }
+  .cfg-item.on .cfg-ico { background: rgba(255,255,255,.18); color: #fff; }
+  .cfg-item.on .cfg-punto { background: #fff; }
   /* Con el submenú a la vista, «‹ Ajustes» sobra. */
   .screen.con-submenu .back-btn { display: none; }
+  /* La portada de Ajustes en PC: las tarjetas en una columna cómoda de leer. */
+  .card.ajustes-plano { max-width: 780px; }
 }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--elev-1); }
 .card.grow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
