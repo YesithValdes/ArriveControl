@@ -415,6 +415,18 @@ const fmtH = (n) => {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 // Horas compactas hh:mm (sin segundos), para la tabla de asistencia.
+/** ¿Dos mapas por días (ficha y plantilla) describen la misma jornada? */
+const mismaJornada = (a, b) => {
+  if (!a || !b) return false;
+  const norm = (d) => Object.fromEntries(
+    Object.entries(d).filter(([, v]) => v && v.entrada && v.salida)
+      .map(([k, v]) => [String(k), `${v.entrada}|${v.salida}|${Number(v.almuerzoMin) || 0}|${v.almuerzoDesde || ''}|${v.almuerzoHasta || ''}`]),
+  );
+  const na = norm(a); const nb = norm(b);
+  const ka = Object.keys(na).sort(); const kb = Object.keys(nb).sort();
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && na[k] === nb[k]);
+};
+
 const fmtHM = (n) => {
   if (n == null) return '—';
   const total = Math.round(n * 60);
@@ -5068,79 +5080,93 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <button className="btn" onClick={() => setEditEmp(null)}>Cerrar</button>
             </div>
 
+            {/* El cuerpo va en BLOQUES con cabecera gris, como las semanas del
+                cajón de marcaciones: Datos · Rostros · Sede y ubicación ·
+                Horario · Salario. Lo derivado (horas por semana, valor de la
+                hora) vive en la cabecera de su bloque. */}
             <div className="drawer-body ficha-body">
 
-              <section className="ficha-sec">
-                <div className="ficha-fila dos">
-                  <div className="field">
-                    <label htmlFor="e-nombre">Nombre completo</label>
-                    <input id="e-nombre" type="text" value={editEmp.name}
-                      onChange={(e) => setEditEmp({ ...editEmp, name: e.target.value })} />
+              <section className="ficha-bloque">
+                <header className="ficha-bloque-head"><span>Datos</span></header>
+                <div className="ficha-bloque-body">
+                  <div className="ficha-fila dos">
+                    <div className="field">
+                      <label htmlFor="e-nombre">Nombre completo</label>
+                      <input id="e-nombre" type="text" value={editEmp.name}
+                        onChange={(e) => setEditEmp({ ...editEmp, name: e.target.value })} />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="e-cedula">Cédula</label>
+                      <input id="e-cedula" className="num" type="text" inputMode="numeric" value={editEmp.cedula}
+                        onChange={(e) => setEditEmp({ ...editEmp, cedula: e.target.value.replace(/\D/g, '') })} />
+                    </div>
                   </div>
-                  <div className="field">
-                    <label htmlFor="e-cedula">Cédula</label>
-                    <input id="e-cedula" className="num" type="text" inputMode="numeric" value={editEmp.cedula}
-                      onChange={(e) => setEditEmp({ ...editEmp, cedula: e.target.value.replace(/\D/g, '') })} />
+                  {/* Fila propia: el correo es más largo que nombre/cédula y en
+                      media columna se cortaba. */}
+                  <div className="ficha-fila">
+                    <div className="field">
+                      <label htmlFor="e-correo">Correo <span className="libre">para su resumen diario</span></label>
+                      <input id="e-correo" type="email" placeholder="ana@correo.com" value={editEmp.correo}
+                        onChange={(e) => setEditEmp({ ...editEmp, correo: e.target.value })} />
+                    </div>
                   </div>
                 </div>
-                {/* Fila propia: el correo es más largo que nombre/cédula y en
-                    media columna se cortaba. */}
-                <div className="ficha-fila">
-                  <div className="field">
-                    <label htmlFor="e-correo">Correo</label>
-                    <input id="e-correo" type="email" placeholder="ana@correo.com" value={editEmp.correo}
-                      onChange={(e) => setEditEmp({ ...editEmp, correo: e.target.value })} />
-                    <small className="field-hint">Para el resumen diario de sus marcaciones. Vacío = no se envía.</small>
-                  </div>
-                </div>
-                {/* El rostro es un ESTADO, no una instrucción suelta: lo primero
-                    que se quiere saber es si esta persona puede marcar. Y las
-                    fotos se agregan AQUÍ: pedir otra vez cédula, horario y
-                    correo solo para sumar una foto no tenía sentido. */}
-                <div className="ficha-estado">
-                  <span className={`ficha-punto${rostros.length > 0 ? '' : ' apagado'}`} />
-                  <span>
-                    <b>
-                      {rostros.length === 0 ? 'Sin rostro'
-                        : rostros.length === 1 ? '1 rostro registrado'
-                          : `${rostros.length} rostros registrados`}
-                    </b>
+              </section>
+
+              {/* El rostro es un ESTADO: lo primero que se quiere saber es si
+                  esta persona puede marcar. Las fotos se agregan AQUÍ. */}
+              <section className="ficha-bloque">
+                <header className="ficha-bloque-head">
+                  <span className="ficha-bloque-titulo">
+                    <span className={`ficha-punto${rostros.length > 0 ? '' : ' apagado'}`} />
+                    {rostros.length === 0 ? 'Sin rostro'
+                      : rostros.length === 1 ? '1 rostro'
+                        : `${rostros.length} rostros`}
+                    <Q texto={rostros.length === 0
+                      ? 'No podrá marcar en el kiosco hasta que se le registre un rostro.'
+                      : 'Al marcar se compara contra el más parecido de sus rostros. Con varias fotos (distinta luz, con y sin gafas) lo reconoce mejor y es más difícil confundirlo con otra persona.'} />
                   </span>
-                  <Q texto={rostros.length === 0
-                    ? 'No podrá marcar en el kiosco hasta que se le registre un rostro.'
-                    : 'Al marcar se compara contra el más parecido de sus rostros. Con varias fotos (distinta luz, con y sin gafas) lo reconoce mejor y es más difícil confundirlo con otra persona.'} />
                   <input ref={rostroFileRef} type="file" accept="image/*" multiple hidden
                     onChange={(e) => agregarFotos(editEmp.id, e)} />
-                  <button className="btn small" disabled={rostroOcupado} onClick={() => rostroFileRef.current?.click()}>
-                    {rostroOcupado ? 'Analizando…' : '＋ Agregar foto'}
+                  <button
+                    className="btn btn-ico" disabled={rostroOcupado}
+                    title={rostroOcupado ? 'Analizando la foto…' : 'Agregar foto'} aria-label="Agregar foto"
+                    onClick={() => rostroFileRef.current?.click()}
+                  >
+                    {rostroOcupado ? <span className="ico-num">…</span> : <Icon name="userPlus" size={16} />}
                   </button>
-                </div>
+                </header>
                 {rostros.length > 0 && (
-                  <div className="ficha-rostros">
-                    {rostros.map((r, i) => (
-                      <span className="ficha-rostro" key={r.id}>
-                        Rostro {i + 1}
-                        <em>{new Date(r.creado_en).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}</em>
-                        {/* Se puede quitar hasta el último: una foto equivocada
-                            es peor que ninguna. Si es el único, se confirma. */}
-                        <button title="Quitar este rostro" onClick={async () => {
-                          if (rostros.length === 1 && !window.confirm('Es su único rostro: no podrá marcar hasta que le agregues otra foto. ¿Quitarlo?')) return;
-                          const res = await quitarRostro(editEmp.id, r.id);
-                          if (res.error) { showToast(res.error); return; }
-                          setRostros(await listarRostros(editEmp.id));
-                          showToast(rostros.length === 1 ? 'Rostro quitado: ahora está sin rostro' : 'Rostro quitado');
-                        }}>×</button>
-                      </span>
-                    ))}
+                  <div className="ficha-bloque-body">
+                    {(
+                      <div className="ficha-rostros">
+                        {rostros.map((r, i) => (
+                          <span className="ficha-rostro" key={r.id}>
+                            Rostro {i + 1}
+                            <em>{new Date(r.creado_en).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}</em>
+                            {/* Se puede quitar hasta el último: una foto equivocada
+                                es peor que ninguna. Si es el único, se confirma. */}
+                            <button title="Quitar este rostro" onClick={async () => {
+                              if (rostros.length === 1 && !window.confirm('Es su único rostro: no podrá marcar hasta que le agregues otra foto. ¿Quitarlo?')) return;
+                              const res = await quitarRostro(editEmp.id, r.id);
+                              if (res.error) { showToast(res.error); return; }
+                              setRostros(await listarRostros(editEmp.id));
+                              showToast(rostros.length === 1 ? 'Rostro quitado: ahora está sin rostro' : 'Rostro quitado');
+                            }}>×</button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {rostros.length === 1 && (
+                      <small className="field-hint">Con una sola foto puede confundirlo: agrega dos más, con distinta luz.</small>
+                    )}
                   </div>
-                )}
-                {rostros.length === 1 && (
-                  <small className="field-hint">Con una sola foto puede confundirlo: agrega dos más, con distinta luz.</small>
                 )}
               </section>
 
-              <section className="ficha-sec">
-                <div className="ficha-fila dos">
+              <section className="ficha-bloque">
+                <header className="ficha-bloque-head"><span>Sede y ubicación</span></header>
+                <div className="ficha-bloque-body">
                   <div className="field">
                     <label htmlFor="e-sede">Sede asignada</label>
                     <select
@@ -5150,88 +5176,98 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       <option value="">Sin sede</option>
                       {sedes.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}
                     </select>
-                    <label className="consent">
-                      <input
-                        type="checkbox" checked={editEmp.validarSede}
-                        onChange={(e) => setEditEmp({ ...editEmp, validarSede: e.target.checked })}
-                      />{' '}
-                      ¿Limitar ubicación?
-                      <Q texto="Solo puede marcar dentro del radio de su sede asignada (el GPS comprueba el rango, sin guardar el punto). Sin sede no tiene efecto." />
-                    </label>
-                    <label className="consent">
-                      <input
-                        type="checkbox" checked={editEmp.validarUbicacion}
-                        onChange={(e) => setEditEmp({ ...editEmp, validarUbicacion: e.target.checked })}
-                      />{' '}
-                      ¿Validar ubicación?
-                      <Q texto="Guarda el punto GPS exacto (y su dirección) de cada marcación, para saber desde dónde marcó. Aplica con o sin sede." />
-                    </label>
                   </div>
-                  {horarios.length > 0 && (
-                    <div className="field">
-                      <label htmlFor="e-horario">Horario</label>
-                      <select
-                        id="e-horario" value=""
-                        onChange={(e) => {
-                          const h = horarios.find((x) => x.id === e.target.value);
-                          // Asignar copia el mapa POR DÍAS completo a la ficha;
-                          // desde ahí es editable como una variación personal.
-                          if (h) setEditEmp({ ...editEmp, jornadaDias: JSON.parse(JSON.stringify(h.dias)) });
-                        }}
-                      >
-                        <option value="">Asignar un horario…</option>
-                        {horarios.map((h) => (
-                          <option key={h.id} value={h.id}>{h.nombre} ({resumenDias(h.dias)})</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                  <label className="consent">
+                    <input
+                      type="checkbox" checked={editEmp.validarSede}
+                      onChange={(e) => setEditEmp({ ...editEmp, validarSede: e.target.checked })}
+                    />{' '}
+                    Limitar a su sede
+                    <Q texto="Solo puede marcar dentro del radio de su sede asignada (el GPS comprueba el rango, sin guardar el punto). Sin sede no tiene efecto." />
+                  </label>
+                  <label className="consent">
+                    <input
+                      type="checkbox" checked={editEmp.validarUbicacion}
+                      onChange={(e) => setEditEmp({ ...editEmp, validarUbicacion: e.target.checked })}
+                    />{' '}
+                    Registrar GPS al marcar
+                    <Q texto="Guarda el punto GPS exacto (y su dirección) de cada marcación, para saber desde dónde marcó. Aplica con o sin sede." />
+                  </label>
                 </div>
-
-                {/* La jornada SIEMPRE sale de una plantilla de la pestaña
-                    Horarios: aquí solo se elige, no se edita por días. */}
-                {editEmp.jornadaDias ? (
-                  <div className="hd-resumen">
-                    <span>{resumenDias(editEmp.jornadaDias)}</span>
-                    <b>{fmtHM(horasSemanaDias(editEmp.jornadaDias))} / semana</b>
-                  </div>
-                ) : (
-                  <p className="hint">
-                    Sin horario asignado
-                    <Q texto="Elige una plantilla en «Asignar un horario…». Se crean y editan en la pestaña Horarios." />
-                  </p>
-                )}
               </section>
 
-              <section className="ficha-sec">
-                {/* Se escribe con separadores de miles: seis ceros seguidos se
-                    cuentan con el dedo. Al guardar se limpian los puntos. */}
-                <div className="field con-prefijo">
-                  <label htmlFor="e-salario">
-                    Salario mensual <span className="libre">opcional</span>
-                    <Q texto="Sirve para valorizar sus horas extra en pesos. Sin salario, las horas se cuentan pero no se valorizan." />
-                  </label>
-                  <input
-                    id="e-salario" className="num" type="text" inputMode="numeric"
-                    placeholder="Sin registrar"
-                    value={salario > 0 ? salario.toLocaleString('es-CO') : ''}
-                    onChange={(e) => setEditEmp({ ...editEmp, salarioMensual: e.target.value.replace(/\D/g, '') })}
-                  />
-                  <span className="prefijo">$</span>
-                </div>
-                {valorHora ? (
-                  <div className="derivado">
-                    <div><span className="k">Hora ordinaria</span><span className="v">{fmtCOP(Math.round(valorHora))}</span></div>
-                    {TIPOS_HORA.filter((t) => !t.dominical).map((t) => (
-                      <div key={t.codigo}>
-                        <span className="k">{t.nocturna ? 'Extra nocturna' : 'Extra diurna'}</span>
-                        <span className="v">{fmtCOP(Math.round(valorHora * (cfg.factores?.[t.codigo] ?? t.factor)))}</span>
-                      </div>
-                    ))}
+              {/* La jornada SIEMPRE sale de una plantilla de la pestaña
+                  Horarios: aquí solo se elige, no se edita por días. El select
+                  muestra la plantilla que coincide con la jornada de la ficha
+                  (antes se quedaba en «Asignar…» aunque ya tuviera una). */}
+              {(() => {
+                const plantilla = editEmp.jornadaDias ? horarios.find((h) => mismaJornada(h.dias, editEmp.jornadaDias)) : null;
+                const valorSel = !editEmp.jornadaDias ? '' : plantilla ? plantilla.id : 'personal';
+                return (
+                  <section className="ficha-bloque">
+                    <header className="ficha-bloque-head">
+                      <span>Horario</span>
+                      {editEmp.jornadaDias && <b>{fmtHM(horasSemanaDias(editEmp.jornadaDias))} / semana</b>}
+                    </header>
+                    <div className="ficha-bloque-body">
+                      {horarios.length > 0 ? (
+                        <div className="field">
+                          <select
+                            id="e-horario" aria-label="Horario" value={valorSel}
+                            onChange={(e) => {
+                              const h = horarios.find((x) => x.id === e.target.value);
+                              // Asignar copia el mapa POR DÍAS completo a la ficha.
+                              setEditEmp({ ...editEmp, jornadaDias: h ? JSON.parse(JSON.stringify(h.dias)) : null });
+                            }}
+                          >
+                            <option value="">Sin horario</option>
+                            {horarios.map((h) => (
+                              <option key={h.id} value={h.id}>{h.nombre}</option>
+                            ))}
+                            {valorSel === 'personal' && <option value="personal">Personalizado</option>}
+                          </select>
+                        </div>
+                      ) : (
+                        <p className="hint">No hay horarios: se crean en la pestaña Horarios.</p>
+                      )}
+                      <small className="field-hint">
+                        {editEmp.jornadaDias ? resumenDias(editEmp.jornadaDias) : 'Sin horario: no se le cuentan tardanzas ni se cierra su día.'}
+                      </small>
+                    </div>
+                  </section>
+                );
+              })()}
+
+              <section className="ficha-bloque">
+                <header className="ficha-bloque-head">
+                  <span>Salario <span className="libre">opcional</span> <Q texto="Sirve para valorizar sus horas extra en pesos. Sin salario, las horas se cuentan pero no se valorizan." /></span>
+                  {valorHora && <b>{fmtCOP(Math.round(valorHora))} / hora</b>}
+                </header>
+                <div className="ficha-bloque-body">
+                  {/* Se escribe con separadores de miles: seis ceros seguidos se
+                      cuentan con el dedo. Al guardar se limpian los puntos. */}
+                  <div className="field con-prefijo">
+                    <input
+                      id="e-salario" className="num" type="text" inputMode="numeric" aria-label="Salario mensual"
+                      placeholder="Sin registrar"
+                      value={salario > 0 ? salario.toLocaleString('es-CO') : ''}
+                      onChange={(e) => setEditEmp({ ...editEmp, salarioMensual: e.target.value.replace(/\D/g, '') })}
+                    />
+                    <span className="prefijo">$</span>
                   </div>
-                ) : (
-                  <p className="hint">Sin salario no se valorizan las horas.</p>
-                )}
+                  {valorHora ? (
+                    <div className="derivado">
+                      {TIPOS_HORA.filter((t) => !t.dominical).map((t) => (
+                        <div key={t.codigo}>
+                          <span className="k">{t.nocturna ? 'Extra nocturna' : 'Extra diurna'}</span>
+                          <span className="v">{fmtCOP(Math.round(valorHora * (cfg.factores?.[t.codigo] ?? t.factor)))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <small className="field-hint">Sin salario no se valorizan las horas.</small>
+                  )}
+                </div>
               </section>
 
             </div>
@@ -5754,13 +5790,20 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 }
 .ficha-head .btn:hover { background: rgba(255,255,255,.10); }
 
-.ficha-body { flex: 1 1 auto; overflow-y: auto; padding: 0 18px; }
-.ficha-sec { padding: 15px 0; border-top: 1px solid var(--grid); }
-.ficha-sec:first-child { border-top: 0; }
-.ficha-sec > h4 {
-  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
-  color: var(--muted); font-weight: 650; margin-bottom: 11px;
+.ficha-body { flex: 1 1 auto; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+/* Bloques con cabecera gris, como las semanas cerradas del cajón. */
+.ficha-bloque { flex: 0 0 auto; border: 1px solid #e2e6eb; border-radius: 10px; overflow: hidden; background: var(--surface); }
+.ficha-bloque-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 12px; background: #eef1f4; border-bottom: 1px solid #e2e6eb;
+  font-size: 12.5px; font-weight: 700; color: var(--ink-2);
 }
+.ficha-bloque-head b { font-family: var(--f-data); font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ficha-bloque-head .libre { font-weight: 400; color: var(--muted); }
+.ficha-bloque-head .btn.btn-ico { padding: 4px 7px; min-width: 28px; }
+.ficha-bloque-titulo { display: inline-flex; align-items: center; gap: 8px; }
+.ficha-bloque-body { padding: 12px; }
+.ficha-body .field input:not([type="checkbox"]), .ficha-body .field select { background: var(--surface-blanca); }
 .ficha-fila { display: grid; gap: 10px; margin-bottom: 10px; }
 .field-hint { display: block; font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
 /* Rostros del empleado: cada foto guardada, con su fecha y su aspa. */
@@ -5785,7 +5828,7 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 /* :not(checkbox): estirar un checkbox a todo el ancho lo saca de su fila. */
 .ficha-body .field input:not([type="checkbox"]), .ficha-body .field select { width: 100%; }
 .ficha-body .consent {
-  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  display: flex; align-items: center; gap: 8px; margin-top: 10px;
   font-size: 12.5px; font-weight: 600; color: var(--ink-2); cursor: pointer;
 }
 .ficha-body .consent input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); flex: 0 0 auto; }
