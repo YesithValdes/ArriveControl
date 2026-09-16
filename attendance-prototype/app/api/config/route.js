@@ -39,6 +39,7 @@ export async function GET() {
       nocturno_inicio: aHHMM(laboral.nocturno.inicio),
       nocturno_fin: aHHMM(laboral.nocturno.fin),
       modo_extra: laboral.modoExtra,
+      periodo_pago: laboral.periodoPago,
     },
   })
 }
@@ -125,6 +126,14 @@ export async function PATCH(req) {
     args.push(c.modo_extra); sets.push(`modo_extra = $${args.length}`)
   }
 
+  if ('periodo_pago' in c) {
+    // Cada cuánto se liquidan las extras. Solo agrupa reportes: no abre vigencia.
+    if (!['quincena', 'mes'].includes(c.periodo_pago)) {
+      return NextResponse.json({ ok: false, error: 'El período de pago debe ser «quincena» o «mes».' }, { status: 400 })
+    }
+    args.push(c.periodo_pago); sets.push(`periodo_pago = $${args.length}`)
+  }
+
   if (sets.length === 0) return NextResponse.json({ ok: false, error: 'Nada que actualizar.' }, { status: 400 })
 
   // `horas_semana` cuenta como cambio de pago: arrastra el divisor (× 5).
@@ -135,7 +144,7 @@ export async function PATCH(req) {
     const r = await db.query(
       `update config_laboral set ${sets.join(', ')} where id
        returning gracia_min, horas_semana, festivos,
-                 divisor_horas_mes, factores_hora, modo_extra,
+                 divisor_horas_mes, factores_hora, modo_extra, periodo_pago,
                  to_char(nocturno_inicio, 'HH24:MI') as nocturno_inicio,
                  to_char(nocturno_fin, 'HH24:MI') as nocturno_fin`,
       args,

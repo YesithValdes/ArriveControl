@@ -1080,6 +1080,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // Período de la gráfica de horas y de costos: la QUINCENA en curso (1–15 o
   // 16–fin, como se liquida la nómina) o el mes calendario hasta hoy.
   const [rangoModo, setRangoModo] = useState('quincena');
+  // El período por defecto del dashboard es el de pago de la empresa (Reglamento).
+  useEffect(() => { setRangoModo(cfg.periodoPago === 'mes' ? 'mes' : 'quincena'); }, [cfg.periodoPago]);
   // Costos del período: tramos valorizados por el servidor (misma fuente que Reportes).
   const [costos, setCostos] = useState({ estado: 'cargando', tramos: [] });
   // Filtros por columna de la tabla Empleados: cada encabezado lleva su
@@ -1315,6 +1317,61 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     // sin esto una consulta lenta puede pisar el resultado de la nueva.
     return () => { vigente = false; };
   }, [tab, repFrom, repTo, tick]);
+
+  /**
+   * El reporte por PERÍODOS DE PAGO, para el celular: mes → quincena (o mes)
+   * → empleado, con lo que generó cada uno y su estado de pago. Sale de los
+   * mismos tramos del servidor que la tabla de PC; solo cambia la agrupación.
+   */
+  const reportePeriodos = useMemo(() => {
+    const nombrePorCedula = new Map(listPeople().map((p) => [p.cedula, p.name]));
+    const hoy = todayKey();
+    const quincenal = cfg.periodoPago !== 'mes';
+    const periodos = new Map();
+    for (const t of repDatos.tramos) {
+      const mes = t.fecha.slice(0, 7);
+      const dia = Number(t.fecha.slice(8, 10));
+      const ultimo = new Date(Number(mes.slice(0, 4)), Number(mes.slice(5, 7)), 0).getDate();
+      const segunda = quincenal && dia > 15;
+      const clave = quincenal ? `${mes}-${segunda ? 'b' : 'a'}` : mes;
+      if (!periodos.has(clave)) {
+        periodos.set(clave, {
+          clave, mes,
+          desde: `${mes}-${segunda ? '16' : '01'}`,
+          hasta: `${mes}-${String(quincenal && !segunda ? 15 : ultimo).padStart(2, '0')}`,
+          valor: 0, sinSalario: false, horasPorTipo: Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0])),
+          empleados: new Map(),
+        });
+      }
+      const p = periodos.get(clave);
+      if (!p.empleados.has(t.documento)) {
+        p.empleados.set(t.documento, {
+          cedula: t.documento, name: nombrePorCedula.get(t.documento) ?? `C.C. ${t.documento}`,
+          horasPorTipo: Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0])),
+          extras: 0, valor: 0, sinSalario: false, referencias: [], refsSinPagar: [],
+        });
+      }
+      const e = p.empleados.get(t.documento);
+      e.horasPorTipo[t.tipoHora] += t.horas; e.extras += t.horas;
+      p.horasPorTipo[t.tipoHora] += t.horas;
+      e.referencias.push(t.referenciaExterna);
+      if (!t.pagado) e.refsSinPagar.push(t.referenciaExterna);
+      if (t.valor == null) { e.sinSalario = true; p.sinSalario = true; } else { e.valor += t.valor; p.valor += t.valor; }
+    }
+    const meses = new Map();
+    for (const p of [...periodos.values()].sort((a, b) => b.desde.localeCompare(a.desde))) {
+      p.enCurso = p.hasta >= hoy;
+      p.lista = [...p.empleados.values()]
+        .map((e) => ({ ...e, pago: e.refsSinPagar.length === 0 ? 'pagado' : e.refsSinPagar.length === e.referencias.length ? 'pendiente' : 'parcial' }))
+        .sort((a, b) => b.valor - a.valor || b.extras - a.extras);
+      if (!meses.has(p.mes)) meses.set(p.mes, { mes: p.mes, valor: 0, sinSalario: false, periodos: [] });
+      const m = meses.get(p.mes);
+      m.valor += p.valor; m.sinSalario = m.sinSalario || p.sinSalario; m.periodos.push(p);
+    }
+    return [...meses.values()];
+  }, [repDatos.tramos, cfg.periodoPago, tick]);
+  // Períodos desplegados: sin entrada, el que está en curso va abierto.
+  const [periodosAbiertos, setPeriodosAbiertos] = useState({});
 
   const report = useMemo(() => {
     const nowMs = Date.now();
@@ -3063,42 +3120,70 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     ))}
                   </div>
 
-                  <AccList
-                    items={report.map((r) => ({
-                      id: r.cedula,
-                      title: r.name,
-                      right: (
-                        <span className="acc-note">
-                          {!r.conExtras ? '—' : r.sinSalario ? 'sin salario' : fmtCOP(r.valor)}
-                        </span>
-                      ),
-                      fields: [
-                        ...TIPOS_HORA.map((t) => [
-                          `${t.codigo} — ${t.nombre}`,
-                          r.horasPorTipo[t.codigo] > 0 ? fmtHoras(r.horasPorTipo[t.codigo]) : '—',
-                        ]),
-                        ['Total horas extra', r.extras > 0 ? fmtHoras(r.extras) : '—'],
-                        ['Valor generado', !r.conExtras ? '—' : r.sinSalario ? 'sin salario registrado' : fmtCOP(r.valor)],
-                        ...(r.conExtras ? [['Estado de pago', etiquetaPago(r)]] : []),
-                        ['Sede', r.sede || '—'],
-                        ['Días trabajados', r.days],
-                        ['Horas trabajadas', fmtHoras(r.hours)],
-                        ['Entradas tardías', r.lateCount],
-                      ],
-                      actions: (
-                        <>
-                          {permisos.liquidar && r.conExtras && (
-                            <button className="btn block" onClick={() => alternarPago(r)}>
-                              {r.pago === 'pagado' ? 'Quitar marca de pagado' : 'Marcar como pagadas'}
-                            </button>
-                          )}
-                          <button className="btn primary block" onClick={() => irAAsistenciaEmpleado(r.cedula)}>
-                            Ver su asistencia del período
-                          </button>
-                        </>
-                      ),
-                    }))}
-                  />
+                  {/* En el celular: mes → período de pago → empleado, como el cajón
+                      por semanas. Se toca el período para ver a la gente; se toca
+                      la persona para ir a sus marcaciones. */}
+                  <div className="rep-periodos">
+                    {reportePeriodos.length === 0 && repDatos.estado === 'listo' && <p className="empty">Sin horas extra en el rango.</p>}
+                    {reportePeriodos.map((m) => (
+                      <Fragment key={m.mes}>
+                        <div className="sem-mes rep-mes">
+                          <span>{new Date(`${m.mes}-15T12:00:00`).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })}</span>
+                          <b>{m.sinSalario ? 'sin salario' : fmtCOP(m.valor)}</b>
+                        </div>
+                        {m.periodos.map((p) => {
+                          const abierto = periodosAbiertos[p.clave] ?? p.enCurso;
+                          const alternar = () => setPeriodosAbiertos({ ...periodosAbiertos, [p.clave]: !abierto });
+                          const d1 = Number(p.desde.slice(8, 10)); const d2 = Number(p.hasta.slice(8, 10));
+                          const mesCorto = new Date(`${p.mes}-15T12:00:00`).toLocaleDateString('es-CO', { month: 'short' });
+                          return (
+                            <section className={`sem-bloque ${p.enCurso ? 'curso' : 'cerrada'}${abierto ? '' : ' plegada'}`} key={p.clave}>
+                              <header
+                                className="sem-head" role="button" tabIndex={0} aria-expanded={abierto}
+                                onClick={alternar}
+                                onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); alternar(); } }}
+                              >
+                                <span className="sem-top">
+                                  <span className="sem-titulo" title={p.enCurso ? 'Período en curso' : 'Período cerrado'}>
+                                    {cfg.periodoPago === 'mes' ? 'Todo el mes' : `${d1} – ${d2} ${mesCorto}`}
+                                  </span>
+                                  <span className="sem-total">{p.sinSalario ? 'sin salario' : fmtCOP(p.valor)}</span>
+                                  <span className={`sem-chev${abierto ? ' abierta' : ''}`} aria-hidden="true">›</span>
+                                </span>
+                                <span className="sem-chips">
+                                  {CODIGOS_HORA.filter((c) => p.horasPorTipo[c] > 0.001).map((c) => (
+                                    <span key={c} className={`sem-chip ${c.endsWith('DF') ? 'dom' : 'extra'}`} title={nombreTipo(c)}>{c} {fmtHoras(p.horasPorTipo[c])}</span>
+                                  ))}
+                                </span>
+                              </header>
+                              {abierto && p.lista.map((e) => (
+                                <div className="rep-emp" key={e.cedula}>
+                                  <button className="rep-emp-btn" onClick={() => irAAsistenciaEmpleado(e.cedula)} title="Ver sus marcaciones del período">
+                                    <span className="rep-emp-txt">
+                                      <b>{nombreCorto(e.name)}</b>
+                                      <small>{CODIGOS_HORA.filter((c) => e.horasPorTipo[c] > 0.001).map((c) => `${c} ${fmtHoras(e.horasPorTipo[c])}`).join(' · ')}</small>
+                                    </span>
+                                    <span className={`rep-emp-valor${e.sinSalario ? ' muted' : ''}`}>{e.sinSalario ? 'sin salario' : fmtCOP(e.valor)}</span>
+                                    <span className="dia-chev">›</span>
+                                  </button>
+                                  {permisos.liquidar && (
+                                    <button
+                                      className={`btn small btn-ico rep-pago${e.pago === 'pagado' ? ' pagado' : e.pago === 'parcial' ? ' parcial' : ''}`}
+                                      title={e.pago === 'pagado' ? 'Pagado · tocar para quitar la marca' : e.pago === 'parcial' ? 'Pagado en parte · tocar para completar' : 'Marcar como pagadas'}
+                                      aria-label={e.pago === 'pagado' ? 'Quitar marca de pagado' : 'Marcar como pagadas'}
+                                      onClick={() => alternarPago(e)}
+                                    >
+                                      <Icon name="check" size={14} />
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </section>
+                          );
+                        })}
+                      </Fragment>
+                    ))}
+                  </div>
 
                 </div>
               )}
@@ -4138,6 +4223,24 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     >
                       <option value="semana">Por semana</option>
                       <option value="dia">Por día</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="cfg-row">
+                  <label htmlFor="cfg-periodo-pago">
+                    Pago de horas extra
+                    <small>{cfg.periodoPago === 'mes' ? 'Se liquidan cada mes.' : 'Se liquidan cada quincena (1–15 y 16–fin de mes).'}</small>
+                  </label>
+                  <div className="cfg-input">
+                    <select
+                      id="cfg-periodo-pago"
+                      className="sede-select"
+                      aria-label="Cada cuánto se liquidan las horas extra"
+                      value={cfg.periodoPago ?? 'quincena'}
+                      onChange={(e) => updateCfg({ periodoPago: e.target.value })}
+                    >
+                      <option value="quincena">Quincenal</option>
+                      <option value="mes">Mensual</option>
                     </select>
                   </div>
                 </div>
@@ -6017,6 +6120,21 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .sem-chev.abierta { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .sem-chev { transition: none; } }
 .sem-bloque.plegada .sem-head { border-bottom: 0; }
+/* Reporte por períodos (celular). Reutiliza los bloques del cajón. */
+.rep-periodos { display: flex; flex-direction: column; gap: 8px; }
+.rep-mes { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.rep-mes b { font-size: 13px; letter-spacing: 0; text-transform: none; color: var(--ink); font-variant-numeric: tabular-nums; }
+.rep-emp { display: flex; align-items: center; gap: 6px; padding: 0 8px; border-bottom: 1px solid var(--grid); }
+.rep-emp:last-child { border-bottom: 0; }
+.rep-emp-btn { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 9px 2px; border: 0; background: transparent; font: inherit; text-align: left; color: var(--ink); cursor: pointer; }
+.rep-emp-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rep-emp-txt b { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rep-emp-txt small { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rep-emp-valor { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink); }
+.rep-emp-valor.muted { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+.rep-pago { color: var(--muted); }
+.rep-pago.pagado { background: #dcf3e6; border-color: #b7e4c7; color: #1a7f4b; }
+.rep-pago.parcial { background: #fdf3d3; border-color: #eedfa8; color: #8a6100; }
 .sem-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .sem-chip {
   font-size: 11.5px; font-weight: 600; color: var(--ink-2); background: var(--surface);
@@ -6234,6 +6352,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .rep-table { display: flex; }
   .solo-pc { display: inline-flex; }
   .acc { display: none; }
+  .rep-periodos { display: none; }
   .tabbar > button {
     flex-direction: row; justify-content: flex-start; gap: 10px;
     width: 100%; font-size: 12px; padding: 10px 14px;

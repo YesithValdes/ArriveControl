@@ -98,7 +98,7 @@ export async function configLaboral(esquema) {
   const pago = await parametrosPago(esquema)
 
   const { rows } = await conEmpresa(esquema, (db) => db.query(
-    `select horas_semana, festivos from config_laboral where id`,
+    `select horas_semana, festivos, periodo_pago from config_laboral where id`,
   ))
   const cfg = rows[0] ?? { horas_semana: 42, festivos: [] }
 
@@ -115,6 +115,8 @@ export async function configLaboral(esquema) {
     festivos,
     vigencias: vigenciasDeHorasSemana(cfg.horas_semana),
     sabadoHabil: true,
+    // Cada cuánto se liquidan las extras (agrupa el reporte): quincena o mes.
+    periodoPago: cfg.periodo_pago === 'mes' ? 'mes' : 'quincena',
     ...pago,
   }
 }
