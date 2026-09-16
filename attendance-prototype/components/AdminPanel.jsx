@@ -1219,7 +1219,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           }
         }
         if (e.flag === 'late-entry') anomalies.push({ kind: 'late-entry', person: p, event: e });
-        if (e.flag === 'early-exit') anomalies.push({ kind: 'early-exit', person: p, event: e });
       }
 
       const corrected = mine.some((e) => e.correctedBy && dayKey(e.ts) === todayKey());
@@ -2355,7 +2354,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     // Novedad: ¿esta persona tiene alguna anomalía DEL DÍA que
                     // se está viendo? Se señala resaltando la FILA con un lavado
                     // suave (sin columna aparte); el detalle va en el tooltip.
-                    const NOMBRE_NOVEDAD = { 'missing-exit': 'Salida faltante', 'late-entry': 'Entrada tardía', 'early-exit': 'Salida temprana' };
+                    const NOMBRE_NOVEDAD = { 'missing-exit': 'Salida faltante', 'late-entry': 'Entrada tardía' };
                     const novedadDe = (r) => {
                       const novs = data.anomalies.filter((a) => a.person.id === r.person.id && dayKey(a.event.ts) === diaAsistencia);
                       if (novs.length === 0) return null;
@@ -2484,10 +2483,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 </button>
                 <div className="anom-desglose">
                   {view.anomalies.length === 0 && <span>Nada pendiente.</span>}
-                  {['missing-exit', 'late-entry', 'early-exit'].map((k) => {
+                  {['missing-exit', 'late-entry'].map((k) => {
                     const n = view.anomalies.filter((a) => a.kind === k).length;
                     if (!n) return null;
-                    const txt = k === 'missing-exit' ? 'sin registrar salida' : k === 'late-entry' ? 'con entrada tardía' : 'con salida temprana';
+                    const txt = k === 'missing-exit' ? 'sin registrar salida' : 'con entrada tardía';
                     return <span key={k}>{n} {txt}</span>;
                   })}
                 </div>
@@ -2615,10 +2614,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           <section className="card grow">
             <h2>Anomalías por resolver <span className="muted-count">{view.anomalies.length}</span></h2>
             {/* Filtro por tipo (aplica a la bandeja de PC y a la lista móvil).
-                En el celular es una sola fila de cuatro celdas con el número
+                En el celular es una sola fila de tres celdas con el número
                 arriba y el nombre corto abajo; en PC, chips con el nombre largo. */}
             <div className="att-controls anom-filtros">
-              {[['all', 'Todas', 'Todas'], ['missing-exit', 'Salida faltante', 'Sin salida'], ['late-entry', 'Entrada tardía', 'Tardías'], ['early-exit', 'Salida temprana', 'Tempranas']].map(([id, lbl, corto]) => (
+              {[['all', 'Todas', 'Todas'], ['missing-exit', 'Salida faltante', 'Sin salida'], ['late-entry', 'Entrada tardía', 'Tardías']].map(([id, lbl, corto]) => (
                 <button key={id} className="fchip" aria-pressed={anomFiltro === id} onClick={() => { setAnomFiltro(id); setAnomAbierta(null); setAnomPage(0); }}>
                   <span className="solo-pc">{lbl}</span><span className="solo-movil">{corto}</span>
                   <span className="fchip-n">{id === 'all' ? view.anomalies.length : view.anomalies.filter((a) => a.kind === id).length}</span>
@@ -2639,14 +2638,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 const dosTextos = (largo, corto) => <><span className="solo-pc">{largo}</span><span className="solo-movil">{corto}</span></>;
                 const aChip = (a) =>
                   a.kind === 'missing-exit' ? chip('crit', dosTextos('Salida faltante', 'Sin salida'))
-                    : a.kind === 'early-exit' ? chip('warn', dosTextos('Salida temprana', 'Temprana'))
-                      : chip('warn', dosTextos('Entrada tardía', 'Tardía'));
+                    : chip('warn', dosTextos('Entrada tardía', 'Tardía'));
                 const aDesc = (a) =>
                   a.kind === 'missing-exit'
                     ? `Entró ${fmt12(a.event.ts)}, sin salida.`
-                    : a.kind === 'early-exit'
-                      ? `Salió ${fmt12(a.event.ts)}, esperada ${a.person.expectedExit || '—'}.`
-                      : `Entró ${fmt12(a.event.ts)}.`;
+                    : `Entró ${fmt12(a.event.ts)}.`;
                 const aDay = (a) => new Date(a.event.ts).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
                 if (view.anomalies.length === 0) return <p className="empty">🎉 Sin anomalías pendientes.</p>;
                 if (casos.length === 0) return <p className="empty">Sin anomalías de este tipo.</p>;
@@ -4585,8 +4581,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           {d.evs.map((e, i) => {
                             // Mismo criterio que los bloques ⚠ de arriba y que el
                             // resaltado de Asistencia: marcación con bandera
-                            // (tardía / salida temprana) o entrada sin su salida.
-                            const novedad = e.flag === 'late-entry' || e.flag === 'early-exit'
+                            // (tardía) o entrada sin su salida.
+                            const novedad = e.flag === 'late-entry'
                               || (e.type === 'in' && d.evs[i + 1]?.type !== 'out');
                             return (
                             <div key={e.id}>
@@ -6605,8 +6601,8 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .caso-cab { gap: 8px; padding: 7px 4px; }
   .caso-cab .av-tabla { width: 28px; height: 28px; font-size: 11px; }
   .caso-panel { padding: 0 10px 12px; }
-  /* Filtros: cuatro celdas iguales, número grande arriba y nombre corto abajo. */
-  .anom-filtros { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+  /* Filtros: tres celdas iguales, número grande arriba y nombre corto abajo. */
+  .anom-filtros { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
   .anom-filtros .fchip { display: flex; flex-direction: column-reverse; align-items: center; gap: 0; border: 0; border-radius: 0; padding: 6px 2px; font-size: 10.5px; white-space: nowrap; line-height: 1.3; }
   .anom-filtros .fchip + .fchip { border-left: 1px solid var(--grid); }
   .anom-filtros .fchip[aria-pressed="true"] { background: var(--btn-primary); color: #fff; }

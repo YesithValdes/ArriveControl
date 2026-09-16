@@ -763,14 +763,9 @@ await test('entrada tardía: avisa con las dos horas', () => {
   assert.match(tarde.texto, /12:30 p\. m\..*09:00 a\. m\./);
 });
 
-await test('salir a almorzar NO es salida temprana', () => {
-  const r = resumenDelDia(JUAN, [mk('entrada', '09:00'), mk('salida', '13:00'), mk('entrada', '14:00'), mk('salida', '17:30')], LUNES);
-  assert.equal(r.avisos.filter((a) => a.clase === 'temprano').length, 0);
-});
-
-await test('irse a media tarde SÍ es salida temprana', () => {
+await test('irse antes de la hora NO genera aviso (se quitó la salida temprana)', () => {
   const r = resumenDelDia(JUAN, [mk('entrada', '09:00'), mk('salida', '15:00')], LUNES);
-  assert.ok(r.avisos.some((a) => a.clase === 'temprano'));
+  assert.deepEqual(r.avisos, []);
 });
 
 await test('un día sin horario se resume igual, sin comparaciones', () => {
@@ -1026,10 +1021,9 @@ await test('una clase nueva no reutiliza el nombre de otra que ya tiene reglas',
 });
 
 // ── Novedades deducidas del horario ─────────────────────────────────────
-// «Salida temprana» aparecía en el panel pero NUNCA se marcaba: la regla se
-// quedó en journeyService.js, el servicio del prototipo que panelStore
-// reemplazó. El filtro existía y siempre devolvía cero.
-console.log('\n🚩 Novedades: entrada tardía y salida temprana');
+// Solo la entrada tardía. La «salida temprana» se quitó de todo el sistema
+// (2026-09-16): irse antes no es incidencia, se ve en la cuenta de horas.
+console.log('\n🚩 Novedades: entrada tardía (y nada más)');
 const { marcarNovedades } = await import('../services/panelStore.js');
 
 const ANA = {
@@ -1045,7 +1039,7 @@ const ev = (tipo, hora, dia = '2026-08-03') => ({
   personId: 'P1', type: tipo, ts: `${dia}T${hora}:00-05:00`, flag: null,
 });
 /** Banderas que quedaron, en orden. */
-const banderas = (evs) => marcarNovedades(evs, GENTE, '2026-08-10').map((e) => e.flag);
+const banderas = (evs) => marcarNovedades(evs, GENTE).map((e) => e.flag);
 
 await test('día normal: sin novedades', () => {
   assert.deepEqual(banderas([ev('in', '09:05'), ev('out', '13:00'), ev('in', '14:00'), ev('out', '17:30')]),
@@ -1058,28 +1052,19 @@ await test('entrada tarde pero dentro del margen: sin novedad', () => {
   // 11:00 son 2 h de retraso: molesto, pero no es una incidencia que revisar.
   assert.deepEqual(banderas([ev('in', '11:00'), ev('out', '17:30')]), [null, null]);
 });
-await test('se fue a las 15:00 y no volvió: salida temprana', () => {
-  assert.deepEqual(banderas([ev('in', '09:00'), ev('out', '15:00')]), [null, 'early-exit']);
+await test('irse a las 15:00 sin volver NO es novedad: la salida temprana no existe', () => {
+  assert.deepEqual(banderas([ev('in', '09:00'), ev('out', '15:00')]), [null, null]);
 });
-await test('la salida a ALMORZAR no es salida temprana', () => {
-  // 13:00 es mucho antes de las 17:30, pero después volvió: no era la final.
+await test('ni la salida a almorzar, claro', () => {
   assert.deepEqual(banderas([ev('in', '09:00'), ev('out', '13:00'), ev('in', '14:00'), ev('out', '17:30')]),
     [null, null, null, null]);
-});
-await test('salir un poco antes no es novedad', () => {
-  // 16:30 es una hora antes; el margen es de hora y media.
-  assert.deepEqual(banderas([ev('in', '09:00'), ev('out', '16:30')]), [null, null]);
-});
-await test('el día EN CURSO no se juzga: todavía puede volver', () => {
-  const evs = [ev('in', '09:00'), ev('out', '13:00')];
-  assert.deepEqual(marcarNovedades(evs, GENTE, '2026-08-03').map((e) => e.flag), [null, null]);
 });
 await test('sin horario ese día no hay contra qué comparar', () => {
   // Domingo: no está en su jornada, así que nada se marca.
   assert.deepEqual(banderas([ev('in', '14:00', '2026-08-02'), ev('out', '15:00', '2026-08-02')]), [null, null]);
 });
-await test('las dos novedades pueden convivir en un día', () => {
-  assert.deepEqual(banderas([ev('in', '12:30'), ev('out', '15:00')]), ['late-entry', 'early-exit']);
+await test('entrada tarde y salida antes: solo la entrada es novedad', () => {
+  assert.deepEqual(banderas([ev('in', '12:30'), ev('out', '15:00')]), ['late-entry', null]);
 });
 
 // ── Validación de la hora de almuerzo del horario ───────────────────────

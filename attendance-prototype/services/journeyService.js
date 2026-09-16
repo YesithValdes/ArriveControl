@@ -17,7 +17,6 @@
  *    si la persona marca su pausa, ese tiempo queda fuera de los pares solo.
  *  - Anomalías:
  *    · 'late-entry'   → solo si el empleado TIENE horario de entrada configurado.
- *    · 'early-exit'   → solo si TIENE horario de salida configurado.
  *    · 'missing-exit' → ENTRADA con > 12 h sin salida que la cierre (no depende
  *                       de horario: sin el cierre del par, las horas no se calculan).
  *
@@ -31,10 +30,8 @@ export const ANTI_BOUNCE_MS = 3 * 60 * 1000;      // 3 minutos
 export const NIGHT_WINDOW_MS = 12 * 60 * 60 * 1000; // 12 horas
 export const LATE_ENTRY_HOUR = 12;                 // mediodía (fallback sin horario)
 export const LATE_TOLERANCE_MIN = 180;             // 3 h después del horario esperado
-// Salida temprana: solo alerta si se va MUCHO antes de su hora esperada.
-// Salir más tarde NUNCA es anomalía: en esta operación alargarse es normal
-// y se contabiliza como horas extra, no como incidencia.
-export const EARLY_EXIT_TOLERANCE_MIN = 90;        // 1½ h antes de lo esperado
+// Salir antes o después de la hora NUNCA es anomalía: alargarse se cuenta
+// como horas extra, e irse antes se ve en la cuenta de horas, no como incidencia.
 
 const hasLS = typeof localStorage !== 'undefined';
 const load = () => {
@@ -83,15 +80,6 @@ export function registerPassage(person, now = new Date()) {
     }
   }
 
-  // Anomalía: salida MUY anterior a la esperada. Solo se evalúa aquí, en el
-  // momento de marcar; si la persona vuelve a entrar después (almuerzo), la
-  // bandera se limpia al cerrar la jornada real (ver clearEarlyExitIfReturned).
-  if (type === 'out' && HHMM.test(person.expectedExit || '')) {
-    const [xh, xm] = person.expectedExit.split(':').map(Number);
-    const nowMin = now.getHours() * 60 + now.getMinutes();
-    if (nowMin < xh * 60 + xm - EARLY_EXIT_TOLERANCE_MIN) flag = 'early-exit';
-  }
-
   const event = {
     id: `${nowMs}-${person.id}`,
     personId: person.id,
@@ -102,14 +90,6 @@ export function registerPassage(person, now = new Date()) {
     flag,
     correctedBy: null,
   };
-
-  // Si la persona VUELVE a entrar, la salida anterior no era la final: era
-  // una pausa (almuerzo, diligencia). Limpiamos su bandera 'early-exit' para
-  // no reportar como incidencia lo que fue un descanso normal.
-  if (type === 'in' && last && last.type === 'out' && last.flag === 'early-exit') {
-    const original = events.find((e) => e.id === last.id);
-    if (original) original.flag = null;
-  }
 
   // El guardado puede fallar (almacenamiento lleno/corrupto). NUNCA debe
   // reventar al kiosco ni simular un éxito: se reporta como error manejable.

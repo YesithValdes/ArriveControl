@@ -25,7 +25,6 @@ export const NIGHT_WINDOW_MS = 12 * 60 * 60 * 1000;
 // tarde no la revisa nadie. La puntualidad del día a día es otra cosa y tiene
 // su propio margen, configurable en Ajustes → Reglamento.
 const LATE_TOLERANCE_MIN = 180;        // 3 h después de su hora de entrada
-const EARLY_EXIT_TOLERANCE_MIN = 90;   // 1½ h antes de su hora de salida
 
 // ── Store en memoria ──────────────────────────────────────────────────
 const store = {
@@ -248,30 +247,22 @@ const minutosDeHora = (h) => {
 /**
  * Marca en los eventos las NOVEDADES que se deducen del horario.
  *
- * Son dos, y las dos comparan contra la franja esperada de ESE día de la
- * semana, porque la jornada puede variar por día:
+ * Es una sola, y compara contra la franja esperada de ESE día de la semana,
+ * porque la jornada puede variar por día:
  *
- *  · 'late-entry'  la primera entrada del día llegó muy tarde;
- *  · 'early-exit'  la ÚLTIMA marcación del día fue una salida muy anterior a
- *                  la hora de salida.
+ *  · 'late-entry'  la primera entrada del día llegó muy tarde.
  *
- * Que sea la última es lo que distingue una salida temprana de la pausa del
- * almuerzo: si después volvió a entrar, esa salida no era la final y no se
- * marca nada. Antes esta regla vivía en journeyService.js —el servicio del
- * prototipo, ya reemplazado por este— así que el panel tenía el filtro
- * «Salida temprana» pero nunca contaba ni un caso.
- *
- * La salida temprana solo se juzga en días TERMINADOS: en el día en curso la
- * persona todavía puede volver, y sería reportar como incidencia un almuerzo.
- * Es la misma frontera que usan la salida faltante y el cierre de horas.
+ * Irse antes de la hora NO es novedad: se decidió quitar la «salida temprana»
+ * de todo el sistema (las horas de menos ya se ven en la cuenta de la semana,
+ * y como incidencia solo generaba ruido). Salir más tarde tampoco lo es:
+ * alargarse se cuenta como extra.
  *
  * Función aparte y con las personas por parámetro para poder probarla.
  *
  * @param {Array} eventos  se marcan EN EL SITIO y se devuelven
  * @param {Map} personaPorId
- * @param {string} hoy  día Bogotá (YYYY-MM-DD); parámetro para las pruebas
  */
-export function marcarNovedades(eventos, personaPorId, hoy = bogotaDay(new Date().toISOString())) {
+export function marcarNovedades(eventos, personaPorId) {
   const porDia = new Map();
   for (const e of eventos) {
     const k = `${e.personId}|${bogotaDay(e.ts)}`;
@@ -283,22 +274,12 @@ export function marcarNovedades(eventos, personaPorId, hoy = bogotaDay(new Date(
     const franja = franjaEsperada(personaPorId.get(delDia[0].personId), dia);
     if (!franja) continue; // día libre o sin horario: no hay contra qué comparar
     const entrada = minutosDeHora(franja.entrada);
-    const salida = minutosDeHora(franja.salida);
     delDia.sort((a, b) => a.ts.localeCompare(b.ts));
 
     const primera = delDia.find((e) => e.type === 'in');
     if (primera && entrada != null && !primera.flag
         && minutosDe(primera.ts) >= entrada + LATE_TOLERANCE_MIN) {
       primera.flag = 'late-entry';
-    }
-
-    // Turno que cruza la medianoche: su salida cae en el día siguiente y
-    // compararla con los minutos de ESTE día daría siempre «temprana».
-    if (dia >= hoy || entrada == null || salida == null || salida <= entrada) continue;
-    const ultima = delDia[delDia.length - 1];
-    if (ultima.type === 'out' && !ultima.flag
-        && minutosDe(ultima.ts) < salida - EARLY_EXIT_TOLERANCE_MIN) {
-      ultima.flag = 'early-exit';
     }
   }
   return eventos;

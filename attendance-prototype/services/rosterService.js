@@ -63,7 +63,7 @@ export function addPerson(name, descriptor, opts = {}) {
     name: name.trim() || id,
     cedula: c,
     // Horario esperado ("HH:MM") — OPCIONAL, cadena vacía = sin horario fijo.
-    // Solo si está definido se activan las alertas de tardanza / salida temprana.
+    // Solo si está definido se activa la alerta de tardanza.
     expectedEntry: HHMM.test(expectedEntry) ? expectedEntry : '',
     expectedExit: HHMM.test(expectedExit) ? expectedExit : '',
     // Pausa de almuerzo (min): solo sirve para estimar la jornada esperada.

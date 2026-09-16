@@ -145,17 +145,15 @@ await test('la misma cédula con puntos no debería registrarse dos veces', () =
 console.log('\n🍴 CASO 9 · Jornada partida (8–19 con almuerzo) y salida esperada');
 const JP = { id: 'PJ', name: 'Jornada Partida', expectedEntry: '08:00', expectedExit: '19:00', breakMinutes: 60 };
 _resetJourneys();
-await test('salir a almorzar (12:00) NO debe quedar marcado como salida temprana', () => {
+await test('salir a almorzar (12:00) no lleva bandera (la salida temprana no existe)', () => {
   registerPassage(JP, at('2026-07-30T08:00:00'));
   const lunch = registerPassage(JP, at('2026-07-30T12:00:00'));
   assert.equal(lunch.type, 'out');
-  // Al marcar la salida se marca provisionalmente...
-  assert.equal(lunch.flag, 'early-exit');
-  // ...pero al REGRESAR del almuerzo la bandera se limpia.
+  assert.equal(lunch.flag, null);
   const back = registerPassage(JP, at('2026-07-30T14:00:00'));
   assert.equal(back.type, 'in');
   const events = listJourneyEvents().filter((e) => e.personId === 'PJ' && e.type === 'out');
-  assert.equal(events[0].flag, null, 'la salida del almuerzo quedó marcada como incidencia');
+  assert.equal(events[0].flag, null);
 });
 await test('salida final a las 19:05 (se alargó) NO es anomalía', () => {
   const out = registerPassage(JP, at('2026-07-30T19:05:00'));
@@ -163,10 +161,10 @@ await test('salida final a las 19:05 (se alargó) NO es anomalía', () => {
   assert.equal(out.flag, null, 'alargarse debe contar como extra, no como incidencia');
 });
 _resetJourneys();
-await test('irse a las 15:00 sin volver SÍ es salida temprana', () => {
+await test('irse a las 15:00 sin volver tampoco es novedad', () => {
   registerPassage(JP, at('2026-07-31T08:00:00'));
   const out = registerPassage(JP, at('2026-07-31T15:00:00'));
-  assert.equal(out.flag, 'early-exit');
+  assert.equal(out.flag, null);
 });
 await test('horas esperadas de 8–19 con 60 min de almuerzo = 10 h', async () => {
   const { expectedDailyHours } = await import('../services/rosterService.js');

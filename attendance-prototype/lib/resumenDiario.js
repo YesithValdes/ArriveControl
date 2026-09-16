@@ -43,11 +43,11 @@ export function franjaDelDia(empleado, dow) {
   }
 }
 
-// Los mismos márgenes que usa el panel para su bandeja de novedades
-// (services/panelStore.js): holgados a propósito, para que el resumen no
-// convierta en incidencia un retraso normal.
+// El mismo margen que usa el panel para su bandeja de novedades
+// (services/panelStore.js): holgado a propósito, para que el resumen no
+// convierta en incidencia un retraso normal. Irse antes de la hora no se
+// avisa: no es novedad en ningún lado del sistema.
 const TARDE_MIN = 180
-const TEMPRANO_MIN = 90
 
 /**
  * Arma el resumen del día de UNA persona.
@@ -112,12 +112,6 @@ export function resumenDelDia(empleado, marcas, dow) {
   if (iniJornada != null && primeraEntrada && primeraEntrada.minutos >= iniJornada + TARDE_MIN) {
     avisos.push({ clase: 'tarde', texto: `Tu entrada fue a las ${enDoce(primeraEntrada.minutos)} y tu horario empieza a las ${enDoce(iniJornada)}.` })
   }
-  const ultima = eventos[eventos.length - 1]
-  if (finJornada != null && ultima?.tipo === 'salida' && !ultima.automatica
-      && ultima.minutos < finJornada - TEMPRANO_MIN) {
-    avisos.push({ clase: 'temprano', texto: `Saliste a las ${enDoce(ultima.minutos)} y tu horario termina a las ${enDoce(finJornada)}.` })
-  }
-
   return {
     trabajadoSeg,
     marcas: eventos.filter((e) => !e.huerfana),

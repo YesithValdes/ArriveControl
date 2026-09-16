@@ -2,7 +2,7 @@
  * db/seed-demo.mjs — Datos de PRUEBA para desarrollo local.
  *
  * Llena la base con sedes, empleados y ~8 semanas de marcaciones verosímiles
- * (llegadas tarde, salidas tempranas, extras, dominicales, olvidos de salida),
+ * (llegadas tarde, extras, dominicales, olvidos de salida),
  * para poder ver el panel con contenido sin depender del gestor ni de nadie.
  *
  * NO tocar en producción: aborta si ya hay empleados, salvo --reset, que borra
