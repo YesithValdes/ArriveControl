@@ -3322,7 +3322,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             dan los títulos de grupo. */}
         {tab === 'ajustes' && (
           <section className="card grow ajustes-plano">
-            <h2>Ajustes</h2>
             <div className="scrollable">
               {(permisos.usuarios || permisos.config) && (
                 <div className="tools-grupo">
@@ -5883,30 +5882,34 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .log-item .action { color: var(--ink-2); flex: 1 1 220px; }
 .log-item b { color: var(--ink); }
 
-/* Ajustes SIN tarjetas: filas planas sobre el fondo de la página, con una
-   línea fina bajo cada opción (la última del grupo no la lleva). */
-.card.ajustes-plano { background: transparent; border: 0; box-shadow: none; padding-left: 4px; padding-right: 4px; }
-.tools-grupo { margin-bottom: 22px; }
+/* Ajustes como el dashboard: cada grupo es una tarjeta con su título, y
+   dentro las opciones en filas con una línea fina entre ellas. El contenedor
+   es transparente: las tarjetas van directo sobre el fondo de la página. */
+.card.ajustes-plano { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.tools-grupo {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px 4px; margin-bottom: 12px; box-shadow: var(--elev-1);
+}
 .tools-grupo > h3 {
-  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
-  color: var(--muted); font-weight: 700; margin: 0 0 4px;
+  font-family: var(--f-display); font-size: 13.5px; font-weight: 700; letter-spacing: .02em;
+  color: var(--ink); margin: 0 0 2px;
 }
 .tool {
-  display: flex; gap: 14px; align-items: center; width: 100%; text-align: left;
-  padding: 13px 4px; margin: 0; border: 0; border-bottom: 1px solid var(--grid);
+  display: flex; gap: 12px; align-items: center; width: 100%; text-align: left;
+  padding: 11px 0; margin: 0; border: 0; border-bottom: 1px solid var(--grid);
   border-radius: 0; background: transparent; color: var(--ink);
   text-decoration: none; font: inherit; cursor: pointer;
 }
 .tools-grupo .tool:last-child { border-bottom: 0; }
-.tool:hover { background: var(--accent-soft); }
+.tool:hover .tool-txt b { color: var(--accent); }
 .tool .icon {
-  flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%;
+  flex: 0 0 auto; width: 36px; height: 36px; border-radius: 10px;
   display: grid; place-items: center;
   background: var(--accent-soft); color: var(--btn-primary);
 }
 .tool-txt { flex: 1; min-width: 0; }
 .tool-txt b { display: block; font-size: 14px; font-weight: 600; }
-.tool-txt small { display: block; margin-top: 1px; }
+.tool-txt small { display: block; margin-top: 1px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool small { color: var(--muted); }
 .tool-chev { flex: 0 0 auto; display: flex; color: var(--muted); }
 .tool.danger:hover { background: var(--crit-soft); }
