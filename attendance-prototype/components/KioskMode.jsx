@@ -1519,7 +1519,12 @@ const s = {
     marginTop: 6, fontSize: 12, color: '#FBBF24', border: '1px solid rgba(245,158,11,0.4)',
     background: 'rgba(245,158,11,0.12)', borderRadius: 10, padding: '7px 11px', lineHeight: 1.4,
   },
-  hudPrivacidad: { position: 'relative', marginTop: 'auto', paddingTop: 12, textAlign: 'center', fontSize: 10, color: '#4d6a94' },
+  // Anclado abajo, FUERA del flujo: con margin-top auto se comía el espacio
+  // libre y empujaba el cuadro de la cámara hasta arriba de la pantalla.
+  hudPrivacidad: {
+    position: 'absolute', left: 0, right: 0, bottom: 'calc(14px + env(safe-area-inset-bottom, 0px))',
+    textAlign: 'center', fontSize: 11, color: 'var(--muted)', pointerEvents: 'none',
+  },
   hudVentana: {
     // Ahora los mensajes van DENTRO, así que el cuadro puede ser más grande:
     // 3:4 como una cámara de celular. El tope en dvh limita la altura sin
