@@ -22,6 +22,14 @@ import { DIVISOR_DEFECTO, NOCTURNO_DEFECTO, normalizarFactores } from './tiposHo
 export const MODOS_EXTRA = ['semana', 'dia']
 const modoExtraDe = (v) => (v === 'dia' ? 'dia' : 'semana')
 
+/**
+ * Extra mínima que se liquida (ver db/migrations/empresa/015_extra_minima.sql).
+ * En la base va en minutos; el motor la usa en horas. Sin valor (vigencias
+ * anteriores a la migración) son los 30 min que regían.
+ */
+export const EXTRA_MINIMA_DEFECTO_MIN = 30
+const extraMinimaHDe = (v) => (v == null || Number.isNaN(Number(v)) ? EXTRA_MINIMA_DEFECTO_MIN : Number(v)) / 60
+
 /** 'HH:MM[:SS]' de Postgres → minutos desde medianoche. */
 const aMinutos = (hora, porDefecto) => {
   const m = /^(\d{1,2}):(\d{2})/.exec(String(hora ?? ''))
@@ -34,7 +42,7 @@ const aMinutos = (hora, porDefecto) => {
  */
 export async function parametrosPago(esquema) {
   const { rows } = await conEmpresa(esquema, (db) => db.query(
-    `select divisor_horas_mes, factores_hora, nocturno_inicio, nocturno_fin, modo_extra
+    `select divisor_horas_mes, factores_hora, nocturno_inicio, nocturno_fin, modo_extra, extra_minima_min
        from config_laboral where id`,
   ))
   const r = rows[0] ?? {}
@@ -46,6 +54,7 @@ export async function parametrosPago(esquema) {
       fin: aMinutos(r.nocturno_fin, NOCTURNO_DEFECTO.fin),
     },
     modoExtra: modoExtraDe(r.modo_extra),
+    extraMinimaH: extraMinimaHDe(r.extra_minima_min),
   }
 }
 
@@ -60,7 +69,7 @@ export async function parametrosPago(esquema) {
 export async function vigenciasPago(esquema) {
   const { rows } = await conEmpresa(esquema, (db) => db.query(
     `select to_char(desde, 'YYYY-MM-DD') as desde,
-            factores_hora, divisor_horas_mes, nocturno_inicio, nocturno_fin, modo_extra
+            factores_hora, divisor_horas_mes, nocturno_inicio, nocturno_fin, modo_extra, extra_minima_min
        from valorizacion_vigencias order by desde desc`,
   ))
   return rows.map((r) => ({
@@ -72,6 +81,7 @@ export async function vigenciasPago(esquema) {
       fin: aMinutos(r.nocturno_fin, NOCTURNO_DEFECTO.fin),
     },
     modoExtra: modoExtraDe(r.modo_extra),
+    extraMinimaH: extraMinimaHDe(r.extra_minima_min),
   }))
 }
 

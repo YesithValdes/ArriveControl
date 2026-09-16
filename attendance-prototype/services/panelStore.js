@@ -35,7 +35,7 @@ const store = {
   cfg: {
     weeklyHours: 42, graceMinutes: 15, holidays: [],
     factores: FACTORES_DEFECTO, divisorHorasMes: DIVISOR_DEFECTO,
-    nocturnoInicio: '21:00', nocturnoFin: '06:00', modoExtra: 'semana', periodoPago: 'quincena',
+    nocturnoInicio: '21:00', nocturnoFin: '06:00', modoExtra: 'semana', extraMinimaMin: 30, periodoPago: 'quincena',
   },
   audit: [],        // correcciones crudas (para trazabilidad extendida)
   cargado: false,
@@ -345,6 +345,8 @@ export async function syncPanel() {
     nocturnoFin: cfg.config.nocturno_fin ?? '06:00',
     // Cómo se cuenta la extra: por semana (compensa) o por día.
     modoExtra: cfg.config.modo_extra === 'dia' ? 'dia' : 'semana',
+    // Minutos de más que hacen falta para que un exceso cuente como extra.
+    extraMinimaMin: Number.isFinite(Number(cfg.config.extra_minima_min)) ? Number(cfg.config.extra_minima_min) : 30,
     // Cada cuánto se liquidan las extras: agrupa el reporte por períodos.
     periodoPago: cfg.config.periodo_pago === 'mes' ? 'mes' : 'quincena',
   };
@@ -616,6 +618,7 @@ export function saveLaborConfig(partial, alFallar = null) {
   if ('weeklyHours' in partial) body.horas_semana = partial.weeklyHours;
   if ('holidays' in partial) body.festivos = partial.holidays;
   if ('modoExtra' in partial) body.modo_extra = partial.modoExtra;
+  if ('extraMinimaMin' in partial) body.extra_minima_min = Number(partial.extraMinimaMin);
   if ('periodoPago' in partial) body.periodo_pago = partial.periodoPago;
   if ('factores' in partial) body.factores_hora = partial.factores;
   if ('divisorHorasMes' in partial) body.divisor_horas_mes = Number(partial.divisorHorasMes);

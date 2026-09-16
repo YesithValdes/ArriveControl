@@ -282,9 +282,11 @@ export const horasDeHorario = (empleado, fecha) => {
  *        solo salen los domingos y festivos, que no dependen de la cuenta.
  * @param {(fecha: string) => {inicio: number, fin: number}} p.franjaDe
  *        franja nocturna vigente en cada fecha
+ * @param {number} [p.minima]  extra mínima que se liquida, en horas
+ *        (Ajustes → Reglamento); de fábrica, media hora
  * @returns {Array<{fecha, horaInicio, horaFin, horas, tipoHora}>}
  */
-export function tramosDeSemana({ pares, extra, franjaDe }) {
+export function tramosDeSemana({ pares, extra, franjaDe, minima = EXTRA_MINIMA_H }) {
   const tramos = []
 
   /**
@@ -316,7 +318,7 @@ export function tramosDeSemana({ pares, extra, franjaDe }) {
   const ordinarios = []
   for (const p of pares) {
     if (!p.dominical) { ordinarios.push(p); continue }
-    if (p.horas < EXTRA_MINIMA_H) continue // mínimo del contrato RH
+    if (p.horas < minima) continue // por debajo del mínimo de la empresa
     agregar(p.fecha, p.desde, p.hasta, true)
   }
 
@@ -329,7 +331,7 @@ export function tramosDeSemana({ pares, extra, franjaDe }) {
   // ahí. El mínimo de 0,5 h se mide sobre la extra de la semana entera; una
   // vez que califica, los pedazos que le tocan a cada turno entran
   // completos, aunque el primero que se recorta sea de minutos.
-  if (extra != null && extra >= EXTRA_MINIMA_H) {
+  if (extra != null && extra >= minima) {
     let restante = extra
     ordinarios.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.desde - b.desde)
     for (let i = ordinarios.length - 1; i >= 0 && restante > 0.001; i--) {
@@ -362,9 +364,10 @@ export function tramosDeSemana({ pares, extra, franjaDe }) {
  * @param {Array} p.pares
  * @param {(fecha: string) => number|null} p.jornadaDe  horas del horario ese día
  * @param {number} p.jornadaSinHorario  respaldo para un día sin horario
+ * @param {number} [p.minima]  extra mínima que se liquida, en horas
  * @param {(fecha: string) => {inicio: number, fin: number}} p.franjaDe
  */
-export function tramosDeDia({ pares, jornadaDe, jornadaSinHorario, franjaDe }) {
+export function tramosDeDia({ pares, jornadaDe, jornadaSinHorario, franjaDe, minima = EXTRA_MINIMA_H }) {
   const tramos = []
   const porDia = new Map()
   for (const p of pares) {
@@ -374,7 +377,7 @@ export function tramosDeDia({ pares, jornadaDe, jornadaSinHorario, franjaDe }) {
   for (const [fecha, ps] of porDia) {
     if (ps[0].dominical) {
       // Recargo desde la primera hora: se resuelve con la misma función.
-      tramos.push(...tramosDeSemana({ pares: ps, extra: null, franjaDe }))
+      tramos.push(...tramosDeSemana({ pares: ps, extra: null, franjaDe, minima }))
       continue
     }
     const horas = ps.reduce((s, p) => s + p.horas, 0)
@@ -383,7 +386,7 @@ export function tramosDeDia({ pares, jornadaDe, jornadaSinHorario, franjaDe }) {
     // La atribución (últimas horas, mínimo de 0,5 h sobre el total, pedazos
     // completos, partición nocturna) es la misma que por semana, aplicada al
     // día como si fuera una semana de un solo día.
-    tramos.push(...tramosDeSemana({ pares: ps, extra, franjaDe }))
+    tramos.push(...tramosDeSemana({ pares: ps, extra, franjaDe, minima }))
   }
   return tramos.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.horaInicio.localeCompare(b.horaInicio))
 }
@@ -409,14 +412,18 @@ export function tramosDeDia({ pares, jornadaDe, jornadaSinHorario, franjaDe }) {
  *        fecha, porque el modo lleva vigencia y se evalúa con el lunes de
  *        cada semana: el cambio rige desde la semana siguiente al día en que
  *        se hizo, nunca parte una semana en dos.
+ *        `extraMinima`: extra mínima que se liquida, en horas (de fábrica
+ *        media hora), o una FUNCIÓN de la fecha, con las mismas vigencias
+ *        que el modo.
  * @returns {Array} registros listos para exportar o entregar por API
  */
 export function calcularRegistros(
   porEmpleado,
-  { festivos, vigencias, nocturno = NOCTURNO_DEFECTO, hoy = hoyEnBogota(), modoExtra = 'semana' },
+  { festivos, vigencias, nocturno = NOCTURNO_DEFECTO, hoy = hoyEnBogota(), modoExtra = 'semana', extraMinima = EXTRA_MINIMA_H },
 ) {
   const franjaDe = typeof nocturno === 'function' ? nocturno : () => nocturno
   const modoDe = typeof modoExtra === 'function' ? modoExtra : () => modoExtra
+  const minimaDe = typeof extraMinima === 'function' ? extraMinima : () => extraMinima
   const registros = []
   for (const [empId, e] of porEmpleado) {
     const pares = emparejarMarcas(e, { festivos, hoy })
@@ -444,14 +451,16 @@ export function calcularRegistros(
       })
 
       // DÓNDE cayó y de qué clase, según el modo que regía ese lunes.
+      const minima = minimaDe(lunes)
       const tramos = modoDe(lunes) === 'dia'
         ? tramosDeDia({
           pares: ps,
           jornadaDe: (fecha) => horasDeHorario(e, fecha),
           jornadaSinHorario: horasSemanaEn(vigencias, lunes) / 6,
           franjaDe,
+          minima,
         })
-        : tramosDeSemana({ pares: ps, extra: semana.extra, franjaDe })
+        : tramosDeSemana({ pares: ps, extra: semana.extra, franjaDe, minima })
 
       for (const t of tramos) {
         registros.push({

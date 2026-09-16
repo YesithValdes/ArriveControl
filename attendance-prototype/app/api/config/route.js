@@ -39,6 +39,7 @@ export async function GET() {
       nocturno_inicio: aHHMM(laboral.nocturno.inicio),
       nocturno_fin: aHHMM(laboral.nocturno.fin),
       modo_extra: laboral.modoExtra,
+      extra_minima_min: Math.round(laboral.extraMinimaH * 60),
       periodo_pago: laboral.periodoPago,
     },
   })
@@ -126,6 +127,16 @@ export async function PATCH(req) {
     args.push(c.modo_extra); sets.push(`modo_extra = $${args.length}`)
   }
 
+  if ('extra_minima_min' in c) {
+    // Minutos de más que hacen falta para que un exceso cuente como extra.
+    // Parámetro de pago: abre vigencia y rige desde la semana siguiente.
+    const n = Number(c.extra_minima_min)
+    if (!Number.isInteger(n) || n < 0 || n > 120) {
+      return NextResponse.json({ ok: false, error: 'La extra mínima va de 0 a 120 minutos.' }, { status: 400 })
+    }
+    args.push(n); sets.push(`extra_minima_min = $${args.length}`)
+  }
+
   if ('periodo_pago' in c) {
     // Cada cuánto se liquidan las extras. Solo agrupa reportes: no abre vigencia.
     if (!['quincena', 'mes'].includes(c.periodo_pago)) {
@@ -137,14 +148,14 @@ export async function PATCH(req) {
   if (sets.length === 0) return NextResponse.json({ ok: false, error: 'Nada que actualizar.' }, { status: 400 })
 
   // `horas_semana` cuenta como cambio de pago: arrastra el divisor (× 5).
-  const tocaPago = ['horas_semana', 'factores_hora', 'nocturno_inicio', 'nocturno_fin', 'modo_extra']
+  const tocaPago = ['horas_semana', 'factores_hora', 'nocturno_inicio', 'nocturno_fin', 'modo_extra', 'extra_minima_min']
     .some((campo) => campo in c)
 
   const { rows } = await conEmpresa(esquema, async (db) => {
     const r = await db.query(
       `update config_laboral set ${sets.join(', ')} where id
        returning gracia_min, horas_semana, festivos,
-                 divisor_horas_mes, factores_hora, modo_extra, periodo_pago,
+                 divisor_horas_mes, factores_hora, modo_extra, extra_minima_min, periodo_pago,
                  to_char(nocturno_inicio, 'HH24:MI') as nocturno_inicio,
                  to_char(nocturno_fin, 'HH24:MI') as nocturno_fin`,
       args,
@@ -159,15 +170,16 @@ export async function PATCH(req) {
       const cfg = r.rows[0]
       await db.query(
         `insert into valorizacion_vigencias
-           (desde, factores_hora, divisor_horas_mes, nocturno_inicio, nocturno_fin, modo_extra)
-         values ((now() at time zone 'America/Bogota')::date, $1, $2, $3::time, $4::time, $5)
+           (desde, factores_hora, divisor_horas_mes, nocturno_inicio, nocturno_fin, modo_extra, extra_minima_min)
+         values ((now() at time zone 'America/Bogota')::date, $1, $2, $3::time, $4::time, $5, $6)
          on conflict (desde) do update set
            factores_hora = excluded.factores_hora,
            divisor_horas_mes = excluded.divisor_horas_mes,
            nocturno_inicio = excluded.nocturno_inicio,
            nocturno_fin = excluded.nocturno_fin,
-           modo_extra = excluded.modo_extra`,
-        [JSON.stringify(cfg.factores_hora), cfg.divisor_horas_mes, cfg.nocturno_inicio, cfg.nocturno_fin, cfg.modo_extra],
+           modo_extra = excluded.modo_extra,
+           extra_minima_min = excluded.extra_minima_min`,
+        [JSON.stringify(cfg.factores_hora), cfg.divisor_horas_mes, cfg.nocturno_inicio, cfg.nocturno_fin, cfg.modo_extra, cfg.extra_minima_min],
       )
     }
     return r

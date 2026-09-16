@@ -264,9 +264,24 @@ await test('el cruce de las 42 parte un turno a la mitad; los pedazos anteriores
   assert.equal(totalExtra(regs), 3.2, 'no se pierde ni un minuto');
 });
 
-await test('una extra semanal menor a 0,5 h se descarta (mínimo del contrato RH)', () => {
+await test('una extra semanal menor a 0,5 h se descarta (mínimo de fábrica)', () => {
   const regs = calcularRegistros(unEmpleado([...SEMANA_42.slice(0, 10), ...turno(SEMANA.sab, '09:00', '13:50')]), CERRADA);
   assert.equal(regs.length, 0, '20 minutos de más en la semana no llegan al mínimo');
+});
+await test('la extra mínima es de la empresa: sin mínimo, esos 20 min sí se liquidan', () => {
+  const marcas = [...SEMANA_42.slice(0, 10), ...turno(SEMANA.sab, '09:00', '13:50')];
+  const regs = calcularRegistros(unEmpleado(marcas), { ...CERRADA, extraMinima: 0 });
+  assert.equal(regs.length, 1);
+  assert.equal(regs[0].tipoHora, 'HED');
+  assert.equal(Math.round(regs[0].horas * 60), 20);
+  // Y con una hora de mínimo, 45 min de más tampoco cuentan.
+  const regs45 = calcularRegistros(unEmpleado([...SEMANA_42.slice(0, 10), ...turno(SEMANA.sab, '09:00', '14:15')]), { ...CERRADA, extraMinima: 1 });
+  assert.equal(regs45.length, 0);
+});
+await test('el mínimo lleva vigencia: se evalúa con el lunes de cada semana', () => {
+  const marcas = [...SEMANA_42.slice(0, 10), ...turno(SEMANA.sab, '09:00', '13:50')];
+  const regs = calcularRegistros(unEmpleado(marcas), { ...CERRADA, extraMinima: (lunes) => (lunes === SEMANA.lun ? 0 : 0.5) });
+  assert.equal(regs.length, 1, 'esa semana regía «sin mínimo»');
 });
 
 await test('semana EN CURSO: nada de lunes a sábado, aunque ya vaya por encima de 42', () => {

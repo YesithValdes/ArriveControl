@@ -30,9 +30,11 @@
 const DIA_MS = 86400000
 
 /**
- * Mínimo de hora extra que se liquida, en horas (contrato con RH). Una extra
- * semanal por debajo de esto se descarta entera; por encima, entra completa.
- * Vive aquí para que el panel y el motor de nómina apliquen el MISMO corte.
+ * Mínimo de hora extra que se liquida, en horas, DE FÁBRICA (30 min). Una
+ * extra por debajo se descarta entera; por encima, entra completa. Cada
+ * empresa fija el suyo en Ajustes → Reglamento (`extra_minima_min`, con
+ * vigencia); esto es lo que rige cuando no lo ha tocado. Vive aquí para que
+ * el panel y el motor de nómina partan del MISMO corte.
  */
 export const EXTRA_MINIMA_H = 0.5
 

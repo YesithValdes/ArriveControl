@@ -1749,6 +1749,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : defecto;
     };
     const nocturno = { inicio: aMinutos(cfg.nocturnoInicio, 21 * 60), fin: aMinutos(cfg.nocturnoFin, 6 * 60) };
+    // El mínimo de la empresa (Reglamento), en horas; de fábrica, media hora.
+    const minimaH = Number.isFinite(Number(cfg.extraMinimaMin)) ? Number(cfg.extraMinimaMin) / 60 : EXTRA_MINIMA_H;
     const ahora = Date.now();
     return [...porSemana.entries()]
       .sort((a, b) => b[0].localeCompare(a[0]))
@@ -1769,14 +1771,16 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         const pares = dias.flatMap((d) => paresDe(d.evs, ahora, drawerPersona)
           .map((p) => ({ ...p, dominical: p.dow === 0 || festivos.has(p.fecha) })));
         const porDia = cfg.modoExtra === 'dia';
+        const minima = minimaH;
         const tramos = porDia
           ? tramosDeDia({
             pares,
             jornadaDe: (fecha) => horasFranja(franjaEsperada(drawerPersona, fecha)),
             jornadaSinHorario: (cfg.weeklyHours ?? 42) / 6,
             franjaDe: () => nocturno,
+            minima,
           })
-          : tramosDeSemana({ pares, extra: semana.extra, franjaDe: () => nocturno });
+          : tramosDeSemana({ pares, extra: semana.extra, franjaDe: () => nocturno, minima });
         const porCodigo = Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0]));
         const extraPorDia = new Map(); // ordinaria (solo con sentido en modo día)
         const domPorDia = new Map();   // dominical/festivo: sale en los dos modos
@@ -1794,12 +1798,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           for (const [fecha, horas] of horasDia) {
             const jornada = horasFranja(franjaEsperada(drawerPersona, fecha)) ?? (cfg.weeklyHours ?? 42) / 6;
             const exceso = horas - jornada;
-            if (exceso > 0.001 && exceso < EXTRA_MINIMA_H) bajoMinimoPorDia.set(fecha, exceso);
+            if (exceso > 0.001 && exceso < minima) bajoMinimoPorDia.set(fecha, exceso);
           }
         }
         return { dias, ...semana, porCodigo, porDia, extraPorDia, domPorDia, bajoMinimoPorDia };
       });
-  }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin, cfg.modoExtra]);
+  }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin, cfg.modoExtra, cfg.extraMinimaMin]);
 
   const saveEvForm = async () => {
     if (!evForm?.time || !evForm.reason.trim()) return;
@@ -4372,6 +4376,34 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </div>
                 </div>
                 <div className="cfg-row">
+                  <label htmlFor="cfg-extra-minima">
+                    Extra mínima
+                    <small>
+                      {Number(cfg.extraMinimaMin) === 0
+                        ? 'Cada minuto de más cuenta como extra.'
+                        : `Menos de ${cfg.extraMinimaMin} min de más no se liquidan; desde ahí, entra completo.`}
+                    </small>
+                  </label>
+                  <div className="cfg-input">
+                    <select
+                      id="cfg-extra-minima"
+                      className="sede-select"
+                      aria-label="Extra mínima que se liquida"
+                      value={String(cfg.extraMinimaMin ?? 30)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (v === Number(cfg.extraMinimaMin ?? 30)) return;
+                        if (!confirm(`¿Extra mínima de ${v === 0 ? 'cero (sin mínimo)' : `${v} min`}? Rige desde la próxima semana; lo ya calculado no cambia.`)) { e.target.value = String(cfg.extraMinimaMin ?? 30); return; }
+                        updateCfg({ extraMinimaMin: v });
+                      }}
+                    >
+                      {[0, 10, 15, 20, 30, 45, 60].map((m) => (
+                        <option key={m} value={String(m)}>{m === 0 ? 'Sin mínimo' : `${m} min`}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="cfg-row">
                   <label htmlFor="cfg-periodo-pago">
                     Pago de horas extra
                     <small>{cfg.periodoPago === 'mes' ? 'Se liquidan cada mes.' : 'Se liquidan cada quincena (1–15 y 16–fin de mes).'}</small>
@@ -4657,8 +4689,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               <em className="dia-extra dom" title="Domingo o festivo: recargo desde la primera hora (HEDDF/HENDF)">D +{fmtHM(dom)}</em>
                             )}
                             {bajoMinimo > 0.001 && (
-                              <em className="dia-extra min" title={`Pasó ${Math.round(bajoMinimo * 60)} min de su jornada: menos del mínimo de ${Math.round(EXTRA_MINIMA_H * 60)} min, no cuenta como extra`}>
-                                +{fmtHM(bajoMinimo)} &lt; {Math.round(EXTRA_MINIMA_H * 60)} min
+                              <em className="dia-extra min" title={`Pasó ${Math.round(bajoMinimo * 60)} min de su jornada: menos del mínimo de ${cfg.extraMinimaMin ?? 30} min (Reglamento), no cuenta como extra`}>
+                                +{fmtHM(bajoMinimo)} &lt; {cfg.extraMinimaMin ?? 30} min
                               </em>
                             )}
                           </span>
@@ -4788,11 +4820,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               {c} {fmtH(s.porCodigo[c])}
                             </span>
                           ))}
-                          {!s.porDia && s.cerrada && s.extra < EXTRA_MINIMA_H && (
+                          {!s.porDia && s.cerrada && s.extra < (cfg.extraMinimaMin ?? 30) / 60 && (
                             <span
                               className="sem-chip"
                               title={s.extra > 0.001
-                                ? `Sobraron ${fmtH(s.extra)}: menos del mínimo de ${Math.round(EXTRA_MINIMA_H * 60)} min`
+                                ? `Sobraron ${fmtH(s.extra)}: menos del mínimo de ${cfg.extraMinimaMin ?? 30} min`
                                 : s.faltante > 0.001 ? `Faltaron ${fmtH(s.faltante)} para ${horasSem} h` : `${horasSem} h justas`}
                             >
                               Sin extra
