@@ -6547,8 +6547,6 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .fchips { display: inline-flex; }
   .fchips .fchip { padding: 6px 12px; }
   .rep-table { display: flex; }
-  /* En PC el total va al pie de la tabla; el recuadro grande es del celular. */
-  .val-total { display: none; }
   .rep-periodo { grid-template-columns: 230px auto; justify-content: start; }
   .fchips.rep-quincena .fchip { padding: 0 14px; }
   .solo-pc { display: inline-flex; }
