@@ -1974,21 +1974,23 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     setPage(0);
   };
 
+  // `grupo` agrupa las pestañas en el menú (un separador con el nombre
+  // cuando cambia); Ajustes va solo, tras una línea sin nombre.
   const tabs = [
-    { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
+    { id: 'dashboard', icon: 'dashboard', label: 'Dashboard', grupo: 'Operación' },
     // La asistencia vive en el dashboard Y como sección propia: la tarjeta
     // es la misma (tarjetaAsistencia), solo cambia dónde se muestra.
-    { id: 'asistencia', icon: 'users', label: 'Asistencia' },
-    { id: 'anomalias', icon: 'alert', label: 'Anomalías', badge: data.anomalies.length },
-    { id: 'empleados', icon: 'user', label: 'Empleados' },
-    { id: 'horarios', icon: 'clock', label: 'Horarios' },
+    { id: 'asistencia', icon: 'users', label: 'Asistencia', grupo: 'Operación' },
+    { id: 'anomalias', icon: 'alert', label: 'Anomalías', badge: data.anomalies.length, grupo: 'Operación' },
+    { id: 'empleados', icon: 'user', label: 'Empleados', grupo: 'Personal' },
+    { id: 'horarios', icon: 'clock', label: 'Horarios', grupo: 'Personal' },
     // Infraestructura al PRIMER nivel: sedes y dispositivos se usan lo
     // suficiente como para no esconderlos dentro de Ajustes.
-    { id: 'cfg-sedes', icon: 'pin', label: 'Sedes' },
-    { id: 'cfg-dispositivos', icon: 'monitor', label: 'Dispositivos', alAbrir: cargarDispositivos },
-    { id: 'reportes', icon: 'file', label: 'Reportes' },
-    { id: 'historial', icon: 'history', label: 'Historial' },
-    { id: 'ajustes', icon: 'settings', label: 'Ajustes', alClic: () => abrirAjustes() },
+    { id: 'cfg-sedes', icon: 'pin', label: 'Sedes', grupo: 'Sedes y equipos' },
+    { id: 'cfg-dispositivos', icon: 'monitor', label: 'Dispositivos', alAbrir: cargarDispositivos, grupo: 'Sedes y equipos' },
+    { id: 'reportes', icon: 'file', label: 'Reportes', grupo: 'Informes' },
+    { id: 'historial', icon: 'history', label: 'Historial', grupo: 'Informes' },
+    { id: 'ajustes', icon: 'settings', label: 'Ajustes', alClic: () => abrirAjustes(), grupo: '' },
   ];
 
   // Pantallas que muestran el submenú de Ajustes al lado (sedes y
@@ -4527,17 +4529,21 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {/* Filtro global de sede (arriba del menú): aplica a todas las vistas */}
         {sedeChips}
 
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            aria-pressed={tab === t.id || (t.id === 'ajustes' && enAjustes)}
-            onClick={() => { if (t.alClic) t.alClic(); else setTab(t.id); setNavOpen(false); t.alAbrir?.(); }}
-            title={t.label}
-          >
-            <span className="icon"><Icon name={t.icon} /></span>
-            <span className="lbl">{t.label}</span>
-            {t.badge ? <span className="badge">{t.badge}</span> : null}
-          </button>
+        {tabs.map((t, i) => (
+          <Fragment key={t.id}>
+            {t.grupo !== tabs[i - 1]?.grupo && (
+              <span className={`tab-grupo${i === 0 ? ' primero' : ''}`} aria-hidden="true">{t.grupo}</span>
+            )}
+            <button
+              aria-pressed={tab === t.id || (t.id === 'ajustes' && enAjustes)}
+              onClick={() => { if (t.alClic) t.alClic(); else setTab(t.id); setNavOpen(false); t.alAbrir?.(); }}
+              title={t.label}
+            >
+              <span className="icon"><Icon name={t.icon} /></span>
+              <span className="lbl">{t.label}</span>
+              {t.badge ? <span className="badge">{t.badge}</span> : null}
+            </button>
+          </Fragment>
         ))}
 
         {/* La sesión (avatar, correo, cerrar sesión) vive ahora en la barra
@@ -6501,7 +6507,10 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   }
   /* La barra superior cruza TODO el ancho, por encima del menú lateral: es
      lo que hace que la marca no se mueva ni desaparezca al encoger el menú. */
-  .app-header { grid-column: 1 / -1; grid-row: 1; padding: 12px 24px; background: var(--btn-primary); border-bottom: none; border-radius: 0; }
+  .app-header {
+    grid-column: 1 / -1; grid-row: 1; padding: 12px 24px; background: var(--btn-primary); border-radius: 0;
+    border-bottom: 1px solid rgba(255,255,255,.16); box-shadow: 0 2px 10px rgba(0,0,0,.22); position: relative; z-index: 1;
+  }
   .head-sede {
     display: block; max-width: 210px; font-size: 13px; padding: 7px 10px;
     background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.25);
@@ -6941,9 +6950,19 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 /* ── Menú lateral azul de marca (va al final: gana sobre las reglas de
    arriba, incluidas las de los media queries) ─────────────────────── */
 .tabbar {
-  background: var(--btn-primary);
+  background: var(--btn-primary-hover);
   border-right-color: rgba(255,255,255,.12);
 }
+/* Separadores de grupo del menú: línea fina y el nombre en mayúsculas
+   pequeñas; el primero no lleva línea. */
+.tab-grupo {
+  display: block; margin: 10px 12px 2px; padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,.12);
+  font-family: var(--f-data); font-size: 10px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.45);
+}
+.tab-grupo.primero { margin-top: 0; padding-top: 0; border-top: 0; }
+.tab-grupo:empty { margin-bottom: 0; padding-top: 0; }
 .tabbar > button { color: rgba(255,255,255,.72); }
 .tabbar > button:hover { background: rgba(255,255,255,.08); }
 .tabbar > button[aria-pressed="true"] { color: #fff; background: rgba(255,255,255,.15); }
