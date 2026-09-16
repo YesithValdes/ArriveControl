@@ -4397,7 +4397,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                             {fmtH(d.horas)}
                             {/* En modo día cada día trae su extra (ya definitiva). */}
                             {extraDia > 0.001 && (
-                              <em className="dia-extra" title="Extra de este día: lo que pasó de la jornada de su horario"> +{fmtHM(extraDia)}</em>
+                              <em className="dia-extra" title="Extra de este día: lo que pasó de la jornada de su horario">+{fmtHM(extraDia)}</em>
                             )}
                           </span>
                           <span className="dia-chev">›</span>
@@ -6018,7 +6018,9 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .sem-chip.dom { color: #6b21a8; background: #f3e8ff; border-color: #e9d5ff; }
 .sem-chip.festivo { color: #8a6100; background: #fdf3d3; border-color: #eedfa8; }
 .sem-bloque .dia { padding: 0 8px; }
-.dia-extra { font-style: normal; font-weight: 700; color: var(--btn-primary); }
+/* La extra del día como una pastilla azul clara y nítida: separada del total
+   en negro, que con el marino se confundía. */
+.dia-extra { font-style: normal; font-weight: 800; font-size: 11.5px; color: #0369a1; background: #e0f2fe; border: 1px solid #bae6fd; border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
 .sem-bloque .dia:last-child { border-bottom: 0; }
 .dia-chev { color: var(--muted); font-size: 14px; transition: transform .15s; flex: 0 0 auto; }
 .dia.abierto .dia-chev { transform: rotate(90deg); }
