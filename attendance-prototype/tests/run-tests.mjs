@@ -1388,4 +1388,50 @@ await test('una pantalla nueva queda FUERA por defecto', () => {
   assert.equal(seGuarda('/lo-que-sea'), false);
 });
 
+// ── Orden de declaraciones en los componentes ───────────────────────────
+// Un `useEffect(..., [cfg.periodoPago])` quedó diez líneas ANTES de
+// `const [cfg] = useState(...)`: compiló (Next no renderiza /admin al
+// construir) y en producción fue «Cannot access 'ex' before initialization»,
+// pantalla en blanco para todos. Lo que se evalúa durante el render no
+// puede nombrar una constante del componente declarada más abajo.
+console.log('\n🔁 Orden de declaraciones');
+const { usosAntesDeDeclarar } = await import('./ordenDeclaraciones.mjs');
+const COMPONENTES = [
+  ['../components/AdminPanel.jsx', 'AdminPanel'],
+  ['../components/PlataformaPanel.jsx', 'PlataformaPanel'],
+  ['../components/KioskMode.jsx', 'KioskMode'],
+  ['../components/EmployeeRegister.jsx', 'EmployeeRegister'],
+];
+for (const [archivo, componente] of COMPONENTES) {
+  await test(`nada se usa antes de declararse — ${componente}`, () => {
+    const fuente = leerCss(new URL(archivo, import.meta.url), 'utf8');
+    const usos = usosAntesDeDeclarar(fuente, componente);
+    assert.deepEqual(usos, [], `se usa antes de declararse: ${usos.map((u) => `${u.nombre} (línea ${u.linea}, declarada en ${u.declarada})`).join('; ')}`);
+  });
+}
+await test('el detector ve un arreglo de dependencias que nombra algo declarado después', () => {
+  // El caso real: el efecto arriba, la constante abajo.
+  const roto = `export default function X() {
+  useEffect(() => { setV(cfg.periodoPago); }, [cfg.periodoPago]);
+  const [cfg] = useState({});
+  return (
+    <div />
+  );
+}`;
+  assert.deepEqual(usosAntesDeDeclarar(roto, 'X'), [{ nombre: 'cfg', linea: 2, declarada: 3 }]);
+});
+await test('el detector no se asusta con callbacks, comentarios ni cadenas', () => {
+  const sano = `export default function X() {
+  // aquí se habla de cfg, pero es un comentario
+  const t = 'cfg en una cadena';
+  const f = () => cfg.x;
+  useEffect(() => { f(cfg); }, []);
+  const [cfg] = useState({});
+  return (
+    <div />
+  );
+}`;
+  assert.deepEqual(usosAntesDeDeclarar(sano, 'X'), []);
+});
+
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);

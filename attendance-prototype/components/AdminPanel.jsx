@@ -637,11 +637,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // rango libre desde/hasta no le servía a nadie: se paga por períodos.
   const [repMes, setRepMes] = useState(() => todayKey().slice(0, 7));
   const [repQuincena, setRepQuincena] = useState(() => (Number(todayKey().slice(8, 10)) > 15 ? 'b' : 'a'));
-  // Al conocer cómo liquida la empresa (Reglamento), la vista arranca ahí:
-  // el mes completo si paga por mes; si no, la quincena en curso.
-  useEffect(() => {
-    setRepQuincena(cfg.periodoPago === 'mes' ? 'mes' : (Number(todayKey().slice(8, 10)) > 15 ? 'b' : 'a'));
-  }, [cfg.periodoPago]);
   // Columnas de asistencia (sede, días, horas, tardías): apagadas por defecto.
   // La tabla es sobre horas extra y dinero; lo demás solo se muestra a quien
   // lo pida, y en el CSV va siempre.
@@ -649,6 +644,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // Reglamento laboral (jornada legal semanal + gracia de puntualidad).
   const [cfg, setCfg] = useState(getLaborConfig);
+  // Al conocer cómo liquida la empresa (Reglamento), la vista arranca ahí:
+  // el mes completo si paga por mes; si no, la quincena en curso.
+  useEffect(() => {
+    setRepQuincena(cfg.periodoPago === 'mes' ? 'mes' : (Number(todayKey().slice(8, 10)) > 15 ? 'b' : 'a'));
+  }, [cfg.periodoPago]);
   // Claves que pertenecen a la pantalla de valorización, para que el aviso
   // diga lo que la persona acaba de tocar y no siempre "Reglamento".
   const CLAVES_VALORIZACION = ['factores', 'divisorHorasMes', 'nocturnoInicio', 'nocturnoFin'];
