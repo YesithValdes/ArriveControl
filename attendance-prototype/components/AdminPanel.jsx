@@ -6588,6 +6588,9 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .nav-collapsed .side-sede-lbl { display: none; }
   .nav-collapsed .sede-select { padding: 8px 4px; font-size: 12px; }
   .nav-collapsed .tabbar > button { justify-content: center; padding: 10px 0; }
+  /* Con el menú encogido el nombre del grupo no cabe: queda solo la línea. */
+  .nav-collapsed .tab-grupo { font-size: 0; margin: 6px 8px 0; padding-top: 6px; }
+  .nav-collapsed .tab-grupo.primero { display: none; }
   .nav-collapsed .tabbar .badge { position: absolute; top: 2px; right: 4px; margin-left: 0; }
 
   /* contenido pegado al sidebar, sin marcos: la jerarquía la dan las sombras.
