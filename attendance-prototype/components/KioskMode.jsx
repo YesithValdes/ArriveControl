@@ -1497,7 +1497,7 @@ const s = {
     // Rejilla de tres filas: cabecera (auto) · cuadro (todo lo que queda,
     // centrado) · nota de privacidad (auto). Así el cuadro va al centro del
     // espacio libre y nunca se monta sobre la cabecera.
-    display: 'grid', gridTemplateRows: 'auto 1fr auto', justifyItems: 'center', alignItems: 'start',
+    display: 'grid', gridTemplateRows: 'auto 1fr auto', justifyItems: 'center', alignItems: 'center',
     padding: 'calc(14px + env(safe-area-inset-top, 0px)) 20px calc(12px + env(safe-area-inset-bottom, 0px))',
     zIndex: 2,
   },
@@ -1561,7 +1561,7 @@ const s = {
     // deformar; `containerType` habilita las unidades cqw de los textos.
     // Más alto que ancho (3:4.4) y con tope generoso en dvh: ocupa casi todo
     // lo que queda bajo la cabecera, sin salirse en pantallas cortas.
-    position: 'relative', width: 'min(92vw, 440px, 52dvh)', aspectRatio: '3 / 4.4',
+    position: 'relative', width: 'min(92vw, 440px, 52dvh)', aspectRatio: '3 / 4.4', alignSelf: 'center', justifySelf: 'center',
     borderRadius: 20, overflow: 'hidden', containerType: 'inline-size',
     background: '#0f151c', color: '#fff',
     fontFamily: 'var(--font-sora), var(--f-body)',
@@ -1574,7 +1574,7 @@ const s = {
   kScrimBot: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '58%', background: 'linear-gradient(0deg, rgba(0,0,0,.78) 0%, rgba(0,0,0,.55) 40%, rgba(0,0,0,.18) 75%, transparent 100%)', pointerEvents: 'none' },
   kTop: { position: 'absolute', top: '4.5cqw', left: '4.5cqw', right: '4.5cqw', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '2cqw', pointerEvents: 'none' },
   kPill: {
-    display: 'inline-flex', alignItems: 'center', gap: '1.6cqw', whiteSpace: 'nowrap',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '1.6cqw', whiteSpace: 'nowrap', lineHeight: 1,
     fontSize: 'clamp(11px, 4.1cqw, 22px)', fontWeight: 700, letterSpacing: '0.01em',
     padding: '1.8cqw 3.4cqw', borderRadius: 999, color: '#fff',
     background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
@@ -1588,9 +1588,9 @@ const s = {
     lineHeight: 1.1, textWrap: 'balance', textShadow: '0 1px 2px rgba(0,0,0,.6), 0 2px 14px rgba(0,0,0,.45)', pointerEvents: 'none',
   },
   kCentroSub: { display: 'block', fontSize: 'clamp(11px, 3.8cqw, 20px)', fontWeight: 600, opacity: .9, marginTop: '1.6cqw', letterSpacing: 0 },
-  kHud: { position: 'absolute', left: '5cqw', right: '5cqw', bottom: '6.5cqw', display: 'flex', flexDirection: 'column', gap: '1.2cqw', textShadow: '0 1px 2px rgba(0,0,0,.6), 0 2px 14px rgba(0,0,0,.45)', pointerEvents: 'none' },
+  kHud: { position: 'absolute', left: '5cqw', right: '5cqw', bottom: '6.5cqw', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '1.2cqw', textShadow: '0 1px 2px rgba(0,0,0,.6), 0 2px 14px rgba(0,0,0,.45)', pointerEvents: 'none' },
   kTag: {
-    alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: '1.8cqw',
+    alignSelf: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '1.8cqw', lineHeight: 1,
     fontSize: 'clamp(10px, 3.7cqw, 20px)', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase',
     padding: '1.7cqw 3.2cqw', borderRadius: 999, color: '#fff', textShadow: 'none', marginBottom: '.8cqw',
   },
