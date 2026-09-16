@@ -2879,10 +2879,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           {empPagina.map((p) => (
                             <tr key={p.id} onClick={() => openEdit(p)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && openEdit(p)}>
                               <td>
-                                <span className="emp-cell">
-                                  <span className="av av-tabla">{iniciales(p.name)}</span>
+                                {/* Nombre y apellido; el completo, en el title. */}
+                                <span className="emp-cell" title={p.name}>
+                                  <span className="av av-tabla">{iniciales(nombreCorto(p.name))}</span>
                                   <span>
-                                    <span className="att-name">{p.name}</span>
+                                    <span className="att-name">{nombreCorto(p.name)}</span>
                                     <span className="emp-cedula">{p.cedula || 'sin cédula'}</span>
                                   </span>
                                 </span>
@@ -2914,7 +2915,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <AccList
                       items={empPagina.map((p) => ({
                         id: p.id,
-                        title: p.name,
+                        title: nombreCorto(p.name),
                         right: <span className="acc-note">{p.sede || 'sin sede'}</span>,
                         fields: [
                           ['Cédula', p.cedula || 'sin cédula'],
@@ -2952,10 +2953,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 {archivados.length === 0 && <p className="empty">No hay empleados archivados.</p>}
                     {archPagina.map((p) => (
                       <div key={p.id} className="arch-fila">
-                        <span className="emp-cell">
-                          <span className="av av-tabla">{iniciales(p.name)}</span>
+                        <span className="emp-cell" title={p.name}>
+                          <span className="av av-tabla">{iniciales(nombreCorto(p.name))}</span>
                           <span>
-                            <span className="att-name">{p.name}</span>
+                            <span className="att-name">{nombreCorto(p.name)}</span>
                             <span className="emp-cedula">{p.cedula || 'sin cédula'}</span>
                           </span>
                         </span>
