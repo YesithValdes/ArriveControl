@@ -631,6 +631,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const monthStart = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; };
   const [repFrom, setRepFrom] = useState(monthStart());
   const [repTo, setRepTo] = useState(todayKey());
+  // El reporte se pide por PERÍODO DE PAGO: un mes y, si la empresa liquida
+  // por quincenas, cuál de las dos. De ahí salen repFrom/repTo (que siguen
+  // mandando en la consulta, el CSV y el cajón). Un rango libre desde/hasta
+  // no le servía a nadie: se paga por períodos.
+  const [repMes, setRepMes] = useState(() => todayKey().slice(0, 7));
+  const [repQuincena, setRepQuincena] = useState(() => (Number(todayKey().slice(8, 10)) > 15 ? 'b' : 'a'));
   // Columnas de asistencia (sede, días, horas, tardías): apagadas por defecto.
   // La tabla es sobre horas extra y dinero; lo demás solo se muestra a quien
   // lo pida, y en el CSV va siempre.
@@ -1323,6 +1329,16 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
    * → empleado, con lo que generó cada uno y su estado de pago. Sale de los
    * mismos tramos del servidor que la tabla de PC; solo cambia la agrupación.
    */
+  useEffect(() => {
+    const ultimo = new Date(Number(repMes.slice(0, 4)), Number(repMes.slice(5, 7)), 0).getDate();
+    const quincenal = cfg.periodoPago !== 'mes';
+    const desde = `${repMes}-${quincenal && repQuincena === 'b' ? '16' : '01'}`;
+    const hasta = `${repMes}-${String(quincenal && repQuincena === 'a' ? 15 : ultimo).padStart(2, '0')}`;
+    const hoy = todayKey();
+    setRepFrom(desde);
+    setRepTo(hasta < hoy ? hasta : hoy);
+  }, [repMes, repQuincena, cfg.periodoPago]);
+
   const reportePeriodos = useMemo(() => {
     const nombrePorCedula = new Map(listPeople().map((p) => [p.cedula, p.name]));
     const hoy = todayKey();
@@ -2994,12 +3010,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
         {tab === 'reportes' && (
           <section className="card grow">
-            <h2>Horas extra por período</h2>
-            <p className="hint">
-              {cfg.modoExtra === 'dia'
-                ? 'Extra = lo que pasa de la jornada del horario de cada día.'
-                : `Extra = lo que pasa de ${cfg.weeklyHours ?? 42} h de lunes a sábado, por semana cerrada.`}
-            </p>
+            <h2>Horas extra</h2>
 {/* La semana en curso no tiene extra todavía (domingo y festivo sí:
                 esos no dependen de la cuenta). Se avisa para que un reporte
                 que la incluya no se lea como «no hubo». */}
@@ -3010,8 +3021,21 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               </p>
             )}
             <div className="rep-controls">
-              <label>Desde <input type="date" value={repFrom} max={repTo} onChange={(e) => setRepFrom(e.target.value)} /></label>
-              <label>Hasta <input type="date" value={repTo} min={repFrom} max={todayKey()} onChange={(e) => setRepTo(e.target.value)} /></label>
+              {/* Mes (los últimos doce) y, si se liquida por quincenas, cuál. */}
+              <select className="sede-select rep-sel" aria-label="Mes" value={repMes} onChange={(e) => setRepMes(e.target.value)}>
+                {Array.from({ length: 12 }, (_, i) => {
+                  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+                  const v = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                  const etiqueta = d.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
+                  return <option key={v} value={v}>{etiqueta.charAt(0).toUpperCase() + etiqueta.slice(1)}</option>;
+                })}
+              </select>
+              {cfg.periodoPago !== 'mes' && (
+                <select className="sede-select rep-sel" aria-label="Quincena" value={repQuincena} onChange={(e) => setRepQuincena(e.target.value)}>
+                  <option value="a">1 – 15</option>
+                  <option value="b">16 – {new Date(Number(repMes.slice(0, 4)), Number(repMes.slice(5, 7)), 0).getDate()}</option>
+                </select>
+              )}
               <button
                 className="btn solo-pc"
                 onClick={() => setRepColsAsistencia(!repColsAsistencia)}
@@ -3037,7 +3061,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <div style={repDatos.estado === 'cargando' ? { opacity: 0.55, pointerEvents: 'none' } : undefined}>
                   {totalValorizado > 0 && (
                     <div className="val-total">
-                      <span className="label">Horas extra del período</span>
+                      <span className="label">Total a pagar</span>
                       <span className="value">{fmtCOP(totalValorizado)}</span>
                     </div>
                   )}
@@ -3127,10 +3151,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     {reportePeriodos.length === 0 && repDatos.estado === 'listo' && <p className="empty">Sin horas extra en el rango.</p>}
                     {reportePeriodos.map((m) => (
                       <Fragment key={m.mes}>
-                        <div className="sem-mes rep-mes">
-                          <span>{new Date(`${m.mes}-15T12:00:00`).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })}</span>
-                          <b>{m.sinSalario ? 'sin salario' : fmtCOP(m.valor)}</b>
-                        </div>
+                        {reportePeriodos.length > 1 && (
+                          <div className="sem-mes rep-mes">
+                            <span>{new Date(`${m.mes}-15T12:00:00`).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })}</span>
+                            <b>{m.sinSalario ? 'sin salario' : fmtCOP(m.valor)}</b>
+                          </div>
+                        )}
                         {m.periodos.map((p) => {
                           const abierto = periodosAbiertos[p.clave] ?? p.enCurso;
                           const alternar = () => setPeriodosAbiertos({ ...periodosAbiertos, [p.clave]: !abierto });
@@ -5482,7 +5508,8 @@ const CSS = `
 .btn.block { display: block; width: 100%; text-align: center; text-decoration: none; margin-bottom: 10px; box-sizing: border-box; }
 .danger-btn { color: var(--crit-text); border-color: var(--crit-soft); }
 .danger-btn:hover { background: var(--crit-soft); }
-.rep-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-bottom: 10px; }
+.rep-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.rep-controls .rep-sel { flex: 1 1 140px; max-width: 240px; }
 .rep-controls label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
 .rep-controls input { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
 .rep-table { display: flex; flex-direction: column; font-size: 13px; font-variant-numeric: tabular-nums; }
