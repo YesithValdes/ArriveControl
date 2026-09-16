@@ -72,6 +72,10 @@ function Icon({ name, size = 17 }) {
     link: <><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></>,
     userPlus: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" /></>,
     archive: <><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></>,
+    eye: <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></>,
+    eyeOff: <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /></>,
+    copy: <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
+    refresh: <><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></>,
     check: <polyline points="20 6 9 17 4 12" />,
   };
   return (
@@ -3621,24 +3625,26 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             {!miEmpresa && <p className="empty">Cargando…</p>}
             {miEmpresa && (
               <div className="scrollable">
+                {/* Cada grupo lleva su acción como icono en la esquina del
+                    título (el nombre va en title/aria-label); los datos van
+                    en texto plano, no en filas etiqueta/valor. */}
                 <div className="cfg-group">
-                  <h3>Identidad</h3>
+                  <div className="cfg-group-head">
+                    <h3>Identidad</h3>
+                    {!empDraft && (
+                      <button
+                        className="btn btn-ico" title="Editar nombre y NIT" aria-label="Editar nombre y NIT"
+                        onClick={() => setEmpDraft({ nombre: miEmpresa.nombre, nit: miEmpresa.nit })}
+                      >
+                        <Icon name="edit" size={16} />
+                      </button>
+                    )}
+                  </div>
                   {!empDraft ? (
-                    <>
-                      <div className="cfg-row">
-                        <label>Nombre</label>
-                        <div className="cfg-input"><b>{miEmpresa.nombre}</b></div>
-                      </div>
-                      <div className="cfg-row">
-                        <label>NIT</label>
-                        <div className="cfg-input">{miEmpresa.nit || '—'}</div>
-                      </div>
-                      <div className="att-controls">
-                        <button className="btn" onClick={() => setEmpDraft({ nombre: miEmpresa.nombre, nit: miEmpresa.nit })}>
-                          Editar
-                        </button>
-                      </div>
-                    </>
+                    <div className="emp-ident">
+                      <b>{miEmpresa.nombre}</b>
+                      <small>NIT {miEmpresa.nit || '—'}</small>
+                    </div>
                   ) : (
                     <div className="ev-form">
                       <div className="ev-form-row">
@@ -3657,60 +3663,69 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   )}
                 </div>
 
-                <div className="cfg-group">
-                  <h3>Plan</h3>
-                  <div className="cfg-row">
-                    <label>
+                {/* El plan entero es el acceso a su pantalla (detalle y pago). */}
+                <div
+                  className="cfg-group cfg-group-btn" role="button" tabIndex={0} title="Ver planes"
+                  onClick={() => setTab('cfg-plan')}
+                  onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); setTab('cfg-plan'); } }}
+                >
+                  <div className="cfg-group-head">
+                    <h3>Plan</h3>
+                    <span className="cfg-chev"><Icon name="chevronRight" size={16} /></span>
+                  </div>
+                  <div className="emp-plan">
+                    <span className={`emp-estado ${sesion?.planEstado?.acceso ? 'ok' : 'crit'}`}>
                       {sesion?.planEstado?.pagada ? 'Suscripción activa'
                         : sesion?.planEstado?.enPrueba ? 'En prueba' : 'Sin suscripción'}
-                      {sesion?.planEstado?.pagada && sesion.planEstado.venceEn && (
-                        <small>
-                          Vence el {new Date(sesion.planEstado.venceEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}
-                        </small>
-                      )}
-                      {sesion?.planEstado?.enPrueba && (
-                        <small>Te quedan {sesion.planEstado.diasPrueba} día{sesion.planEstado.diasPrueba === 1 ? '' : 's'} de prueba.</small>
-                      )}
-                      {!sesion?.planEstado?.acceso && (
-                        <small style={{ color: 'var(--crit-text)' }}>El kiosco no puede registrar marcaciones.</small>
-                      )}
-                    </label>
-                    <div className="cfg-input">
-                      {/* El detalle y el pago viven en su propia pantalla. */}
-                      <button className="btn small" onClick={() => setTab('cfg-plan')}>Ver planes</button>
+                    </span>
+                    {sesion?.planEstado?.pagada && sesion.planEstado.venceEn && (
+                      <small>Vence el {new Date(sesion.planEstado.venceEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}</small>
+                    )}
+                    {sesion?.planEstado?.enPrueba && (
+                      <small>Te quedan {sesion.planEstado.diasPrueba} día{sesion.planEstado.diasPrueba === 1 ? '' : 's'} de prueba.</small>
+                    )}
+                    {!sesion?.planEstado?.acceso && (
+                      <small className="crit">El kiosco no puede registrar marcaciones.</small>
+                    )}
+                  </div>
+                </div>
+
+                <div className="cfg-group">
+                  <div className="cfg-group-head">
+                    <h3>Clave de API</h3>
+                    <div className="cfg-acciones">
+                      <button
+                        className="btn btn-ico" onClick={() => setApiKeyVisible((v) => !v)}
+                        title={apiKeyVisible ? 'Ocultar la clave' : 'Ver la clave'} aria-label={apiKeyVisible ? 'Ocultar la clave' : 'Ver la clave'}
+                      >
+                        <Icon name={apiKeyVisible ? 'eyeOff' : 'eye'} size={16} />
+                      </button>
+                      <button
+                        className="btn btn-ico" title="Copiar la clave" aria-label="Copiar la clave"
+                        onClick={async () => {
+                          try { await navigator.clipboard.writeText(miEmpresa.apiKey); showToast('Clave copiada'); }
+                          catch { showToast('No se pudo copiar.'); }
+                        }}
+                      >
+                        <Icon name="copy" size={16} />
+                      </button>
+                      <button className="btn btn-ico danger-btn" title="Regenerar la clave (la actual deja de servir)" aria-label="Regenerar la clave" onClick={regenerarApiKey}>
+                        <Icon name="refresh" size={16} />
+                      </button>
                     </div>
                   </div>
+                  <code className="api-key">{apiKeyVisible ? miEmpresa.apiKey : '••••••••••••••••••••••••'}</code>
+                  <p className="cfg-note">Para nómina: <code>GET /api/horas</code> con el encabezado <code>X-API-Key</code>.</p>
                 </div>
 
                 <div className="cfg-group">
-                  <h3>Clave de API</h3>
-                  <p className="cfg-note" style={{ marginTop: 0 }}>
-                      Para que nómina consulte <code>GET /api/horas</code> (encabezado <code>X-API-Key</code>).
-                    </p>
-                  <div className="api-key-row">
-                    <code className="api-key">{apiKeyVisible ? miEmpresa.apiKey : '••••••••••••••••••••'}</code>
-                    <button className="btn small" onClick={() => setApiKeyVisible((v) => !v)}>
-                      {apiKeyVisible ? 'Ocultar' : 'Ver'}
-                    </button>
-                    <button
-                      className="btn small"
-                      onClick={async () => {
-                        try { await navigator.clipboard.writeText(miEmpresa.apiKey); showToast('Clave copiada'); }
-                        catch { showToast('No se pudo copiar.'); }
-                      }}
-                    >
-                      Copiar
-                    </button>
-                    <button className="btn small danger-btn" onClick={regenerarApiKey}>Regenerar</button>
+                  <div className="cfg-group-head">
+                    <h3>Mis datos</h3>
+                    <a className="btn btn-ico" href="/api/empresa/exportar" download title="Exportar todos los datos (JSON)" aria-label="Exportar todos los datos">
+                      <Icon name="download" size={16} />
+                    </a>
                   </div>
-                </div>
-
-                <div className="cfg-group">
-                  <h3>Mis datos</h3>
                   <p className="cfg-note" style={{ marginTop: 0 }}>Todo en un JSON, sin rostros (dato biométrico).</p>
-                  <div className="att-controls">
-                    <a className="btn" href="/api/empresa/exportar" download>Exportar datos</a>
-                  </div>
                 </div>
               </div>
             )}
@@ -5944,8 +5959,25 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .inv-acciones { display: flex; gap: 6px; }
 
 /* Clave de API (Mi empresa) */
-.api-key-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.api-key { font-family: var(--f-data); font-size: 13px; background: var(--surface-blanca); border: 1px solid var(--grid); border-radius: 8px; padding: 8px 10px; letter-spacing: .04em; overflow-wrap: anywhere; }
+.api-key { display: block; font-family: var(--f-data); font-size: 13px; background: var(--surface); border: 1px solid var(--grid); border-radius: 8px; padding: 8px 10px; letter-spacing: .04em; overflow-wrap: anywhere; }
+/* Mi empresa: título del grupo con su acción (icono) en la esquina. */
+.cfg-group-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.cfg-group-head h3 { margin-bottom: 0; }
+.cfg-acciones { display: flex; align-items: center; gap: 6px; }
+.cfg-group-head .btn.btn-ico { padding: 6px 8px; min-width: 32px; }
+.cfg-group-btn { cursor: pointer; }
+.cfg-group-btn:hover { border-color: var(--accent); }
+.cfg-group-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cfg-chev { display: flex; color: var(--muted); }
+.emp-ident { display: flex; flex-direction: column; gap: 2px; }
+.emp-ident b { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.emp-ident small, .emp-plan small { font-size: 12px; color: var(--muted); }
+.emp-plan { display: flex; flex-direction: column; gap: 2px; }
+.emp-plan small.crit { color: var(--crit-text); }
+.emp-estado { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 600; }
+.emp-estado::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.emp-estado.ok::before { background: var(--good-text); }
+.emp-estado.crit::before { background: var(--crit-text); }
 
 /* Aviso de prueba gratuita: informativo, no una alarma — al vencer no se
    pierde nada. Solo en la última semana toma color de aviso. */
