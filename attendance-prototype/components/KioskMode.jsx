@@ -1510,7 +1510,7 @@ const s = {
   // Veredicto dentro del cuadro: velo de color sobre el video + icono en círculo.
   velo: {
     position: 'absolute', inset: 0, display: 'flex',
-    alignItems: 'flex-start', justifyContent: 'center', paddingTop: '24%',
+    alignItems: 'center', justifyContent: 'center',
   },
   veloIcono: {
     width: '22cqw', height: '22cqw', borderRadius: '50%', display: 'flex',
@@ -1588,9 +1588,9 @@ const s = {
     lineHeight: 1.1, textWrap: 'balance', textShadow: '0 1px 2px rgba(0,0,0,.6), 0 2px 14px rgba(0,0,0,.45)', pointerEvents: 'none',
   },
   kCentroSub: { display: 'block', fontSize: 'clamp(11px, 3.8cqw, 20px)', fontWeight: 600, opacity: .9, marginTop: '1.6cqw', letterSpacing: 0 },
-  kHud: { position: 'absolute', left: '5cqw', right: '5cqw', bottom: '6.5cqw', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '1.2cqw', textShadow: '0 1px 2px rgba(0,0,0,.6), 0 2px 14px rgba(0,0,0,.45)', pointerEvents: 'none' },
+  kHud: { position: 'absolute', left: '5cqw', right: '5cqw', bottom: '6.5cqw', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', textAlign: 'left', gap: '1.2cqw', textShadow: '0 1px 2px rgba(0,0,0,.6), 0 2px 14px rgba(0,0,0,.45)', pointerEvents: 'none' },
   kTag: {
-    alignSelf: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '1.8cqw', lineHeight: 1,
+    alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '1.8cqw', lineHeight: 1,
     fontSize: 'clamp(10px, 3.7cqw, 20px)', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase',
     padding: '1.7cqw 3.2cqw', borderRadius: 999, color: '#fff', textShadow: 'none', marginBottom: '.8cqw',
   },
