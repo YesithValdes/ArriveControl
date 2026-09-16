@@ -3514,7 +3514,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
             <h2>Plan</h2>
-
+            <div className="scrollable">
             {/* Lo primero es en qué situación está: se paga distinto según
                 si está probando, al día o vencida. */}
             {sesion?.planEstado?.enPrueba && (
@@ -3626,6 +3626,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 )}
               </>
             )}
+            </div>
           </section>
         )}
 
@@ -6038,10 +6039,10 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 
 .meses-sel { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 4px; }
 
-.planes-lista { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-top: 16px; }
+.planes-lista { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 16px 0 4px; }
 .plan-tarjeta {
-  display: flex; flex-direction: column; gap: 3px; position: relative;
-  padding: 20px 18px; border-radius: 14px;
+  display: flex; flex-direction: column; gap: 3px; position: relative; min-width: 0;
+  padding: 20px 16px 16px; border-radius: 14px;
   background: var(--surface-blanca); border: 1px solid var(--border);
 }
 .plan-tarjeta.sugerido { border-color: var(--accent); border-width: 2px; box-shadow: var(--elev-1); }
@@ -6055,7 +6056,7 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .plan-para { font-size: 12.5px; color: var(--muted); }
 .plan-precio { display: flex; align-items: baseline; gap: 6px; margin: 10px 0 2px; }
 .plan-precio s { font-size: 15px; color: var(--muted); }
-.plan-precio b { font-size: 30px; font-weight: 800; letter-spacing: -.03em; }
+.plan-precio b { font-size: 26px; font-weight: 800; letter-spacing: -.03em; }
 .plan-precio em { font-style: normal; font-size: 13px; color: var(--muted); }
 .plan-tope { font-size: 12.5px; color: var(--ink-2); margin-bottom: 16px; }
 .plan-tarjeta .btn { margin-top: auto; }
