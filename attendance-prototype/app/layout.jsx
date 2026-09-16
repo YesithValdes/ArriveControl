@@ -3,7 +3,7 @@
  * Carga el sistema de diseño (globals.css) y Montserrat para TODAS las
  * pantallas, no solo el panel: la tipografía es parte de la marca.
  */
-import { Montserrat } from 'next/font/google';
+import { Montserrat, Sora } from 'next/font/google';
 import ServiceWorkerRegister from '../components/ServiceWorkerRegister.jsx';
 import './globals.css';
 
@@ -11,6 +11,17 @@ const montserrat = Montserrat({
   subsets: ['latin'],
   weight: ['300', '400', '600', '700', '800'],
   variable: '--font-montserrat',
+  display: 'swap',
+});
+
+// Sora: la letra de los mensajes DENTRO del cuadro del kiosco (geométrica,
+// números claros, un 800 que se lee de lejos). Va por next/font y no por un
+// <link> a Google Fonts a propósito: así se sirve desde /_next/static, que el
+// Service Worker guarda, y el kiosco la tiene aunque se caiga el internet.
+const sora = Sora({
+  subsets: ['latin'],
+  weight: ['600', '700', '800'],
+  variable: '--font-sora',
   display: 'swap',
 });
 
@@ -53,7 +64,7 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="es" className={montserrat.variable}>
+    <html lang="es" className={`${montserrat.variable} ${sora.variable}`}>
       <body>
         <ServiceWorkerRegister />
         {children}

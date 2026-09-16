@@ -1164,12 +1164,12 @@ export default function KioskMode() {
     // 'saving' NO pinta nada dentro del cuadro: el velo gris con ⏳ se veía
     // como un "cargando" feo. Mientras responde el servidor, el cuadro queda
     // limpio y solo el texto de arriba dice "Registrando…".
-    in:      { emoji: '👍', anim: 'ac-pop',   velo: 'rgba(21,128,61,0.55)',  circulo: 'var(--k-in)',     borde: 'var(--k-in)' },
-    out:     { emoji: '👋', anim: 'ac-wave',  velo: 'rgba(180,83,9,0.55)',   circulo: 'var(--k-out)',    borde: 'var(--k-out)' },
-    dup:     { emoji: 'ℹ',  anim: '',         velo: 'rgba(85,125,158,0.55)', circulo: 'var(--accent-2)', borde: 'var(--accent)' },
-    prueba:  { emoji: '🧪', anim: 'ac-pop',   velo: 'rgba(110,150,184,0.55)', circulo: 'var(--accent-2)', borde: 'var(--accent)' },
-    pending: { emoji: '📶', anim: 'ac-float', velo: 'rgba(85,125,158,0.55)', circulo: 'var(--accent-2)', borde: 'var(--accent)' },
-    no:      { emoji: '✕',  anim: 'ac-shake', velo: 'rgba(179,64,58,0.55)',  circulo: 'var(--k-no)',     borde: 'var(--k-no)' },
+    in:      { emoji: '👍', anim: 'ac-pop',   velo: 'rgba(21,128,61,0.38)',  circulo: 'var(--k-in)',     borde: 'var(--k-in)' },
+    out:     { emoji: '👋', anim: 'ac-wave',  velo: 'rgba(180,83,9,0.38)',   circulo: 'var(--k-out)',    borde: 'var(--k-out)' },
+    dup:     { emoji: 'ℹ',  anim: '',         velo: 'rgba(31,90,153,0.38)',  circulo: 'var(--accent-2)', borde: 'var(--accent)' },
+    prueba:  { emoji: '🧪', anim: 'ac-pop',   velo: 'rgba(43,108,176,0.38)', circulo: 'var(--accent-2)', borde: 'var(--accent)' },
+    pending: { emoji: '📶', anim: 'ac-float', velo: 'rgba(31,90,153,0.38)',  circulo: 'var(--accent-2)', borde: 'var(--accent)' },
+    no:      { emoji: '✕',  anim: 'ac-shake', velo: 'rgba(179,64,58,0.38)',  circulo: 'var(--k-no)',     borde: 'var(--k-no)' },
   };
   const conResultado = (ui === 'ok' || ui === 'no') && result;
   const ver = conResultado ? VEREDICTOS[result.kind] : null;
@@ -1192,67 +1192,14 @@ export default function KioskMode() {
         {/* Detener es la ÚNICA vía al reposo: marca la parada como manual
             para que el auto-arranque no vuelva a encender la cámara solo. */}
         <button style={s.hudDetener} onClick={() => { setDetenido(true); setStatusNote('Kiosco en pausa.'); stopAll(); }}>⏹ Detener</button>
-        {/* Insignia permanente del modo prueba: que NADIE lo confunda con el
-            kiosco real — aquí no queda registrada ninguna marcación. */}
-        {esPrueba && <span style={s.hudPrueba}>🧪 MODO PRUEBA — no registra marcaciones</span>}
-
-        {/* Zona de mensaje, SIEMPRE arriba del cuadro */}
-        <div style={s.hudMensaje}>
-          {conResultado ? (
-            <>
-              {result.kind === 'in' && <div style={{ ...s.hudTag, color: 'var(--k-in)' }}>🟢 ENTRADA</div>}
-              {result.kind === 'out' && <div style={{ ...s.hudTag, color: 'var(--k-out)' }}>🟠 SALIDA</div>}
-              {result.kind === 'dup' && <div style={{ ...s.hudTag, color: 'var(--accent-2)' }}>ℹ YA REGISTRADA</div>}
-              {result.kind === 'prueba' && <div style={{ ...s.hudTag, color: 'var(--accent-2)' }}>🧪 MODO PRUEBA · RECONOCIDO</div>}
-              {result.kind === 'pending' && <div style={{ ...s.hudTag, color: 'var(--accent-2)' }}>📶 SIN CONEXIÓN</div>}
-              {result.kind === 'no' && <div style={{ ...s.hudTag, color: 'var(--k-no)' }}>✕ NO RECONOCIDO</div>}
-
-              <div style={s.hudTitulo}>
-                {result.kind === 'in' && <>¡Bienvenido/a, {result.name}!</>}
-                {result.kind === 'out' && <>¡Hasta pronto, {result.name}!</>}
-                {result.kind === 'dup' && result.name}
-                {result.kind === 'prueba' && <>Sí, es {result.name}</>}
-                {result.kind === 'pending' && result.name}
-                {result.kind === 'saving' && 'Registrando…'}
-                {result.kind === 'no' && 'Intenta de nuevo'}
-              </div>
-
-              {result.kind === 'in' && <div style={{ ...s.hudHora, color: 'var(--k-in)' }}>{result.time}</div>}
-              {result.kind === 'out' && <div style={{ ...s.hudHora, color: 'var(--k-out)' }}>{result.time}</div>}
-              {result.kind === 'out' && result.trabajadoHoySeg > 0 && (
-                <div style={s.hudDetalle}>{horasLegibles(result.trabajadoHoySeg)} trabajadas</div>
-              )}
-              {result.kind === 'dup' && <div style={s.hudDetalle}>{result.lastLabel} registrada: {result.lastTime}</div>}
-              {result.kind === 'prueba' && <div style={s.hudDetalle}>No se registró ninguna marcación{result.distance != null ? ` · medida ${result.distance}` : ''}</div>}
-              {result.kind === 'pending' && <div style={s.hudDetalle}>Guardada; se enviará sola</div>}
-              {result.kind === 'saving' && <div style={s.hudDetalle}>{result.name}</div>}
-              {result.kind === 'no' && <div style={s.hudDetalle}>{result.reason}</div>}
-            </>
-          ) : ui === 'challenge' ? (
-            <>
-              {/* Con mal encuadre, la instrucción es acomodarse; solo con la
-                  cara bien puesta se pide el parpadeo. */}
-              <div style={s.hudTitulo}>
-                {encuadre === 'ok' ? <>Parpadea <span className="ac-ojo">👁</span></> : 'Acomoda tu cara'}
-              </div>
-              {/* Sin estado "Verificando…": el avance ya lo cuenta la barra
-                  de progreso, y con el cierre instantáneo solo alcanzaba a
-                  parpadear en pantalla. */}
-              <div style={s.hudDetalle}>
-                {encuadre === 'lejos' ? 'Acércate un poco'
-                  : encuadre === 'cerca' ? 'Aléjate un poco'
-                  : scanProg >= 50 ? 'Parpadea' : 'Mira de frente'}
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={s.hudTitulo}>Acércate para marcar</div>
-              <div style={s.hudDetalle}>Esperando rostro…</div>
-            </>
-          )}
-        </div>
-
-        {/* Cuadro de la cámara: con veredicto, su borde toma el color */}
+        {/* ── El cuadro de la cámara, con TODOS los mensajes DENTRO ──
+            Como la cámara de un celular: la instrucción arriba en una
+            píldora, el veredicto abajo sobre un velo oscuro. Todo el texto va
+            en blanco con sombra doble, y el color semántico (entrada, salida,
+            error) vive en una etiqueta sólida, nunca en el texto suelto: así
+            se lee igual en un cuarto oscuro, a contraluz o contra una pared
+            de color. Los tamaños son porcentajes del ancho del cuadro (cqw):
+            celular y tablet guardan las mismas proporciones. */}
         <div style={{ ...s.hudVentana, ...(ver?.borde ? { boxShadow: `0 0 0 3px ${ver.borde}` } : {}) }}>
           <video ref={videoRef} playsInline muted autoPlay style={s.video} />
           {ui === 'challenge' && (
@@ -1263,7 +1210,7 @@ export default function KioskMode() {
                 className="ac-guia"
                 style={{
                   ...s.guiaOval,
-                  ...(encuadre === 'ok' ? { border: '2.5px solid var(--k-in)' } : {}),
+                  ...(encuadre === 'ok' ? { border: '2.5px solid #5ce09a' } : {}),
                 }}
               />
               <div className="ac-laser" style={s.laserGrupo}>
@@ -1276,6 +1223,7 @@ export default function KioskMode() {
               <div className="ac-esq" style={{ ...s.esquina, right: 8, bottom: 8, borderLeft: 'none', borderTop: 'none', borderRadius: '0 0 6px 0' }} />
             </>
           )}
+          {/* Tinte del color del veredicto sobre el video + icono grande. */}
           {ver && (
             <div style={{ ...s.velo, background: ver.velo }}>
               <div style={{ ...s.veloIcono, background: ver.circulo }}>
@@ -1283,9 +1231,71 @@ export default function KioskMode() {
               </div>
             </div>
           )}
+
+          {/* Velos: arriba siempre (para la fila de píldoras); abajo solo
+              cuando hay algo que leer allí. */}
+          <div style={s.kScrimTop} />
+          {(conResultado || result?.kind === 'saving') && <div style={s.kScrimBot} />}
+
+          {/* Fila de arriba: instrucción (o modo prueba) y el reloj. */}
+          <div style={s.kTop}>
+            {esPrueba ? (
+              <span style={{ ...s.kPill, ...s.kPillPrueba }}>🧪 Modo prueba</span>
+            ) : ui === 'challenge' ? (
+              <span style={s.kPill}>
+                {encuadre === 'lejos' ? 'Acércate un poco'
+                  : encuadre === 'cerca' ? 'Aléjate un poco'
+                  : encuadre !== 'ok' ? 'Acomoda tu cara'
+                  : scanProg >= 50 ? <>Parpadea <span className="ac-ojo">👁</span></> : 'Mira de frente'}
+              </span>
+            ) : (
+              <span style={s.kPill}>AsistencIA</span>
+            )}
+            <span style={{ ...s.kPill, ...s.kPillReloj }}>{clock.time.slice(0, 5)}</span>
+          </div>
+
+          {/* Mensaje central: solo en reposo (sin cara al frente). */}
+          {!conResultado && ui !== 'challenge' && result?.kind !== 'saving' && (
+            <div style={s.kCentro}>
+              Acércate para marcar
+              <span style={s.kCentroSub}>tu asistencia</span>
+            </div>
+          )}
+
+          {/* Veredicto abajo: etiqueta sólida del color, nombre, hora, detalle. */}
+          {(conResultado || result?.kind === 'saving') && (
+            <div style={s.kHud}>
+              {result.kind === 'in' && <span style={{ ...s.kTag, background: 'var(--k-in)' }}><i style={s.kTagPunto} />Entrada</span>}
+              {result.kind === 'out' && <span style={{ ...s.kTag, background: 'var(--k-out)' }}><i style={s.kTagPunto} />Salida</span>}
+              {result.kind === 'dup' && <span style={{ ...s.kTag, background: 'var(--accent-2)' }}>ℹ Ya registrada</span>}
+              {result.kind === 'prueba' && <span style={{ ...s.kTag, background: 'var(--accent-2)' }}>Reconocido</span>}
+              {result.kind === 'pending' && <span style={{ ...s.kTag, background: 'var(--accent-2)' }}>📶 Sin conexión</span>}
+              {result.kind === 'no' && <span style={{ ...s.kTag, background: 'var(--k-no)' }}>✕ No reconocido</span>}
+
+              <div style={s.kNombre}>
+                {result.kind === 'in' && <>¡Bienvenido/a, {result.name}!</>}
+                {result.kind === 'out' && <>¡Hasta pronto, {result.name}!</>}
+                {result.kind === 'dup' && result.name}
+                {result.kind === 'prueba' && <>Sí, es {result.name}</>}
+                {result.kind === 'pending' && result.name}
+                {result.kind === 'saving' && 'Registrando…'}
+                {result.kind === 'no' && 'Intenta de nuevo'}
+              </div>
+
+              {(result.kind === 'in' || result.kind === 'out') && <div style={s.kHora}>{result.time}</div>}
+              {result.kind === 'out' && result.trabajadoHoySeg > 0 && <div style={s.kDetalle}>{horasLegibles(result.trabajadoHoySeg)} trabajadas</div>}
+              {result.kind === 'dup' && <div style={s.kDetalle}>{result.lastLabel} registrada: {result.lastTime}</div>}
+              {result.kind === 'prueba' && <div style={s.kDetalle}>No se registró ninguna marcación{result.distance != null ? ` · medida ${result.distance}` : ''}</div>}
+              {result.kind === 'pending' && <div style={s.kDetalle}>Guardada; se enviará sola</div>}
+              {result.kind === 'saving' && <div style={s.kDetalle}>{result.name}</div>}
+              {result.kind === 'no' && <div style={s.kDetalle}>{result.reason}</div>}
+            </div>
+          )}
+
+          {/* Barra de avance, pegada al borde de abajo del cuadro. */}
+          <div style={s.kBarra}><div style={{ ...s.kBarraRelleno, width: `${scanProg}%`, ...(ver ? { background: ver.borde, width: '100%' } : {}) }} /></div>
         </div>
 
-        <div style={s.hudBarra}><div style={{ ...s.hudBarraRelleno, width: `${scanProg}%` }} /></div>
         <div style={s.hudPrivacidad}>🔐 No se guardan fotos</div>
       </div>
 
@@ -1459,29 +1469,15 @@ const s = {
     padding: 'calc(clamp(24px, 5dvh, 48px) + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px))',
     zIndex: 2,
   },
-  // Zona de mensaje sobre el cuadro: altura mínima FIJA para que el cuadro de
-  // la cámara no salte de posición cuando cambia el estado.
-  hudMensaje: {
-    minHeight: 96, width: '100%', display: 'flex', flexDirection: 'column',
-    alignItems: 'center', justifyContent: 'flex-end', gap: 3,
-    textAlign: 'center', padding: '6px 8px 14px', position: 'relative',
-  },
-  hudTag: { fontSize: 12, fontWeight: 800, letterSpacing: '0.14em' },
-  hudTitulo: { fontSize: 24, fontWeight: 800, letterSpacing: '-0.01em', lineHeight: 1.15, color: 'var(--ink)', textWrap: 'balance' },
-  hudDetalle: {
-    fontSize: 12, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
-    color: 'var(--muted)', maxWidth: 300, lineHeight: 1.4,
-  },
-  hudHora: { fontSize: 19, fontWeight: 700, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--f-data)' },
   // Veredicto dentro del cuadro: velo de color sobre el video + icono en círculo.
   velo: {
     position: 'absolute', inset: 0, display: 'flex',
-    alignItems: 'center', justifyContent: 'center',
+    alignItems: 'flex-start', justifyContent: 'center', paddingTop: '24%',
   },
   veloIcono: {
-    width: 84, height: 84, borderRadius: '50%', display: 'flex',
-    alignItems: 'center', justifyContent: 'center', fontSize: 42,
-    color: '#ffffff', fontWeight: 800,
+    width: '22cqw', height: '22cqw', borderRadius: '50%', display: 'flex',
+    alignItems: 'center', justifyContent: 'center', fontSize: '11cqw',
+    color: '#ffffff', fontWeight: 800, boxShadow: '0 6px 20px rgba(0,0,0,.35)',
   },
   // Marca anclada arriba: fuera del flujo, para no descentrar la ventana.
   hudMarca: {
@@ -1499,14 +1495,6 @@ const s = {
     position: 'absolute', top: 'calc(12px + env(safe-area-inset-top, 0px))', right: 16,
     background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)',
     borderRadius: 8, fontSize: 13, padding: '6px 12px', cursor: 'pointer', fontFamily: 'inherit',
-  },
-  // Insignia del modo prueba: centrada abajo, sobre el cuadro de la cámara.
-  hudPrueba: {
-    position: 'absolute', bottom: 'calc(14px + env(safe-area-inset-bottom, 0px))', left: '50%',
-    transform: 'translateX(-50%)', zIndex: 5, whiteSpace: 'nowrap',
-    background: 'var(--accent-2)', color: '#fff', borderRadius: 999,
-    fontSize: 12.5, fontWeight: 700, letterSpacing: '0.04em', padding: '7px 16px',
-    boxShadow: '0 2px 10px rgba(16,24,40,0.25)',
   },
   hudReloj: {
     position: 'relative', fontSize: 'clamp(28px, 9vw, 40px)', fontWeight: 800,
@@ -1533,13 +1521,48 @@ const s = {
   },
   hudPrivacidad: { position: 'relative', marginTop: 'auto', paddingTop: 12, textAlign: 'center', fontSize: 10, color: '#4d6a94' },
   hudVentana: {
-    // Más grande que antes (era 64vw/250px): la cara se ve con claridad.
-    // El tope de 43dvh en el ANCHO limita la altura (ancho × 6/5 ≈ 52dvh) sin
-    // romper la proporción: en pantallas cortas encoge entera, no se deforma.
-    position: 'relative', width: 'min(80vw, 310px, 43dvh)', aspectRatio: '5 / 6',
-    borderRadius: 16, overflow: 'hidden',
-    boxShadow: '0 0 0 1.5px var(--border), 0 0 34px rgba(110,150,184,0.25)',
+    // Ahora los mensajes van DENTRO, así que el cuadro puede ser más grande:
+    // 3:4 como una cámara de celular. El tope en dvh limita la altura sin
+    // deformar; `containerType` habilita las unidades cqw de los textos.
+    position: 'relative', width: 'min(92vw, 400px, 58dvh)', aspectRatio: '3 / 4',
+    borderRadius: 20, overflow: 'hidden', containerType: 'inline-size',
+    background: '#0f151c', color: '#fff',
+    fontFamily: 'var(--font-sora), var(--f-body)',
+    boxShadow: '0 0 0 1.5px var(--border), 0 12px 34px rgba(16,24,40,0.28)',
   },
+  // ── Textos dentro del cuadro ──
+  // Sombra doble en todo texto: una corta y dura recorta el borde; una ancha
+  // y difusa lo levanta del fondo. Sobre un contraluz quemado, es lo que salva.
+  kScrimTop: { position: 'absolute', left: 0, right: 0, top: 0, height: '26%', background: 'linear-gradient(180deg, rgba(0,0,0,.55) 0%, rgba(0,0,0,.28) 55%, transparent 100%)', pointerEvents: 'none' },
+  kScrimBot: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '58%', background: 'linear-gradient(0deg, rgba(0,0,0,.78) 0%, rgba(0,0,0,.55) 40%, rgba(0,0,0,.18) 75%, transparent 100%)', pointerEvents: 'none' },
+  kTop: { position: 'absolute', top: '4.5cqw', left: '4.5cqw', right: '4.5cqw', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '2cqw', pointerEvents: 'none' },
+  kPill: {
+    display: 'inline-flex', alignItems: 'center', gap: '1.6cqw', whiteSpace: 'nowrap',
+    fontSize: 'clamp(11px, 4.1cqw, 22px)', fontWeight: 700, letterSpacing: '0.01em',
+    padding: '1.8cqw 3.4cqw', borderRadius: 999, color: '#fff',
+    background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+    border: '1px solid rgba(255,255,255,0.18)', textShadow: '0 1px 2px rgba(0,0,0,.6)',
+  },
+  kPillPrueba: { background: 'rgba(43,108,176,0.85)', borderColor: 'rgba(255,255,255,0.25)' },
+  kPillReloj: { fontVariantNumeric: 'tabular-nums', fontWeight: 600 },
+  kCentro: {
+    position: 'absolute', left: '4.5cqw', right: '4.5cqw', top: '50%', transform: 'translateY(-50%)',
+    textAlign: 'center', fontSize: 'clamp(16px, 7cqw, 40px)', fontWeight: 800, letterSpacing: '-0.01em',
+    lineHeight: 1.1, textWrap: 'balance', textShadow: '0 1px 2px rgba(0,0,0,.6), 0 2px 14px rgba(0,0,0,.45)', pointerEvents: 'none',
+  },
+  kCentroSub: { display: 'block', fontSize: 'clamp(11px, 3.8cqw, 20px)', fontWeight: 600, opacity: .9, marginTop: '1.6cqw', letterSpacing: 0 },
+  kHud: { position: 'absolute', left: '5cqw', right: '5cqw', bottom: '6.5cqw', display: 'flex', flexDirection: 'column', gap: '1.2cqw', textShadow: '0 1px 2px rgba(0,0,0,.6), 0 2px 14px rgba(0,0,0,.45)', pointerEvents: 'none' },
+  kTag: {
+    alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: '1.8cqw',
+    fontSize: 'clamp(10px, 3.7cqw, 20px)', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase',
+    padding: '1.7cqw 3.2cqw', borderRadius: 999, color: '#fff', textShadow: 'none', marginBottom: '.8cqw',
+  },
+  kTagPunto: { width: '2.6cqw', height: '2.6cqw', borderRadius: '50%', background: '#fff', display: 'inline-block' },
+  kNombre: { fontSize: 'clamp(18px, 8.4cqw, 46px)', fontWeight: 800, letterSpacing: '-0.015em', lineHeight: 1.08, textWrap: 'balance' },
+  kHora: { fontSize: 'clamp(15px, 6.4cqw, 34px)', fontWeight: 700, fontVariantNumeric: 'tabular-nums', letterSpacing: '0.01em', opacity: .96 },
+  kDetalle: { fontSize: 'clamp(11px, 3.9cqw, 21px)', fontWeight: 600, opacity: .92, lineHeight: 1.3 },
+  kBarra: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '1.6cqw', background: 'rgba(255,255,255,0.18)' },
+  kBarraRelleno: { height: '100%', background: 'linear-gradient(90deg, #2b6cb0, #59c2ad)', transition: 'width .45s ease' },
   video: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' },
   // El "carro" del láser ocupa TODA la ventana y se mueve con transform
   // (composición en GPU): animar top/bottom producía lag en el celular
@@ -1557,14 +1580,6 @@ const s = {
     border: '2px dashed rgba(255,255,255,0.65)', pointerEvents: 'none',
   },
   esquina: { position: 'absolute', width: 24, height: 24, border: '2.5px solid var(--accent)', pointerEvents: 'none' },
-  hudBarra: {
-    position: 'relative', width: 'min(64vw, 250px)', height: 5, borderRadius: 3,
-    background: 'var(--grid)', marginTop: 16, overflow: 'hidden',
-  },
-  hudBarraRelleno: {
-    position: 'absolute', top: 0, bottom: 0, left: 0, borderRadius: 3,
-    background: 'linear-gradient(90deg, #2b6cb0, #59c2ad)', transition: 'width .45s ease',
-  },
   // Padding con safe-area y alto flexible: clase .kiosk-idle (globals.css).
   idle: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' },
   brand: { position: 'absolute', top: 'calc(18px + env(safe-area-inset-top, 0px))', left: 20, fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--muted)' },
