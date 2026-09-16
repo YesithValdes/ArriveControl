@@ -25,15 +25,18 @@
   --grid: #d8e2ee;
   --border: #d8e2ee;
 
-  /* Acento: azul AERO desaturado (antes #2563eb saturado). */
-  --accent: #6e96b8;
-  --accent-2: #557d9e;
+  /* Acento: azul MARINO firme (2026-09-15; antes acero #6e96b8, que sobre el
+     fondo claro quedaba en 3,0:1 de contraste). Enlaces e iconos activos. */
+  --accent: #2b6cb0;
+  --accent-2: #1f5a99;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(110, 150, 184, 0.14);
+  --accent-soft: rgba(43, 108, 176, 0.13);
 
-  /* Botón primario y sidebar: azul JEANS/ACERO (antes #16224e). */
-  --btn-primary: #3a5570;
-  --btn-primary-hover: #2e455d;
+  /* Botón primario, barra y menú: azul MARINO (antes acero #3a5570). 12:1 con
+     el texto blanco. Los iconos NO lo usan: van en --ink-2, y el azul queda
+     para lo que se pulsa de verdad (botón principal, chip de extra, activo). */
+  --btn-primary: #1e3a5f;
+  --btn-primary-hover: #172e4c;
 
   /* Elevaciones sutiles */
   --glow: 0 1px 3px rgba(16, 24, 40, 0.10);

@@ -119,7 +119,7 @@ function LoginForm() {
         display: 'grid',
         placeItems: 'center',
         padding: 24,
-        background: 'linear-gradient(160deg, #3a5570 0%, #557d9e 100%)',
+        background: 'linear-gradient(160deg, #1e3a5f 0%, #1f5a99 100%)',
       }}
     >
       {/* En móvil solo se muestra el formulario: la mitad de marca se oculta. */}

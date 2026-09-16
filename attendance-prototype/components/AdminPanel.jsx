@@ -1956,7 +1956,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // Tonos de azul para la dona de costos (del más oscuro al más claro,
   // asignados por peso de cada categoría).
-  const AZULES_DONA = ['#3a5570', '#557d9e', '#6e96b8', '#9dbbd2', '#cfdde9', '#8b99ad'];
+  const AZULES_DONA = ['#1e3a5f', '#1f5a99', '#2b6cb0', '#9dbbd2', '#cfdde9', '#8b99ad'];
 
   // Horas EXTRA reales por cédula en el período (tipos HE*), tomadas de los
   // tramos valorizados del servidor: la barra pinta en oscuro exactamente lo
@@ -6040,7 +6040,8 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   color: var(--muted); text-decoration: none; line-height: 1.35; max-width: 100%;
 }
 .lugar:hover .lugar-dir { color: var(--accent-2); text-decoration: underline; }
-.lugar-ico { flex: 0 0 auto; color: var(--accent-2); margin-top: 1px; display: inline-flex; }
+/* Los iconos van en el gris oscuro del texto; el azul se reserva para lo activo. */
+.lugar-ico { flex: 0 0 auto; color: var(--ink-2); margin-top: 1px; display: inline-flex; }
 .lugar-dir { font-size: 12px; color: var(--ink-2); min-width: 0; }
 /* Detalle bajo la marcación: ficha de dos columnas + botón del mapa. */
 .lugar-detalle { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 0 8px 64px; padding: 8px 12px; border-radius: 8px; background: var(--page); border: 1px solid var(--grid); font-size: 12.5px; }

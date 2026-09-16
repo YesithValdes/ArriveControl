@@ -45,7 +45,7 @@ export const viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
-  themeColor: '#3a5570',
+  themeColor: '#1e3a5f',
   // Sin cover, env(safe-area-inset-*) siempre vale 0 y el contenido queda
   // detrás del notch/barra de gestos en la PWA instalada (y en Capacitor).
   viewportFit: 'cover',

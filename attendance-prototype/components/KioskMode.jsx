@@ -1548,7 +1548,7 @@ const s = {
   laserEstela: { position: 'absolute', left: 0, right: 0, bottom: 3, height: 90, background: 'linear-gradient(180deg, transparent, rgba(110,150,184,0.28))' },
   laserHaz: {
     position: 'absolute', left: '-4%', right: '-4%', bottom: 0, height: 3,
-    background: 'linear-gradient(90deg, transparent, #6e96b8, #FFFFFF, #6e96b8, transparent)',
+    background: 'linear-gradient(90deg, transparent, #2b6cb0, #FFFFFF, #2b6cb0, transparent)',
     boxShadow: '0 0 18px 4px rgba(110,150,184,0.55)',
   },
   guiaOval: {
@@ -1563,7 +1563,7 @@ const s = {
   },
   hudBarraRelleno: {
     position: 'absolute', top: 0, bottom: 0, left: 0, borderRadius: 3,
-    background: 'linear-gradient(90deg, #6e96b8, #59c2ad)', transition: 'width .45s ease',
+    background: 'linear-gradient(90deg, #2b6cb0, #59c2ad)', transition: 'width .45s ease',
   },
   // Padding con safe-area y alto flexible: clase .kiosk-idle (globals.css).
   idle: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' },
