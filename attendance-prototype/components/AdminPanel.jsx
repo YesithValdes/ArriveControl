@@ -2614,12 +2614,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'anomalias' && (
           <section className="card grow">
             <h2>Anomalías por resolver <span className="muted-count">{view.anomalies.length}</span></h2>
-{/* Filtro por tipo (aplica a la bandeja de PC y a la lista móvil) */}
-            <div className="att-controls">
-              {[['all', 'Todas'], ['missing-exit', 'Salida faltante'], ['late-entry', 'Entrada tardía'], ['early-exit', 'Salida temprana']].map(([id, lbl]) => (
+            {/* Filtro por tipo (aplica a la bandeja de PC y a la lista móvil).
+                En el celular es una sola fila de cuatro celdas con el número
+                arriba y el nombre corto abajo; en PC, chips con el nombre largo. */}
+            <div className="att-controls anom-filtros">
+              {[['all', 'Todas', 'Todas'], ['missing-exit', 'Salida faltante', 'Sin salida'], ['late-entry', 'Entrada tardía', 'Tardías'], ['early-exit', 'Salida temprana', 'Tempranas']].map(([id, lbl, corto]) => (
                 <button key={id} className="fchip" aria-pressed={anomFiltro === id} onClick={() => { setAnomFiltro(id); setAnomAbierta(null); setAnomPage(0); }}>
-                  {lbl}
-                  {id !== 'all' && <span className="fchip-n">{view.anomalies.filter((a) => a.kind === id).length}</span>}
+                  <span className="solo-pc">{lbl}</span><span className="solo-movil">{corto}</span>
+                  <span className="fchip-n">{id === 'all' ? view.anomalies.length : view.anomalies.filter((a) => a.kind === id).length}</span>
                 </button>
               ))}
             </div>
@@ -2632,10 +2634,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 const anomPages = Math.max(1, Math.ceil(casos.length / ANOM_PAGE));
                 const anomSafe = Math.min(anomPage, anomPages - 1);
                 const casosPagina = casos.slice(anomSafe * ANOM_PAGE, (anomSafe + 1) * ANOM_PAGE);
+                // En el celular la novedad va corta («Sin salida») para que el
+                // nombre no quede en «Andres V…».
+                const dosTextos = (largo, corto) => <><span className="solo-pc">{largo}</span><span className="solo-movil">{corto}</span></>;
                 const aChip = (a) =>
-                  a.kind === 'missing-exit' ? chip('crit', 'Salida faltante')
-                    : a.kind === 'early-exit' ? chip('warn', 'Salida temprana')
-                      : chip('warn', 'Entrada tardía');
+                  a.kind === 'missing-exit' ? chip('crit', dosTextos('Salida faltante', 'Sin salida'))
+                    : a.kind === 'early-exit' ? chip('warn', dosTextos('Salida temprana', 'Temprana'))
+                      : chip('warn', dosTextos('Entrada tardía', 'Tardía'));
                 const aDesc = (a) =>
                   a.kind === 'missing-exit'
                     ? `Entró ${fmt12(a.event.ts)}, sin salida.`
@@ -2670,7 +2675,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                 <p className="caso-det">{aDay(a)}{a.person.sede ? ` · ${a.person.sede}` : ''} — {aDesc(a)}</p>
                                 <div className="caso-fix">
                                   <label>
-                                    {a.kind === 'missing-exit' ? 'Salida' : 'Hora correcta'}
+                                    {a.kind === 'missing-exit' ? 'Salida' : dosTextos('Hora correcta', 'Hora')}
                                     <input
                                       type="time" value={anomForm.time}
                                       onChange={(e) => setAnomForm({ ...anomForm, time: e.target.value })}
@@ -5813,6 +5818,7 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 
 /* Botón que solo tiene sentido con espacio: en móvil la tabla no se ve. */
 .solo-pc { display: none; }
+.solo-movil { display: inline; }
 
 /* Horas extra en el gráfico semanal */
 .hrow .track { position: relative; }
@@ -6416,6 +6422,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .rep-periodo { grid-template-columns: 230px auto; justify-content: start; }
   .fchips.rep-quincena .fchip { padding: 0 14px; }
   .solo-pc { display: inline-flex; }
+  .solo-movil { display: none; }
   .acc { display: none; }
   .rep-periodos { display: none; }
   .tabbar > button {
@@ -6583,8 +6590,25 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
    no se pierden: aparecen en el detalle al expandir el caso. */
 @media (max-width: 899px) {
   .caso-nom small { display: none; }
-  .caso-nom b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .caso-panel { padding-left: 8px; }
+  .caso-nom b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+  .caso-cab { gap: 8px; padding: 7px 4px; }
+  .caso-cab .av-tabla { width: 28px; height: 28px; font-size: 11px; }
+  .caso-panel { padding: 0 4px 10px; }
+  .caso-det { font-size: 12.5px; margin-bottom: 8px; }
+  /* El arreglo en dos filas: hora + motivo, y debajo los botones. */
+  .caso-fix { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; }
+  .caso-fix label { flex-direction: row; align-items: center; gap: 6px; }
+  .caso-fix input[type="time"] { padding: 6px 6px; }
+  .caso-motivo { flex: none; width: 100%; box-sizing: border-box; }
+  .caso-fix .btn { padding: 7px 12px; }
+  .caso-fix .btn:not(.primary) { justify-self: start; }
+  /* Filtros: cuatro celdas iguales, número grande arriba y nombre corto abajo. */
+  .anom-filtros { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+  .anom-filtros .fchip { display: flex; flex-direction: column-reverse; align-items: center; gap: 0; border: 0; border-radius: 0; padding: 6px 2px; font-size: 10.5px; white-space: nowrap; line-height: 1.3; }
+  .anom-filtros .fchip + .fchip { border-left: 1px solid var(--grid); }
+  .anom-filtros .fchip[aria-pressed="true"] { background: var(--btn-primary); color: #fff; }
+  .anom-filtros .fchip-n { margin: 0; padding: 0; background: none; border-radius: 0; color: var(--ink); font-size: 15px; font-weight: 700; }
+  .anom-filtros .fchip[aria-pressed="true"] .fchip-n { color: #fff; background: none; }
 }
 .caso-fix { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .caso-fix label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
