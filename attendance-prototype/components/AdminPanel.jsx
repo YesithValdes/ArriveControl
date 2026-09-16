@@ -2672,7 +2672,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                             </button>
                             {abierta && (
                               <div className="caso-panel">
-                                <p className="caso-det">{aDay(a)}{a.person.sede ? ` · ${a.person.sede}` : ''} — {aDesc(a)}</p>
+                                <p className="caso-det">
+                                  <span>{aDay(a)}{a.person.sede ? ` · ${a.person.sede}` : ''}</span>
+                                  <span>{aDesc(a)}</span>
+                                </p>
                                 <div className="caso-fix">
                                   <label>
                                     {a.kind === 'missing-exit' ? 'Salida' : dosTextos('Hora correcta', 'Hora')}
@@ -2681,13 +2684,18 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                       onChange={(e) => setAnomForm({ ...anomForm, time: e.target.value })}
                                     />
                                   </label>
-                                  <input
-                                    className="caso-motivo" type="text" placeholder="Motivo del ajuste (obligatorio)"
-                                    value={anomForm.reason}
-                                    onChange={(e) => setAnomForm({ ...anomForm, reason: e.target.value })}
-                                  />
-                                  <button className="btn primary" onClick={() => guardarAnomalia(a)}>Guardar</button>
-                                  <button className="btn" onClick={() => openFix(a)}>Ver día completo</button>
+                                  <label className="caso-motivo-l">
+                                    Motivo
+                                    <input
+                                      className="caso-motivo" type="text" placeholder="Obligatorio"
+                                      value={anomForm.reason}
+                                      onChange={(e) => setAnomForm({ ...anomForm, reason: e.target.value })}
+                                    />
+                                  </label>
+                                  <div className="caso-acciones">
+                                    <button className="btn primary" onClick={() => guardarAnomalia(a)}>Guardar</button>
+                                    <button className="costo-link" onClick={() => openFix(a)}>Ver día completo →</button>
+                                  </div>
                                 </div>
                               </div>
                             )}
@@ -6583,9 +6591,12 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .caso-nom small { color: var(--muted); font-size: 11.5px; }
 .caso-chev { display: flex; color: var(--muted); transition: transform .18s ease; }
 .caso.abierto .caso-chev { transform: rotate(90deg); }
+/* El caso abierto se agrupa en un bloque tenue: cabecera, detalle y arreglo. */
+.caso.abierto { background: var(--page); border-radius: 10px; border-bottom-color: transparent; margin: 2px 0; }
 @media (prefers-reduced-motion: reduce) { .caso-chev { transition: none; } }
 .caso-panel { padding: 2px 8px 14px 48px; }
-.caso-det { font-size: 13px; color: var(--ink-2); margin-bottom: 10px; }
+.caso-det { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 13px; color: var(--ink-2); margin-bottom: 10px; }
+.caso-det span + span::before { content: '—'; margin-right: 10px; color: var(--muted); }
 /* Móvil: ficha compacta — solo foto, nombre y novedad. La fecha y la sede
    no se pierden: aparecen en el detalle al expandir el caso. */
 @media (max-width: 899px) {
@@ -6593,15 +6604,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .caso-nom b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
   .caso-cab { gap: 8px; padding: 7px 4px; }
   .caso-cab .av-tabla { width: 28px; height: 28px; font-size: 11px; }
-  .caso-panel { padding: 0 4px 10px; }
-  .caso-det { font-size: 12.5px; margin-bottom: 8px; }
-  /* El arreglo en dos filas: hora + motivo, y debajo los botones. */
-  .caso-fix { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; }
-  .caso-fix label { flex-direction: row; align-items: center; gap: 6px; }
-  .caso-fix input[type="time"] { padding: 6px 6px; }
-  .caso-motivo { flex: none; width: 100%; box-sizing: border-box; }
-  .caso-fix .btn { padding: 7px 12px; }
-  .caso-fix .btn:not(.primary) { justify-self: start; }
+  .caso-panel { padding: 0 10px 12px; }
   /* Filtros: cuatro celdas iguales, número grande arriba y nombre corto abajo. */
   .anom-filtros { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
   .anom-filtros .fchip { display: flex; flex-direction: column-reverse; align-items: center; gap: 0; border: 0; border-radius: 0; padding: 6px 2px; font-size: 10.5px; white-space: nowrap; line-height: 1.3; }
@@ -6612,8 +6615,20 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 }
 .caso-fix { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .caso-fix label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.caso-fix input[type="time"] { font-family: var(--f-data); font-size: 13.5px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--ink); }
-.caso-motivo { flex: 1 1 220px; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--ink); }
+.caso-fix input[type="time"] { font-family: var(--f-data); font-size: 13.5px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-blanca); color: var(--ink); }
+.caso-motivo-l { flex: 1 1 220px; min-width: 0; }
+.caso-motivo { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-blanca); color: var(--ink); }
+.caso-acciones { display: flex; align-items: center; gap: 14px; }
+/* Móvil: el detalle en dos líneas; hora y motivo lado a lado con su rótulo;
+   debajo, Guardar a la izquierda y el enlace al día completo a la derecha. */
+@media (max-width: 899px) {
+  .caso-det { flex-direction: column; gap: 1px; font-size: 12.5px; margin-bottom: 10px; }
+  .caso-det span:first-child { font-weight: 600; color: var(--ink); }
+  .caso-det span + span::before { content: none; margin: 0; }
+  .caso-fix { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: end; }
+  .caso-fix input[type="time"] { width: 100%; box-sizing: border-box; }
+  .caso-acciones { grid-column: 1 / -1; justify-content: space-between; padding-top: 2px; }
+}
 .fchip-n { margin-left: 6px; font-size: 10.5px; font-weight: 700; background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 0 5px; }
 .fchip[aria-pressed="true"] .fchip-n { background: rgba(255,255,255,.25); color: inherit; }
 
