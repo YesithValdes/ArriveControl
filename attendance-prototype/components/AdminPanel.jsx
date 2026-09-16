@@ -1094,6 +1094,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [evForm, setEvForm] = useState(null); // { mode:'add'|'edit', eventId?, fecha, type, time, reason }
   const [openDia, setOpenDia] = useState(null); // día expandido dentro del drawer
   const [lugarAbierto, setLugarAbierto] = useState(null); // marcación con el detalle de ubicación abierto
+  // Semanas desplegadas en el cajón: { lunes: true|false }. Sin entrada, la
+  // semana en curso va abierta y las demás cerradas (solo su cabecera).
+  const [semanasAbiertas, setSemanasAbiertas] = useState({});
+  const semanaAbierta = (lunes) => semanasAbiertas[lunes] ?? (lunes === lunesDe(todayKey()));
   // refresh = re-sincronizar desde Postgres y re-renderizar.
   const refresh = () => {
     syncPanel()
@@ -1515,6 +1519,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     const rango = day
       ? rangoSemanas(day, day)
       : rangoSemanas(dayKey(new Date(Date.now() - 7 * 24 * 3600000).toISOString()), hoy);
+    // Al abrir por un día concreto, su semana va desplegada.
+    setSemanasAbiertas(day ? { [lunesDe(day)]: true } : {});
     setDrawer({ personId, personName, ...rango });
   };
 
@@ -1528,6 +1534,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     if (!persona) { showToast('Ese empleado ya no está activo.'); return; }
     setEvForm(null);
     setOpenDia(null);
+    setSemanasAbiertas({});
     setDrawer({ personId: persona.id, personName: persona.name, ...rangoSemanas(repFrom, repTo) });
   };
 
@@ -4489,16 +4496,25 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     {(i === 0 || s.lunes.slice(0, 7) !== drawerSemanas[i - 1].lunes.slice(0, 7)) && (
                       <div className="sem-mes">{mesDe(s.lunes)}</div>
                     )}
-                    <section className={`sem-bloque ${s.cerrada ? 'cerrada' : 'curso'}`}>
+                    <section className={`sem-bloque ${s.cerrada ? 'cerrada' : 'curso'}${semanaAbierta(s.lunes) ? '' : ' plegada'}`}>
                       {/* Las cuentas de la semana. La extra NO se estima por
                           día: solo existe cuando la semana cerró (domingo
                           terminado). Mientras tanto, se acumula y punto. */}
-                      <header className="sem-head">
+                      {/* La cabecera es un botón: la semana en curso viene
+                          desplegada, las demás cerradas; se tocan para abrir. */}
+                      <header
+                        className="sem-head"
+                        role="button" tabIndex={0}
+                        aria-expanded={semanaAbierta(s.lunes)}
+                        onClick={() => setSemanasAbiertas({ ...semanasAbiertas, [s.lunes]: !semanaAbierta(s.lunes) })}
+                        onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); setSemanasAbiertas({ ...semanasAbiertas, [s.lunes]: !semanaAbierta(s.lunes) }); } }}
+                      >
                         {/* El estado se ve en el COLOR de la cabecera: azul la
                             semana en curso, gris las que ya cerraron. */}
                         <span className="sem-top">
                           <span className="sem-titulo" title={s.porDia ? (s.cerrada ? 'Semana cerrada' : 'Semana en curso: cada día se define solo') : s.cerrada ? 'Semana cerrada: la extra es definitiva' : 'Semana en curso: la extra se define al cerrar el domingo'}>{etiquetaSemana(s)}</span>
                           <span className="sem-total">{fmtH(s.trabajado)}</span>
+                          <span className={`sem-chev${semanaAbierta(s.lunes) ? ' abierta' : ''}`} aria-hidden="true">›</span>
                         </span>
                         {/* Solo códigos y horas; la explicación, al pasar el mouse. */}
                         <span className="sem-chips">
@@ -4531,7 +4547,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         </span>
                       </header>
 
-                    {s.dias.map((d) => filaDia(d, s.porDia ? s.extraPorDia.get(d.fecha) : 0))}
+                    {semanaAbierta(s.lunes) && s.dias.map((d) => filaDia(d, s.porDia ? s.extraPorDia.get(d.fecha) : 0))}
                     </section>
                     </Fragment>
                     ))}
@@ -5978,7 +5994,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .sem-bloque { flex: 0 0 auto; border: 1px solid var(--grid); border-radius: 10px; overflow: hidden; background: var(--surface); }
 /* Separador de MES entre bloques de semana. */
 .sem-mes { flex: 0 0 auto; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 6px 4px 0; }
-.sem-head { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--grid); }
+.sem-head { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--grid); cursor: pointer; user-select: none; }
 /* Azul solo la semana EN CURSO; las cerradas, en gris. */
 .sem-bloque.curso .sem-head { background: var(--page); }
 .sem-bloque.cerrada { border-color: #e2e6eb; }
@@ -5987,6 +6003,11 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .sem-top { display: flex; align-items: baseline; gap: 10px; }
 .sem-titulo { font-size: 13.5px; font-weight: 700; color: var(--ink); text-transform: capitalize; }
 .sem-total { margin-left: auto; font-size: 14px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sem-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sem-chev { color: var(--muted); font-size: 16px; line-height: 1; transition: transform .15s; flex: 0 0 auto; }
+.sem-chev.abierta { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .sem-chev { transition: none; } }
+.sem-bloque.plegada .sem-head { border-bottom: 0; }
 .sem-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .sem-chip {
   font-size: 11.5px; font-weight: 600; color: var(--ink-2); background: var(--surface);
