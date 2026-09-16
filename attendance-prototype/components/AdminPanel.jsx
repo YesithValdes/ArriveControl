@@ -645,6 +645,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // La tabla es sobre horas extra y dinero; lo demás solo se muestra a quien
   // lo pida, y en el CSV va siempre.
   const [repColsAsistencia, setRepColsAsistencia] = useState(false);
+  // La gente sin horas extra en el período va aparte (una línea al pie con
+  // el conteo) para que la tabla sea solo lo que se paga; se puede desplegar.
+  const [verSinExtra, setVerSinExtra] = useState(false);
 
   // Reglamento laboral (jornada legal semanal + gracia de puntualidad).
   const [cfg, setCfg] = useState(getLaborConfig);
@@ -3130,83 +3133,118 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     </div>
                   )}
 
-                  <div
-                    className={`rep-table${repColsAsistencia ? ' con-asistencia' : ''}${permisos.liquidar ? ' con-pago' : ''}`}
-                    role="table"
-                  >
-                    <div className="rep-row head" role="row">
-                      <span>Empleado</span>
-                      {/* La explicación de cada sigla vive en su «?», no en un
-                          párrafo kilométrico al pie que nadie leía. */}
-                      {TIPOS_HORA.map((t) => (
-                        <span key={t.codigo}>
-                          {t.codigo} <Q abajo texto={`${t.nombre}. Su porcentaje se ajusta en Ajustes → Valorización de horas extra.`} />
-                        </span>
-                      ))}
-                      <span>Total</span>
-                      <span className="val-money">Valor</span>
-                      {repColsAsistencia && (
-                        <>
-                          <span>Sede</span><span>Días</span><span>Horas</span><span>Tardías</span>
-                        </>
-                      )}
-                      {permisos.liquidar && (
-                        <span className="col-pago">
-                          Pagado <Q abajo texto="Anotación de que esas horas ya se liquidaron en nómina — AsistencIA no paga. Si después se corrige una marcación ya pagada, ese tramo vuelve a quedar pendiente y la fila se muestra como parcial." />
-                        </span>
-                      )}
-                    </div>
-                    {report.map((r) => (
-                      <div className="rep-row" role="row" key={r.cedula}>
-                        <button
-                          className="rep-name rep-link"
-                          onClick={() => irAAsistenciaEmpleado(r.cedula)}
-                          title={`Ver la asistencia de ${r.name} en este período`}
-                        >
-                          {r.name}
-                        </button>
-                        {TIPOS_HORA.map((t) => (
-                          <span key={t.codigo} className={r.horasPorTipo[t.codigo] > 0 ? 'warn-num' : 'muted-cell'}>
-                            {r.horasPorTipo[t.codigo] > 0 ? fmtHoras(r.horasPorTipo[t.codigo]) : '—'}
-                          </span>
+                  {/* PC: la tabla. Solo las columnas de los tipos que ocurrieron
+                      en el período (las demás eran puros «—»); nombre y apellido;
+                      cifras a la derecha; totales al pie. La gente sin extra va
+                      en una línea aparte, salvo con las columnas de asistencia,
+                      donde sus días y horas sí cuentan. */}
+                  {(() => {
+                    const tipos = TIPOS_HORA.filter((t) => report.some((r) => r.horasPorTipo[t.codigo] > 0));
+                    const conExtra = report.filter((r) => r.conExtras);
+                    const sinExtra = report.filter((r) => !r.conExtras);
+                    const filas = repColsAsistencia || verSinExtra ? report : conExtra;
+                    const totalTipo = (c) => conExtra.reduce((acc, r) => acc + r.horasPorTipo[c], 0);
+                    const totalHoras = conExtra.reduce((acc, r) => acc + r.extras, 0);
+                    const columnas = [
+                      'minmax(150px, 1.6fr)',
+                      ...tipos.map(() => 'minmax(78px, .7fr)'),
+                      'minmax(80px, .75fr)', 'minmax(104px, .95fr)',
+                      ...(repColsAsistencia ? ['minmax(90px, .9fr)', '.45fr', '.6fr', '.55fr'] : []),
+                      ...(permisos.liquidar ? ['minmax(96px, .8fr)'] : []),
+                    ].join(' ');
+                    const celdasVacias = (repColsAsistencia ? 4 : 0) + (permisos.liquidar ? 1 : 0);
+                    return (
+                      <div className="rep-table" role="table" style={{ '--rep-cols': columnas }}>
+                        <div className="rep-row head" role="row">
+                          <span>Empleado</span>
+                          {/* La explicación de cada sigla vive en su «?», no en un
+                              párrafo kilométrico al pie que nadie leía. */}
+                          {tipos.map((t) => (
+                            <span key={t.codigo} className="num">
+                              {t.codigo} <Q abajo texto={`${t.nombre}. Su porcentaje se ajusta en Ajustes → Valorización de horas extra.`} />
+                            </span>
+                          ))}
+                          <span className="num">Total</span>
+                          <span className="num">Valor</span>
+                          {repColsAsistencia && (
+                            <>
+                              <span>Sede</span><span className="num">Días</span><span className="num">Horas</span><span className="num">Tardías</span>
+                            </>
+                          )}
+                          {permisos.liquidar && (
+                            <span className="col-pago">
+                              Pagado <Q abajo texto="Anotación de que esas horas ya se liquidaron en nómina — AsistencIA no paga. Si después se corrige una marcación ya pagada, ese tramo vuelve a quedar pendiente y la fila se muestra como parcial." />
+                            </span>
+                          )}
+                        </div>
+                        {filas.map((r) => (
+                          <div className={`rep-row${r.conExtras ? '' : ' sin-extra'}`} role="row" key={r.cedula}>
+                            <button
+                              className="rep-name rep-link"
+                              onClick={() => irAAsistenciaEmpleado(r.cedula)}
+                              title={`${r.name} — ver su asistencia en este período`}
+                            >
+                              {nombreCorto(r.name)}
+                            </button>
+                            {tipos.map((t) => (
+                              <span key={t.codigo} className={`num ${r.horasPorTipo[t.codigo] > 0 ? 'warn-num' : 'muted-cell'}`}>
+                                {r.horasPorTipo[t.codigo] > 0 ? fmtHoras(r.horasPorTipo[t.codigo]) : '—'}
+                              </span>
+                            ))}
+                            <span className={`num${r.extras > 0 ? '' : ' muted-cell'}`}>{r.extras > 0 ? fmtHoras(r.extras) : '—'}</span>
+                            <span className="num val-money" title={r.desglose?.length ? r.desglose.join('\n') : undefined}>
+                              {!r.conExtras
+                                ? <span className="muted-cell">—</span>
+                                : r.sinSalario
+                                  ? <span className="sin-salario" title="Registra el salario del empleado para ver su valor">sin salario</span>
+                                  : fmtCOP(r.valor)}
+                            </span>
+                            {repColsAsistencia && (
+                              <>
+                                <span>{r.sede || '—'}</span>
+                                <span className="num">{r.days}</span>
+                                <span className="num">{fmtHoras(r.hours)}</span>
+                                <span className={`num${r.lateCount > 0 ? ' warn-num' : ''}`}>{r.lateCount}</span>
+                              </>
+                            )}
+                            {permisos.liquidar && (
+                              <span className="col-pago">
+                                {r.conExtras ? (
+                                  <label className={`pago-check est-${r.pago}`} title={etiquetaPago(r)}>
+                                    <input
+                                      type="checkbox"
+                                      checked={r.pago === 'pagado'}
+                                      // 'parcial' se pinta indeterminado: ni pagado
+                                      // ni pendiente, y al hacer clic completa lo
+                                      // que falte en vez de desmarcar lo ya pagado.
+                                      ref={(el) => { if (el) el.indeterminate = r.pago === 'parcial'; }}
+                                      onChange={() => alternarPago(r)}
+                                    />
+                                    <span className="pago-txt">{ETIQUETA_PAGO[r.pago]}</span>
+                                  </label>
+                                ) : <span className="muted-cell">—</span>}
+                              </span>
+                            )}
+                          </div>
                         ))}
-                        <span>{r.extras > 0 ? fmtHoras(r.extras) : '—'}</span>
-                        <span className="val-money" title={r.desglose?.length ? r.desglose.join('\n') : undefined}>
-                          {!r.conExtras
-                            ? <span className="muted-cell">—</span>
-                            : r.sinSalario
-                              ? <span className="sin-salario" title="Registra el salario del empleado para ver su valor">sin salario</span>
-                              : fmtCOP(r.valor)}
-                        </span>
-                        {repColsAsistencia && (
-                          <>
-                            <span>{r.sede || '—'}</span>
-                            <span>{r.days}</span>
-                            <span>{fmtHoras(r.hours)}</span>
-                            <span className={r.lateCount > 0 ? 'warn-num' : ''}>{r.lateCount}</span>
-                          </>
+                        {conExtra.length > 0 && (
+                          <div className="rep-row foot" role="row">
+                            <span>Total · {conExtra.length} persona{conExtra.length === 1 ? '' : 's'}</span>
+                            {tipos.map((t) => <span key={t.codigo} className="num">{fmtHoras(totalTipo(t.codigo))}</span>)}
+                            <span className="num">{fmtHoras(totalHoras)}</span>
+                            <span className="num val-money">{totalValorizado > 0 ? fmtCOP(totalValorizado) : '—'}</span>
+                            {Array.from({ length: celdasVacias }, (_, i) => <span key={i} />)}
+                          </div>
                         )}
-                        {permisos.liquidar && (
-                          <span className="col-pago">
-                            {r.conExtras ? (
-                              <label className={`pago-check est-${r.pago}`} title={etiquetaPago(r)}>
-                                <input
-                                  type="checkbox"
-                                  checked={r.pago === 'pagado'}
-                                  // 'parcial' se pinta indeterminado: ni pagado
-                                  // ni pendiente, y al hacer clic completa lo
-                                  // que falte en vez de desmarcar lo ya pagado.
-                                  ref={(el) => { if (el) el.indeterminate = r.pago === 'parcial'; }}
-                                  onChange={() => alternarPago(r)}
-                                />
-                                <span className="pago-txt">{ETIQUETA_PAGO[r.pago]}</span>
-                              </label>
-                            ) : <span className="muted-cell">—</span>}
-                          </span>
+                        {!repColsAsistencia && sinExtra.length > 0 && (
+                          <p className="rep-sin-extra">
+                            {sinExtra.length} sin horas extra en el período ·{' '}
+                            <button className="costo-link" onClick={() => setVerSinExtra((v) => !v)}>{verSinExtra ? 'Ocultar' : 'Mostrar'}</button>
+                          </p>
                         )}
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })()}
 
                   {/* En el celular: mes → período de pago → empleado, como el cajón
                       por semanas. Se toca el período para ver a la gente; se toca
@@ -5622,11 +5660,16 @@ const CSS = `
    opcionales: las de asistencia (botón) y la de pagado (permiso liquidar).
    Las columnas tienen anchos distintos, así que no sirve auto-fit: se
    declaran las cuatro combinaciones posibles, que son pocas y explícitas. */
-.rep-row { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--grid); align-items: center; }
-.rep-table .rep-row                            { grid-template-columns: 1.6fr repeat(5, .62fr) 1fr; }
-.rep-table.con-pago .rep-row                   { grid-template-columns: 1.5fr repeat(5, .58fr) .95fr .7fr; }
-.rep-table.con-asistencia .rep-row             { grid-template-columns: 1.3fr repeat(5, .5fr) .85fr .8fr .35fr .55fr .45fr; }
-.rep-table.con-asistencia.con-pago .rep-row    { grid-template-columns: 1.2fr repeat(5, .46fr) .8fr .75fr .32fr .5fr .42fr .62fr; }
+/* Las columnas las decide la tabla (cuántos tipos ocurrieron, si hay
+   asistencia y pago) y llegan en --rep-cols. */
+.rep-row { display: grid; grid-template-columns: var(--rep-cols); gap: 10px; padding: 8px 6px; border-top: 1px solid var(--grid); align-items: center; }
+.rep-row .num { text-align: right; }
+.rep-row:not(.head):not(.foot):hover { background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
+.rep-row.sin-extra .rep-name { color: var(--ink-2); font-weight: 500; }
+.rep-row.foot { border-top: 2px solid var(--border); font-weight: 700; margin-top: 2px; }
+.rep-row.foot .val-money { color: var(--accent-2); font-size: 14px; }
+.rep-sin-extra { font-size: 12.5px; color: var(--muted); padding: 10px 6px 0; }
+.rep-sin-extra .costo-link { font-size: 12.5px; }
 .col-pago { text-align: center; }
 
 /* Sub-pantallas de Ajustes */
@@ -6504,6 +6547,8 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .fchips { display: inline-flex; }
   .fchips .fchip { padding: 6px 12px; }
   .rep-table { display: flex; }
+  /* En PC el total va al pie de la tabla; el recuadro grande es del celular. */
+  .val-total { display: none; }
   .rep-periodo { grid-template-columns: 230px auto; justify-content: start; }
   .fchips.rep-quincena .fchip { padding: 0 14px; }
   .solo-pc { display: inline-flex; }
