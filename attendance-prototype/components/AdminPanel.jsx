@@ -1778,12 +1778,26 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           })
           : tramosDeSemana({ pares, extra: semana.extra, franjaDe: () => nocturno });
         const porCodigo = Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0]));
-        const extraPorDia = new Map(); // solo con sentido en modo día
+        const extraPorDia = new Map(); // ordinaria (solo con sentido en modo día)
+        const domPorDia = new Map();   // dominical/festivo: sale en los dos modos
         for (const t of tramos) {
           porCodigo[t.tipoHora] += t.horas;
-          if (!t.tipoHora.endsWith('DF')) extraPorDia.set(t.fecha, (extraPorDia.get(t.fecha) ?? 0) + t.horas);
+          const mapa = t.tipoHora.endsWith('DF') ? domPorDia : extraPorDia;
+          mapa.set(t.fecha, (mapa.get(t.fecha) ?? 0) + t.horas);
         }
-        return { dias, ...semana, porCodigo, porDia, extraPorDia };
+        // Modo día: un día que pasó de su jornada por MENOS del mínimo no
+        // genera extra, y sin decirlo parece un error («¿y el sábado?»).
+        const bajoMinimoPorDia = new Map();
+        if (porDia) {
+          const horasDia = new Map();
+          for (const p of pares) if (!p.dominical) horasDia.set(p.fecha, (horasDia.get(p.fecha) ?? 0) + p.horas);
+          for (const [fecha, horas] of horasDia) {
+            const jornada = horasFranja(franjaEsperada(drawerPersona, fecha)) ?? (cfg.weeklyHours ?? 42) / 6;
+            const exceso = horas - jornada;
+            if (exceso > 0.001 && exceso < EXTRA_MINIMA_H) bajoMinimoPorDia.set(fecha, exceso);
+          }
+        }
+        return { dias, ...semana, porCodigo, porDia, extraPorDia, domPorDia, bajoMinimoPorDia };
       });
   }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin, cfg.modoExtra]);
 
@@ -4611,7 +4625,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
                 // Una fila de día, común a las dos vistas del cajón. `extraDia` solo
                 // llega con valor en modo por día: cada día trae su extra.
-                const filaDia = (d, extraDia = 0) => {
+                const filaDia = (d, { extra = 0, dom = 0, bajoMinimo = 0 } = {}) => {
                   const abierto = openDia === d.fecha;
                   // Bloques como CHIPS (envuelven a varias líneas: soporta
                   // cualquier número de pares sin superponerse).
@@ -4633,9 +4647,19 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           </span>
                           <span className="dia-horas">
                             {fmtH(d.horas)}
-                            {/* En modo día cada día trae su extra (ya definitiva). */}
-                            {extraDia > 0.001 && (
-                              <em className="dia-extra" title="Extra de este día: lo que pasó de la jornada de su horario">+{fmtHM(extraDia)}</em>
+                            {/* En modo día cada día trae su extra (ya definitiva);
+                                el domingo/festivo, su recargo; y si pasó de la
+                                jornada por menos del mínimo, se dice. */}
+                            {extra > 0.001 && (
+                              <em className="dia-extra" title="Extra de este día: lo que pasó de la jornada de su horario">+{fmtHM(extra)}</em>
+                            )}
+                            {dom > 0.001 && (
+                              <em className="dia-extra dom" title="Domingo o festivo: recargo desde la primera hora (HEDDF/HENDF)">D +{fmtHM(dom)}</em>
+                            )}
+                            {bajoMinimo > 0.001 && (
+                              <em className="dia-extra min" title={`Pasó ${Math.round(bajoMinimo * 60)} min de su jornada: menos del mínimo de ${Math.round(EXTRA_MINIMA_H * 60)} min, no cuenta como extra`}>
+                                +{fmtHM(bajoMinimo)} &lt; {Math.round(EXTRA_MINIMA_H * 60)} min
+                              </em>
                             )}
                           </span>
                           <span className="dia-chev">›</span>
@@ -4785,7 +4809,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         </span>
                       </header>
 
-                    {semanaAbierta(s.lunes) && s.dias.map((d) => filaDia(d, s.porDia ? s.extraPorDia.get(d.fecha) : 0))}
+                    {semanaAbierta(s.lunes) && s.dias.map((d) => filaDia(d, {
+                      extra: s.porDia ? s.extraPorDia.get(d.fecha) : 0,
+                      dom: s.domPorDia.get(d.fecha),
+                      bajoMinimo: s.bajoMinimoPorDia.get(d.fecha),
+                    }))}
                     </section>
                     </Fragment>
                     ))}
@@ -6373,7 +6401,9 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .sem-bloque .dia { padding: 0 8px; }
 /* La extra del día como una pastilla azul clara y nítida: separada del total
    en negro, que con el marino se confundía. */
-.dia-extra { font-style: normal; font-weight: 800; font-size: 11.5px; color: #0369a1; background: #e0f2fe; border: 1px solid #bae6fd; border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
+.dia-extra { font-style: normal; font-weight: 800; font-size: 11.5px; color: #0369a1; background: #e0f2fe; border: 1px solid #bae6fd; border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; white-space: nowrap; }
+.dia-extra.dom { color: #6b21a8; background: #f3e8ff; border-color: #e9d5ff; }
+.dia-extra.min { color: var(--muted); background: var(--page); border-color: var(--grid); font-weight: 600; }
 .sem-bloque .dia:last-child { border-bottom: 0; }
 .dia-chev { color: var(--muted); font-size: 14px; transition: transform .15s; flex: 0 0 auto; }
 .dia.abierto .dia-chev { transform: rotate(90deg); }
