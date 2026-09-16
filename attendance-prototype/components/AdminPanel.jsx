@@ -5995,8 +5995,17 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 /* Separador de MES entre bloques de semana. */
 .sem-mes { flex: 0 0 auto; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 6px 4px 0; }
 .sem-head { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--grid); cursor: pointer; user-select: none; }
-/* Azul solo la semana EN CURSO; las cerradas, en gris. */
-.sem-bloque.curso .sem-head { background: var(--page); }
+/* La semana EN CURSO lleva la cabecera en azul marino SÓLIDO con texto
+   blanco; las cerradas, en gris claro. El azul pálido de antes casi no se
+   distinguía del gris. */
+.sem-bloque.curso { border-color: var(--btn-primary); }
+.sem-bloque.curso .sem-head { background: var(--btn-primary); border-bottom-color: var(--btn-primary); }
+.sem-bloque.curso .sem-titulo, .sem-bloque.curso .sem-total { color: #fff; }
+.sem-bloque.curso .sem-chev { color: rgba(255,255,255,.75); }
+.sem-bloque.curso .sem-chip { background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.35); color: #fff; }
+.sem-bloque.curso .sem-chip.extra { background: #fff; border-color: #fff; color: var(--btn-primary); }
+.sem-bloque.curso .sem-chip.dom { background: #f3e8ff; border-color: #f3e8ff; color: #6b21a8; }
+.sem-bloque.curso .sem-chip.festivo { background: #fdf3d3; border-color: #fdf3d3; color: #8a6100; }
 .sem-bloque.cerrada { border-color: #e2e6eb; }
 .sem-bloque.cerrada .sem-head { background: #eef1f4; border-bottom-color: #e2e6eb; }
 .sem-bloque.cerrada .sem-titulo, .sem-bloque.cerrada .sem-total { color: var(--ink-2); }
