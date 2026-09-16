@@ -1324,21 +1324,31 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     return () => { vigente = false; };
   }, [tab, repFrom, repTo, tick]);
 
+  // Los doce meses del select («Septiembre 2026»), el último día del elegido
+  // y la etiqueta del período (para decir de cuál no hay nada).
+  const mesesReporte = useMemo(() => Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+    const mes = d.toLocaleDateString('es-CO', { month: 'long' });
+    return { valor: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, etiqueta: `${mes.charAt(0).toUpperCase() + mes.slice(1)} ${d.getFullYear()}` };
+  }), [tick]);
+  const ultimoDiaRepMes = new Date(Number(repMes.slice(0, 4)), Number(repMes.slice(5, 7)), 0).getDate();
+  const etiquetaRepPeriodo = cfg.periodoPago === 'mes'
+    ? (mesesReporte.find((m) => m.valor === repMes)?.etiqueta ?? repMes)
+    : `${repQuincena === 'b' ? 16 : 1} – ${repQuincena === 'b' ? ultimoDiaRepMes : 15} de ${new Date(`${repMes}-15T12:00:00`).toLocaleDateString('es-CO', { month: 'long' })}`;
+  useEffect(() => {
+    const quincenal = cfg.periodoPago !== 'mes';
+    const desde = `${repMes}-${quincenal && repQuincena === 'b' ? '16' : '01'}`;
+    const hasta = `${repMes}-${String(quincenal && repQuincena === 'a' ? 15 : ultimoDiaRepMes).padStart(2, '0')}`;
+    const hoy = todayKey();
+    setRepFrom(desde);
+    setRepTo(hasta < hoy ? hasta : hoy);
+  }, [repMes, repQuincena, cfg.periodoPago, ultimoDiaRepMes]);
+
   /**
    * El reporte por PERÍODOS DE PAGO, para el celular: mes → quincena (o mes)
    * → empleado, con lo que generó cada uno y su estado de pago. Sale de los
    * mismos tramos del servidor que la tabla de PC; solo cambia la agrupación.
    */
-  useEffect(() => {
-    const ultimo = new Date(Number(repMes.slice(0, 4)), Number(repMes.slice(5, 7)), 0).getDate();
-    const quincenal = cfg.periodoPago !== 'mes';
-    const desde = `${repMes}-${quincenal && repQuincena === 'b' ? '16' : '01'}`;
-    const hasta = `${repMes}-${String(quincenal && repQuincena === 'a' ? 15 : ultimo).padStart(2, '0')}`;
-    const hoy = todayKey();
-    setRepFrom(desde);
-    setRepTo(hasta < hoy ? hasta : hoy);
-  }, [repMes, repQuincena, cfg.periodoPago]);
-
   const reportePeriodos = useMemo(() => {
     const nombrePorCedula = new Map(listPeople().map((p) => [p.cedula, p.name]));
     const hoy = todayKey();
@@ -3010,41 +3020,48 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
         {tab === 'reportes' && (
           <section className="card grow">
-            <h2>Horas extra</h2>
-{/* La semana en curso no tiene extra todavía (domingo y festivo sí:
+            {/* Título con las acciones en la esquina (en el celular, solo el
+                icono de exportar); debajo, el período: el mes y, si se liquida
+                por quincenas, cuál — un par de botones, no un select de dos. */}
+            <div className="card-head">
+              <h2>Horas extra</h2>
+              <div className="rep-acciones">
+                <button
+                  className="btn solo-pc"
+                  onClick={() => setRepColsAsistencia(!repColsAsistencia)}
+                  aria-pressed={repColsAsistencia}
+                >
+                  {repColsAsistencia ? '− Columnas de asistencia' : '＋ Columnas de asistencia'}
+                </button>
+                <button
+                  className="btn primary btn-ico"
+                  title="Exportar CSV" aria-label="Exportar CSV"
+                  onClick={exportCSV} disabled={report.length === 0}
+                >
+                  <Icon name="download" size={18} />
+                  <span className="solo-pc">Exportar CSV</span>
+                </button>
+              </div>
+            </div>
+            <div className="rep-periodo">
+              <select className="sede-select" aria-label="Mes" value={repMes} onChange={(e) => setRepMes(e.target.value)}>
+                {mesesReporte.map((m) => <option key={m.valor} value={m.valor}>{m.etiqueta}</option>)}
+              </select>
+              {cfg.periodoPago !== 'mes' && (
+                <div className="fchips rep-quincena" role="group" aria-label="Quincena">
+                  <button className="fchip" aria-pressed={repQuincena === 'a'} onClick={() => setRepQuincena('a')}>1 – 15</button>
+                  <button className="fchip" aria-pressed={repQuincena === 'b'} onClick={() => setRepQuincena('b')}>16 – {ultimoDiaRepMes}</button>
+                </div>
+              )}
+            </div>
+            {/* La semana en curso no tiene extra todavía (domingo y festivo sí:
                 esos no dependen de la cuenta). Se avisa para que un reporte
                 que la incluya no se lea como «no hubo». */}
             {cfg.modoExtra !== 'dia' && repTo >= lunesDe(todayKey()) && (
               <p className="cfg-note rep-en-curso">
-                La semana del {Number(lunesDe(todayKey()).slice(8, 10))} al {Number(domingoDe(todayKey()).slice(8, 10))} sigue en curso:
-                sus horas extra de lunes a sábado aparecerán aquí cuando cierre el domingo.
+                Semana {Number(lunesDe(todayKey()).slice(8, 10))} – {Number(domingoDe(todayKey()).slice(8, 10))} en curso: la extra de lunes a sábado aparece al cerrar el domingo.
               </p>
             )}
-            <div className="rep-controls">
-              {/* Mes (los últimos doce) y, si se liquida por quincenas, cuál. */}
-              <select className="sede-select rep-sel" aria-label="Mes" value={repMes} onChange={(e) => setRepMes(e.target.value)}>
-                {Array.from({ length: 12 }, (_, i) => {
-                  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
-                  const v = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-                  const etiqueta = d.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
-                  return <option key={v} value={v}>{etiqueta.charAt(0).toUpperCase() + etiqueta.slice(1)}</option>;
-                })}
-              </select>
-              {cfg.periodoPago !== 'mes' && (
-                <select className="sede-select rep-sel" aria-label="Quincena" value={repQuincena} onChange={(e) => setRepQuincena(e.target.value)}>
-                  <option value="a">1 – 15</option>
-                  <option value="b">16 – {new Date(Number(repMes.slice(0, 4)), Number(repMes.slice(5, 7)), 0).getDate()}</option>
-                </select>
-              )}
-              <button
-                className="btn solo-pc"
-                onClick={() => setRepColsAsistencia(!repColsAsistencia)}
-                aria-pressed={repColsAsistencia}
-              >
-                {repColsAsistencia ? '− Columnas de asistencia' : '＋ Columnas de asistencia'}
-              </button>
-              <button className="btn primary" onClick={exportCSV} disabled={report.length === 0}>Exportar CSV</button>
-            </div>
             <div className="scrollable">
               {/* «Calculando…» solo cuando NO hay nada que mostrar: si ya hay
                   tabla, se deja quieta (apenas atenuada) mientras se refresca —
@@ -3054,7 +3071,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <p className="empty">⚠ No se pudo cargar el reporte: {repDatos.error}</p>
               )}
               {repDatos.estado === 'listo' && report.length === 0 && (
-                <p className="empty">Sin marcaciones en este período{sedeFilter !== 'all' ? ` para ${sedeFilter}` : ''}.</p>
+                <div className="rep-vacio">
+                  <b>Sin marcaciones</b>
+                  <span>{etiquetaRepPeriodo}{sedeFilter !== 'all' ? ` · ${sedeFilter}` : ''}</span>
+                </div>
               )}
 
               {report.length > 0 && (
@@ -3148,7 +3168,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       por semanas. Se toca el período para ver a la gente; se toca
                       la persona para ir a sus marcaciones. */}
                   <div className="rep-periodos">
-                    {reportePeriodos.length === 0 && repDatos.estado === 'listo' && <p className="empty">Sin horas extra en el rango.</p>}
+                    {reportePeriodos.length === 0 && repDatos.estado === 'listo' && (
+                      <div className="rep-vacio">
+                        <b>Sin horas extra</b>
+                        <span>{etiquetaRepPeriodo}</span>
+                      </div>
+                    )}
                     {reportePeriodos.map((m) => (
                       <Fragment key={m.mes}>
                         {reportePeriodos.length > 1 && (
@@ -5508,10 +5533,18 @@ const CSS = `
 .btn.block { display: block; width: 100%; text-align: center; text-decoration: none; margin-bottom: 10px; box-sizing: border-box; }
 .danger-btn { color: var(--crit-text); border-color: var(--crit-soft); }
 .danger-btn:hover { background: var(--crit-soft); }
-.rep-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
-.rep-controls .rep-sel { flex: 1 1 140px; max-width: 240px; }
-.rep-controls label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
-.rep-controls input { font: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
+/* Cabecera de Reportes: las acciones en la esquina del título; debajo, el
+   mes y la quincena en una sola fila y a la misma altura (el par de la
+   quincena se estira al alto del select). */
+.rep-acciones { display: flex; align-items: center; gap: 8px; }
+.rep-periodo { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-bottom: 10px; }
+.rep-periodo .sede-select { width: 100%; }
+.fchips.rep-quincena { grid-template-columns: 1fr 1fr; border-radius: 10px; border-color: var(--border); }
+.fchips.rep-quincena .fchip { padding: 0 14px; font-size: 13px; }
+/* Sin datos: un recuadro tenue con el período, no una línea suelta. */
+.rep-vacio { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 24px 12px; border: 1px dashed var(--border); border-radius: 10px; text-align: center; }
+.rep-vacio b { font-size: 14px; font-weight: 700; color: var(--ink-2); }
+.rep-vacio span { font-size: 12.5px; color: var(--muted); }
 .rep-table { display: flex; flex-direction: column; font-size: 13px; font-variant-numeric: tabular-nums; }
 /* Empleado · HED · HEN · HEDDF · HENDF · Total · Valor, y dos columnas
    opcionales: las de asistencia (botón) y la de pagado (permiso liquidar).
@@ -6377,6 +6410,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .fchips { display: inline-flex; }
   .fchips .fchip { padding: 6px 12px; }
   .rep-table { display: flex; }
+  .rep-periodo { grid-template-columns: 230px auto; justify-content: start; }
   .solo-pc { display: inline-flex; }
   .acc { display: none; }
   .rep-periodos { display: none; }
