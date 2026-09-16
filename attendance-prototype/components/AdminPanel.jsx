@@ -1317,6 +1317,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // El cálculo semanal de extras y la columna Dom/Fest se eliminaron: eran
   // una segunda opinión, peor informada, sobre lo que el motor ya responde.
   const [repDatos, setRepDatos] = useState({ estado: 'inicial', eventos: [], tramos: [], error: null });
+  // Cuándo volver a pedir el reporte: NO con el sondeo de 10 s del panel (la
+  // tabla se atenuaba y quedaba sin responder a cada rato), sino al abrir, al
+  // cambiar el período, con el botón de actualizar y, de fondo, cada 5 min.
+  const [repRecarga, setRepRecarga] = useState(0);
+  useEffect(() => {
+    if (tab !== 'reportes') return;
+    const id = setInterval(() => setRepRecarga((n) => n + 1), 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [tab]);
   useEffect(() => {
     if (tab !== 'reportes' || !repFrom || !repTo) return;
     let vigente = true;
@@ -1330,7 +1339,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     // Si el rango cambia antes de que llegue la respuesta, la vieja se ignora:
     // sin esto una consulta lenta puede pisar el resultado de la nueva.
     return () => { vigente = false; };
-  }, [tab, repFrom, repTo, tick]);
+  }, [tab, repFrom, repTo, repRecarga]);
 
   // Los doce meses del select («Septiembre 2026»), el último día del elegido
   // y la etiqueta del período (para decir de cuál no hay nada).
@@ -3061,6 +3070,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   aria-pressed={repColsAsistencia}
                 >
                   {repColsAsistencia ? '− Columnas de asistencia' : '＋ Columnas de asistencia'}
+                </button>
+                <button
+                  className={`btn btn-ico${repDatos.estado === 'cargando' ? ' girando' : ''}`}
+                  title="Actualizar el reporte" aria-label="Actualizar el reporte"
+                  onClick={() => setRepRecarga((n) => n + 1)} disabled={repDatos.estado === 'cargando'}
+                >
+                  <Icon name="refresh" size={17} />
                 </button>
                 <button
                   className="btn primary btn-ico"
@@ -5590,6 +5606,9 @@ const CSS = `
    mes y la quincena en una sola fila y a la misma altura (el par de la
    quincena se estira al alto del select). */
 .rep-acciones { display: flex; align-items: center; gap: 8px; }
+.btn.girando svg { animation: girar 1s linear infinite; }
+@keyframes girar { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .btn.girando svg { animation: none; } }
 .rep-periodo { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
 .rep-periodo .sede-select { width: 100%; }
 .fchips.rep-quincena { grid-template-columns: 1fr 1fr 1.25fr; border-radius: 10px; border-color: var(--border); }
