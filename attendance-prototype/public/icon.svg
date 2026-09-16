@@ -4,8 +4,8 @@
        Blanco y aguamarina sobre el degradado de marca (acero → aero). -->
   <defs>
     <linearGradient id="fondo" x1="0" y1="64" x2="0" y2="0" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#223347"/>
-      <stop offset="1" stop-color="#6e96b8"/>
+      <stop offset="0" stop-color="#172e4c"/>
+      <stop offset="1" stop-color="#2b6cb0"/>
     </linearGradient>
   </defs>
   <rect width="64" height="64" rx="14" fill="url(#fondo)"/>

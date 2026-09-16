@@ -29,10 +29,10 @@ export const metadata = {
     //
     // AL CAMBIAR EL LOGO, SUBIR ESTE NÚMERO — aquí y en manifest.webmanifest.
     icon: [
-      { url: '/icon.svg?v=2', type: 'image/svg+xml' },
-      { url: '/icon-192.png?v=2', sizes: '192x192', type: 'image/png' },
+      { url: '/icon.svg?v=3', type: 'image/svg+xml' },
+      { url: '/icon-192.png?v=3', sizes: '192x192', type: 'image/png' },
     ],
-    apple: '/apple-touch-icon.png?v=2', // iOS no lee el manifest: necesita su propio tag
+    apple: '/apple-touch-icon.png?v=3', // iOS no lee el manifest: necesita su propio tag
   },
   appleWebApp: {
     capable: true,

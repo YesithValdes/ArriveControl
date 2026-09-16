@@ -16,14 +16,16 @@
  * instalacion y no vuelve a pedirlo si la direccion no cambio.
  */
 import sharp from 'sharp'
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, existsSync } from 'node:fs'
 
-// Degradado de marca: acero oscuro abajo que se difumina hacia aero arriba.
+// Degradado de marca (paleta MARINO, 2026-09-15): azul marino oscuro abajo
+// que sube hacia el acento; el mismo azul de la barra del panel. Antes era
+// el acero apagado (#223347 → #6e96b8), que en el celular se veía gris.
 const DEGRADADO = `
   <defs>
     <linearGradient id="fondo" x1="0" y1="64" x2="0" y2="0" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#223347"/>
-      <stop offset="1" stop-color="#6e96b8"/>
+      <stop offset="0" stop-color="#172e4c"/>
+      <stop offset="1" stop-color="#2b6cb0"/>
     </linearGradient>
   </defs>`
 
@@ -66,3 +68,33 @@ await png(pleno, 512, 'icon-512-maskable.png')
 await png(pleno, 180, 'apple-touch-icon.png')
 await png(pleno, 1024, 'splash.png')
 console.log('Íconos regenerados desde el logo «Presente ✓» (AsistencIA).')
+
+// ── APK: icono adaptativo de Android ────────────────────────────────────
+// Antes se hacía a mano en Android Studio y se quedó con el azul viejo cuando
+// cambió la paleta. Ahora sale de aquí, del mismo SVG: fondo (degradado a
+// sangre) y frente (símbolo solo, transparente) de 108 dp, más el icono
+// clásico de 48 dp para lanzadores viejos. Android recorta el fondo y muestra
+// el frente dentro de la "zona segura" de 66 dp: por eso el símbolo va al 60 %.
+// DESPUÉS: subir versionCode en android/app/build.gradle y recompilar el APK.
+const RES = 'android/app/src/main/res'
+const DENSIDADES = { mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 }
+const soloSimbolo = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">${simbolo(0.6)}</svg>`
+const soloFondo = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">${DEGRADADO}<rect width="64" height="64" fill="url(#fondo)"/></svg>`
+const aRes = (contenido, px, ruta) =>
+  sharp(Buffer.from(contenido), { density: 300 }).resize(px, px).png().toFile(ruta)
+    .then(() => console.log(`  + ${ruta} (${px}px)`))
+if (existsSync(RES)) {
+  for (const [dens, factor] of Object.entries(DENSIDADES)) {
+    const dir = `${RES}/mipmap-${dens}`
+    if (!existsSync(dir)) continue
+    await aRes(soloFondo, Math.round(108 * factor), `${dir}/ic_launcher_background.png`)
+    await aRes(soloSimbolo, Math.round(108 * factor), `${dir}/ic_launcher_foreground.png`)
+    await aRes(pleno, Math.round(48 * factor), `${dir}/ic_launcher.png`)
+    await aRes(pleno, Math.round(48 * factor), `${dir}/ic_launcher_round.png`)
+  }
+  writeFileSync(`${RES}/values/ic_launcher_background.xml`,
+    '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#1e3a5f</color>\n</resources>\n')
+  console.log('Icono del APK regenerado. Sube versionCode y recompila.')
+}
