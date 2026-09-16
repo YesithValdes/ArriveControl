@@ -1104,7 +1104,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [costos, setCostos] = useState({ estado: 'cargando', tramos: [] });
   // Filtros por columna de la tabla Empleados: cada encabezado lleva su
   // embudo, que abre el selector correspondiente.
-  const [empFiltros, setEmpFiltros] = useState({ sede: 'all', horario: 'all', config: 'all' });
+  const [empFiltros, setEmpFiltros] = useState({ sede: 'all', horario: 'all' });
   const [filtroAbierto, setFiltroAbierto] = useState(null); // 'sede' | 'horario' | 'config'
 
   // Envío de horas con recargo a la plataforma de nómina (RH).
@@ -1894,21 +1894,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // Roster completo sin filtro de sede (para conteos por sede).
   const allPeople = useMemo(() => listPeople(), [tick]);
 
-  // Qué le falta configurar a un empleado. Un faltante aquí es un reporte
-  // roto después (sin sede no compara, sin salario no valoriza).
-  const faltantesDe = (p) => {
-    const f = [];
-    // La sede ya NO cuenta como faltante: es opcional por diseño.
-    if (!p.tieneRostro) f.push('rostro');
-    // Migración al modelo facial v2: quien tiene rostro pero ninguno con
-    // descriptor v2 necesita su FOTO NUEVA (agregarla desde su ficha).
-    if (p.tieneRostro && !p.rostrosV2) f.push('foto nueva (v2)');
-    if (!(p.jornadaDias || (p.expectedEntry && p.expectedExit))) f.push('horario');
-    if (p.salarioMensual == null) f.push('salario');
-    if (!p.cedula) f.push('cédula');
-    return f;
-  };
-
   // Cambia un flag de ubicación desde la tabla, sin abrir la ficha.
   const alternarFlag = async (p, campo) => {
     try {
@@ -1947,9 +1932,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       const conHorario = !!(p.jornadaDias || (p.expectedEntry && p.expectedExit));
       if (empFiltros.horario === 'con' && !conHorario) return false;
       if (empFiltros.horario === 'libre' && conHorario) return false;
-      const completa = faltantesDe(p).length === 0;
-      if (empFiltros.config === 'completa' && !completa) return false;
-      if (empFiltros.config === 'incompleta' && completa) return false;
       return true;
     });
   }, [roster, empSearch, empFiltros]);
@@ -2815,13 +2797,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 const horario = (p) => (p.jornadaDias
                   ? resumenDias(p.jornadaDias)
                   : p.expectedEntry && p.expectedExit ? `${p.expectedEntry} – ${p.expectedExit}` : 'horario libre');
-                const configChips = (p) => {
-                  const f = faltantesDe(p);
-                  if (f.length === 0) return <span className="chip good">Completa</span>;
-                  return f.map((x) => (
-                    <span className={`chip ${x === 'sede' ? 'crit' : 'warn'}`} key={x}>Sin {x}</span>
-                  ));
-                };
                 // Paginación: 9 por página, con la página vigente recortada si
                 // el filtro o la búsqueda achican la lista.
                 const EMP_PAGE = 9;
@@ -2840,7 +2815,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                             {[
                               ['sede', 'Sede', [['all', 'Todas'], ...sedes.map((o) => [o.name, o.name])]],
                               ['horario', 'Horario', [['all', 'Todos'], ['con', 'Con horario'], ['libre', 'Horario libre']]],
-                              ['config', 'Configuración', [['all', 'Todas'], ['completa', 'Completa'], ['incompleta', 'Incompleta']]],
                             ].map(([campo, titulo, opciones]) => (
                               <th className="th-filtro" key={campo}>
                                 {titulo}
@@ -2890,7 +2864,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               </td>
                               <td className="att-sede">{p.sede || '—'}</td>
                               <td>{p.jornadaDias || (p.expectedEntry && p.expectedExit) ? horario(p) : <span className="libre">horario libre</span>}</td>
-                              <td><span className="novs">{configChips(p)}</span></td>
                               {/* Limitar solo aplica CON sede; Validar solo SIN sede. */}
                               <td>
                                 <Toggle
@@ -2920,7 +2893,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         fields: [
                           ['Cédula', p.cedula || 'sin cédula'],
                           ['Horario', horario(p)],
-                          ['Configuración', <span className="novs" key="c">{configChips(p)}</span>],
                           ['Limitar ubicación', <Toggle key="l" on={p.validarSede} label="Limitar a su sede" onClick={() => alternarFlag(p, 'validarSede')} />],
                           ['Validar ubicación', <Toggle key="v" on={p.validarUbicacion} label="Registrar GPS al marcar" onClick={() => alternarFlag(p, 'validarUbicacion')} />],
                           ['Última marcación', fmtUltima(ultimaMarca.get(p.id))],
