@@ -175,9 +175,19 @@ export default function KioskMode() {
     // nunca registra, la clave de aparato no pinta nada aquí.
     if (esPrueba) return;
 
+    const alVolver = () => { if (document.visibilityState === 'visible') leerAcceso(); };
+    document.addEventListener('visibilitychange', alVolver);
+
     if (!getDeviceKey()) {
-      setConfigurado(false);
-      return;
+      // Sin clave en localStorage: antes de pedir el registro se pregunta si
+      // el servidor todavía reconoce a este aparato por su cookie (el
+      // navegador pudo borrar el almacenamiento sin que nadie lo revocara).
+      // Si sí, el kiosco sigue como si nada: las peticiones van con la cookie.
+      miDispositivo().then((d) => {
+        if (d) { setConfigurado(true); setAccesoPanel(Boolean(d.acceso_panel)); }
+        else setConfigurado(false);
+      });
+      return () => document.removeEventListener('visibilitychange', alVolver);
     }
 
     // Optimista: si ya estaba activado se muestra el kiosco de una, y solo se
@@ -186,8 +196,6 @@ export default function KioskMode() {
     // que para eso existe la cola offline.
     setConfigurado(true);
     leerAcceso();
-    const alVolver = () => { if (document.visibilityState === 'visible') leerAcceso(); };
-    document.addEventListener('visibilitychange', alVolver);
     cargarSedes().catch((e) => {
       if (e instanceof ClaveRechazada) {
         olvidarActivacion();

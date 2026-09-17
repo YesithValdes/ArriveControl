@@ -7,11 +7,12 @@
 import { NextResponse } from 'next/server'
 import { control } from '../../../../lib/db.js'
 import { empresaDelDispositivo } from '../../../../lib/empresas.js'
+import { claveDeAparato } from '../../../../lib/sesion'
 
 export const runtime = 'nodejs'
 
 export async function GET(req) {
-  const r = await empresaDelDispositivo(req.headers.get('x-device-key'))
+  const r = await empresaDelDispositivo(claveDeAparato(req))
   if (!r) return NextResponse.json({ ok: false, error: 'Dispositivo no activado.' }, { status: 401 })
   const { rows } = await control(
     `select nombre, sede_id, acceso_panel from control.dispositivos where id = $1`,

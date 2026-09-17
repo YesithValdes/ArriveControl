@@ -99,8 +99,27 @@ export async function estadoAcceso(accion = 'ver') {
  *
  * @returns {Promise<{empresa: object, esquema: string, dispositivo: object|null}|null>}
  */
+/** Nombre de la cookie donde el canje deja una copia de la clave del aparato. */
+export const COOKIE_APARATO = 'arrive_device'
+
+/**
+ * La clave del aparato de una petición: el encabezado X-Device-Key (lo
+ * normal) o, si no viene, la cookie que dejó el canje del código. La cookie
+ * existe porque el navegador puede perder su localStorage (iOS a los 7 días
+ * sin uso, Android al liberar espacio, un «borrar datos») y el kiosco no
+ * debe pedir que lo registren de nuevo por eso: la cookie la pone el
+ * servidor y dura más de un año.
+ */
+export function claveDeAparato(req) {
+  const enCabecera = req?.headers?.get?.('x-device-key')
+  if (enCabecera) return enCabecera
+  const galletas = req?.headers?.get?.('cookie') ?? ''
+  const m = new RegExp(`(?:^|;\\s*)${COOKIE_APARATO}=([^;]+)`).exec(galletas)
+  return m ? decodeURIComponent(m[1]) : null
+}
+
 export async function empresaDeLaPeticion(req) {
-  const clave = req?.headers?.get?.('x-device-key')
+  const clave = claveDeAparato(req)
   if (clave) {
     const r = await empresaDelDispositivo(clave)
     if (r) return { empresa: r.empresa, esquema: r.empresa.esquema, dispositivo: r.dispositivo }

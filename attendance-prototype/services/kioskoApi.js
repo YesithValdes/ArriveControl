@@ -112,7 +112,8 @@ export async function cargarSedes() {
  * que preguntar; ante cualquier fallo se asume que NO (el botón no aparece).
  */
 export async function miDispositivo() {
-  if (!getDeviceKey()) return null;
+  // Sin clave guardada igual se pregunta: el servidor puede reconocer al
+  // aparato por la cookie que dejó el canje (localStorage perdido).
   try {
     const r = await fetch('/api/dispositivos/yo', { headers: headers() });
     const j = await r.json().catch(() => null);

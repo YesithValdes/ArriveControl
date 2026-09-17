@@ -12,6 +12,7 @@
  */
 import { NextResponse } from 'next/server'
 import { canjearVinculacion } from '../../../../lib/dispositivos.js'
+import { COOKIE_APARATO } from '../../../../lib/sesion'
 
 export const runtime = 'nodejs'
 
@@ -34,9 +35,17 @@ export async function POST(req) {
     return NextResponse.json({ ok: false, error: MENSAJES[r.error] ?? 'Código inválido.' }, { status: 400 })
   }
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     ok: true,
     dispositivo: { clave: r.clave, nombre: r.nombre, sede_id: r.sedeId },
     empresa: r.empresa,
   })
+  // Copia de la clave en una cookie HttpOnly del servidor: si el navegador
+  // pierde su localStorage, el aparato sigue reconocido (ver claveDeAparato).
+  res.cookies.set(COOKIE_APARATO, r.clave, {
+    httpOnly: true, sameSite: 'lax', path: '/',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 60 * 60 * 24 * 400,
+  })
+  return res
 }
