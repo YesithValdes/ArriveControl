@@ -275,7 +275,7 @@ export default function DocsApiPage() {
             <tr><td><code>horaInicio</code> · <code>horaFin</code></td><td className="tipo">HH:MM</td><td>Rango del tramo dentro de ese día.</td></tr>
             <tr><td><code>tipoHora</code></td><td className="tipo">string</td><td>Uno de los cuatro códigos (ver abajo).</td></tr>
             <tr><td><code>horas</code></td><td className="tipo">number</td><td>Duración en horas decimales (4 decimales).</td></tr>
-            <tr><td><code>factor</code></td><td className="tipo">number</td><td>Recargo aplicado (<code>1.25</code> = 125 %). Es el que regía <b>en la fecha del tramo</b>, no el de hoy.</td></tr>
+            <tr><td><code>factor</code></td><td className="tipo">number</td><td>Recargo aplicado (<code>1.25</code> = 125 %), el configurado hoy por la empresa.</td></tr>
             <tr><td><code>valorHora</code></td><td className="tipo">number | null</td><td>Valor de la hora ordinaria: salario mensual ÷ divisor (210 h de fábrica; la empresa puede cambiarlo).</td></tr>
             <tr><td><code>valor</code></td><td className="tipo">number | null</td><td>Pesos del tramo, con decimales. Redondear solo al sumar por persona o período.</td></tr>
             <tr><td><code>pagado</code></td><td className="tipo">boolean</td><td>Ya anotado como pagado.</td></tr>
@@ -330,8 +330,9 @@ export default function DocsApiPage() {
           </tbody>
         </table></div>
         <p style={{ marginTop: 10 }}>
-          Los factores, el divisor y la franja nocturna los ajusta cada empresa en <i>Ajustes → Valorización</i>, y llevan vigencia:
-          un tramo de marzo se valoriza con lo que regía en marzo. Por eso cada tramo trae su <code>factor</code>.
+          Los factores, el divisor y la franja nocturna los ajusta cada empresa en <i>Ajustes → Valorización</i>, y un cambio
+          aplica de inmediato a todos los períodos, también a los ya consultados: por eso cada tramo trae su <code>factor</code>, y
+          conviene volver a pedir el período antes de liquidar.
         </p>
       </section>
 

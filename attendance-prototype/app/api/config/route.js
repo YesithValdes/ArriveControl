@@ -8,7 +8,7 @@
  */
 import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../lib/db.js'
-import { configLaboral, vigenciasPago, MODOS_EXTRA } from '../../../lib/configLaboral.js'
+import { configLaboral, MODOS_EXTRA } from '../../../lib/configLaboral.js'
 import { horasSemanaEn } from '../../../lib/jornada.js'
 import { CODIGOS_HORA, factorValido } from '../../../lib/tiposHora.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../lib/sesion'
@@ -27,21 +27,8 @@ export async function GET() {
   ))
   const laboral = await configLaboral(esquema)
   const hoy = new Date().toISOString().slice(0, 10)
-  // Vigencias de los parámetros de pago (más reciente primero): el panel
-  // reparte cada semana con el modo, el mínimo y la franja que regían ese
-  // lunes, igual que el motor de nómina. Sin ellas, el cajón calculaba TODO
-  // con lo de hoy y no cuadraba con Reportes tras cambiar un ajuste.
-  const vigencias = await vigenciasPago(esquema).catch(() => [])
-
   return NextResponse.json({
     ok: true,
-    vigencias_pago: vigencias.map((v) => ({
-      desde: v.desde,
-      modo_extra: v.modoExtra,
-      extra_minima_min: Math.round(v.extraMinimaH * 60),
-      nocturno_inicio: aHHMM(v.nocturno.inicio),
-      nocturno_fin: aHHMM(v.nocturno.fin),
-    })),
     config: {
       gracia_min: rows[0].gracia_min,
       horas_semana: horasSemanaEn(laboral.vigencias, hoy),
@@ -131,8 +118,7 @@ export async function PATCH(req) {
 
   if ('modo_extra' in c) {
     // Por semana (compensa entre días) o por día (cada día se define solo).
-    // Es un parámetro de pago: abre vigencia, y el motor lo aplica desde la
-    // semana SIGUIENTE al cambio (se evalúa con el lunes de cada semana).
+    // Aplica al instante a todos los períodos (decisión del cliente).
     if (!MODOS_EXTRA.includes(c.modo_extra)) {
       return NextResponse.json({ ok: false, error: 'El modo de hora extra debe ser «semana» o «dia».' }, { status: 400 })
     }
@@ -141,7 +127,7 @@ export async function PATCH(req) {
 
   if ('extra_minima_min' in c) {
     // Minutos de más que hacen falta para que un exceso cuente como extra.
-    // Parámetro de pago: abre vigencia y rige desde la semana siguiente.
+    // Aplica al instante a todos los períodos.
     const n = Number(c.extra_minima_min)
     if (!Number.isInteger(n) || n < 0 || n > 120) {
       return NextResponse.json({ ok: false, error: 'La extra mínima va de 0 a 120 minutos.' }, { status: 400 })

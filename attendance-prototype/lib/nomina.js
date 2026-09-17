@@ -7,7 +7,7 @@
  * de ArriveControl hacia nómina o hacia Excel.
  */
 import { conEmpresa } from './db.js'
-import { configLaboral, vigenciasPago, pagoVigenteEn } from './configLaboral.js'
+import { configLaboral } from './configLaboral.js'
 import { calcularRegistros } from './calculoHoras.js'
 import { lunesDe, domingoDe } from './semanaLaboral.js'
 import { valorizarRegistro, CODIGOS_HORA } from './tiposHora.js'
@@ -20,12 +20,12 @@ import { valorizarRegistro, CODIGOS_HORA } from './tiposHora.js'
  */
 export async function construirLote(esquema, rango = null) {
   const { festivos, vigencias, nocturno, factores, divisor, modoExtra, extraMinimaH } = await configLaboral(esquema)
-  // Parámetros de pago CON HISTORIA: cada tramo se clasifica y valoriza con lo
-  // que regía en SU fecha, no con lo de hoy. `actualPago` es el respaldo para
-  // esquemas de antes de la migración 002 (sin tabla de vigencias).
-  const actualPago = { factores, divisor, nocturno, modoExtra, extraMinimaH }
-  const historicoPago = await vigenciasPago(esquema).catch(() => [])
-  const pagoDe = (fecha) => pagoVigenteEn(historicoPago, fecha, actualPago)
+  // Los parámetros de pago de HOY (modo, mínimo, franja nocturna, factores,
+  // divisor) aplican a TODO el historial. Es decisión del cliente: un cambio
+  // en Reglamento o Valorización se ve al instante en todos los períodos,
+  // incluidos los ya calculados; no rige «desde la semana siguiente». La
+  // tabla valorizacion_vigencias sigue guardando la historia, pero ya no
+  // decide nada.
 
   // La hora extra se decide POR SEMANA (lunes → domingo), así que las marcas
   // se leen por semanas ENTERAS aunque el rango pedido corte una a la mitad:
@@ -90,23 +90,19 @@ export async function construirLote(esquema, rango = null) {
   const registros = calcularRegistros(porEmpleado, {
     festivos,
     vigencias,
-    nocturno: (fecha) => pagoDe(fecha).nocturno,
-    // Por semana o por día, según lo que regía el LUNES de esa semana.
-    modoExtra: (fecha) => pagoDe(fecha).modoExtra,
-    extraMinima: (fecha) => pagoDe(fecha).extraMinimaH,
+    nocturno,
+    modoExtra,
+    extraMinima: extraMinimaH,
   }).filter((r) => (!rango?.desde || r.fecha >= rango.desde) && (!rango?.hasta || r.fecha <= rango.hasta))
 
-  // Valor en pesos de cada tramo, con los factores y el divisor vigentes EN LA
-  // FECHA del tramo. Quien no tenga salario registrado sale con `valor: null`
-  // — el reporte lo muestra como "sin salario" y no inventa.
-  const valorizados = registros.map((r) => {
-    const pago = pagoDe(r.fecha)
-    return valorizarRegistro(r, {
-      salarioMensual: porEmpleado.get(r._empleadoId)?.salarioMensual ?? null,
-      factores: pago.factores,
-      divisor: pago.divisor,
-    })
-  })
+  // Valor en pesos de cada tramo, con los factores y el divisor de hoy. Quien
+  // no tenga salario registrado sale con `valor: null` — el reporte lo muestra
+  // como "sin salario" y no inventa.
+  const valorizados = registros.map((r) => valorizarRegistro(r, {
+    salarioMensual: porEmpleado.get(r._empleadoId)?.salarioMensual ?? null,
+    factores,
+    divisor,
+  }))
 
   // ¿Cuáles de estos tramos ya están anotados como pagados? Se consulta por
   // las referencias del lote, no por rango de fechas: un tramo cuya marcación

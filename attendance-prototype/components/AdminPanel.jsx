@@ -1836,15 +1836,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       const [h, m] = String(hhmm ?? '').split(':').map(Number);
       return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : defecto;
     };
-    // Los parámetros de pago que regían el LUNES de cada semana (modo, mínimo,
-    // franja nocturna): la misma regla que el motor de nómina (pagoVigenteEn
-    // en lib/configLaboral.js). Un cambio hecho a mitad de semana rige desde
-    // la siguiente; las semanas viejas se reparten como se repartieron.
-    const vigenciaDe = (lunes) => {
-      const lista = cfg.vigenciasPago ?? [];
-      const v = lista.find((x) => x.desde <= lunes) ?? lista[lista.length - 1];
-      return v ?? { modoExtra: cfg.modoExtra, extraMinimaMin: cfg.extraMinimaMin, nocturnoInicio: cfg.nocturnoInicio, nocturnoFin: cfg.nocturnoFin };
-    };
+    // La configuración de HOY (modo, mínimo, franja nocturna) para todas las
+    // semanas, también las pasadas: un cambio en Reglamento se ve al instante
+    // en todo el historial. Es la misma regla del motor de nómina.
+    const vigenciaDe = () => ({ modoExtra: cfg.modoExtra, extraMinimaMin: cfg.extraMinimaMin, nocturnoInicio: cfg.nocturnoInicio, nocturnoFin: cfg.nocturnoFin });
     const ahora = Date.now();
     return [...porSemana.entries()]
       .sort((a, b) => b[0].localeCompare(a[0]))
@@ -1899,7 +1894,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         }
         return { dias, ...semana, porCodigo, porDia, minimaMin: Math.round(minima * 60), extraPorDia, domPorDia, bajoMinimoPorDia };
       });
-  }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin, cfg.modoExtra, cfg.extraMinimaMin, cfg.vigenciasPago]);
+  }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin, cfg.modoExtra, cfg.extraMinimaMin]);
 
   const saveEvForm = async () => {
     if (!evForm?.time || !evForm.reason.trim()) return;
@@ -4535,8 +4530,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     /> h
                   </div>
                 </div>
-                {/* Por semana o por día. Es un parámetro de PAGO: abre
-                    vigencia, y rige desde la semana siguiente al cambio. */}
+                {/* Por semana o por día. Aplica al instante a todos los
+                    períodos, también a los ya calculados. */}
                 <div className="cfg-row">
                   <label htmlFor="cfg-modo-extra">
                     Hora extra
@@ -4555,7 +4550,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       onChange={(e) => {
                         const v = e.target.value;
                         if (v === (cfg.modoExtra ?? 'semana')) return;
-                        if (!confirm(`¿Contar la hora extra ${v === 'dia' ? 'por día' : 'por semana'}? Rige desde la próxima semana; lo ya calculado no cambia.`)) { e.target.value = cfg.modoExtra ?? 'semana'; return; }
+                        if (!confirm(`¿Contar la hora extra ${v === 'dia' ? 'por día' : 'por semana'}? Aplica de inmediato a todos los períodos, incluidos los anteriores.`)) { e.target.value = cfg.modoExtra ?? 'semana'; return; }
                         updateCfg({ modoExtra: v });
                       }}
                     >
@@ -4582,7 +4577,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       onChange={(e) => {
                         const v = Number(e.target.value);
                         if (v === Number(cfg.extraMinimaMin ?? 30)) return;
-                        if (!confirm(`¿Extra mínima de ${v === 0 ? 'cero (sin mínimo)' : `${v} min`}? Rige desde la próxima semana; lo ya calculado no cambia.`)) { e.target.value = String(cfg.extraMinimaMin ?? 30); return; }
+                        if (!confirm(`¿Extra mínima de ${v === 0 ? 'cero (sin mínimo)' : `${v} min`}? Aplica de inmediato a todos los períodos, incluidos los anteriores.`)) { e.target.value = String(cfg.extraMinimaMin ?? 30); return; }
                         updateCfg({ extraMinimaMin: v });
                       }}
                     >

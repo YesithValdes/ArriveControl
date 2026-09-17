@@ -408,10 +408,10 @@ export function tramosDeDia({ pares, jornadaDe, jornadaSinHorario, franjaDe, min
  *        Puede ser una FUNCIÓN de la fecha: la franja es un parámetro con
  *        vigencias, y un tramo de marzo debe partirse con la franja de marzo.
  *        `hoy`: fecha Bogotá con la que se decide qué semanas ya cerraron.
- *        `modoExtra`: 'semana' (de fábrica) o 'dia' — o una FUNCIÓN de la
- *        fecha, porque el modo lleva vigencia y se evalúa con el lunes de
- *        cada semana: el cambio rige desde la semana siguiente al día en que
- *        se hizo, nunca parte una semana en dos.
+ *        `modoExtra`: 'semana' (de fábrica) o 'dia' — o una FUNCIÓN del
+ *        lunes de cada semana, por si alguien quisiera un modo por período.
+ *        Hoy la nómina manda un solo valor: la configuración vigente aplica
+ *        a todo el historial.
  *        `extraMinima`: extra mínima que se liquida, en horas (de fábrica
  *        media hora), o una FUNCIÓN de la fecha, con las mismas vigencias
  *        que el modo.
