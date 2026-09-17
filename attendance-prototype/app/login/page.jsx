@@ -7,7 +7,7 @@
  * derecha el formulario. Usuarios PROPIOS del sistema (esquema `asistencia`).
  * Aquí no se crean cuentas: las da de alta un dueño desde Ajustes → Usuarios.
  */
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { signIn, signOut, useSession } from '../../lib/auth-client'
 
@@ -38,6 +38,7 @@ function LoginForm() {
   const params = useSearchParams()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [verClave, setVerClave] = useState(false)
   const [error, setError] = useState(params.get('error') === 'sin-permiso'
     ? 'Tu usuario no tiene acceso. Pídeselo al administrador.'
     : '')
@@ -51,15 +52,6 @@ function LoginForm() {
 
   const destino = params.get('destino') || '/admin'
 
-  // ¿Corre donde Google NO puede entrar? Solo dos casos: la app de Android
-  // (Capacitor: Google bloquea su inicio de sesión en una WebView) y la app
-  // del icono en iPhone (Safari abre Google aparte y la sesión no vuelve a la
-  // app). La PWA de Android en Chrome NO cuenta: ahí Google sí funciona.
-  // Google se muestra siempre; aquí solo se avisa cuál es el camino seguro.
-  const [enApp, setEnApp] = useState(false)
-  useEffect(() => {
-    setEnApp(window.navigator.standalone === true || Boolean(window.Capacitor))
-  }, [])
 
   // ¿Ya hay alguien conectado en este navegador?
   const { data: sesionActiva } = useSession()
@@ -239,15 +231,8 @@ function LoginForm() {
             </div>
           )}
 
-          {enApp && (
-            <p style={{ margin: 0, fontSize: 13, color: '#1e3a5f', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '10px 12px' }}>
-              En esta app conviene entrar con <b>correo y contraseña</b>: la sesión queda guardada aquí y no vuelve a pedirla.
-              Si Google no abre o al volver no quedas dentro, usa la contraseña (la que definiste al entrar por primera vez desde el computador).
-            </p>
-          )}
           {/* Un solo botón: entrar y registrarse son lo mismo — quien llega sin
-              empresa recibe la suya al entrar. Se muestra siempre; donde Google
-              no puede entrar, el aviso de arriba señala la contraseña. */}
+              empresa recibe la suya al entrar. */}
           <button
             type="button"
             onClick={entrarConGoogle}
@@ -272,12 +257,10 @@ function LoginForm() {
             <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 14 }}>{error}</p>
           )}
 
-          {/* Solo en desarrollo: poder trabajar sin credenciales de OAuth ni red. */}
+          {/* Correo y contraseña: el camino dentro de la app (donde Google no
+              entra) y el respaldo en cualquier parte. */}
           {conClave && (
             <>
-              <p style={{ margin: 0, fontSize: 12, opacity: 0.55, textAlign: 'center', color: '#0f172a' }}>
-                solo en desarrollo
-              </p>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14, color: '#0f172a' }}>
                 Correo
                 <input
@@ -290,13 +273,43 @@ function LoginForm() {
               </label>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14, color: '#0f172a' }}>
                 Contraseña
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 15 }}
-                />
+                <span style={{ position: 'relative', display: 'block' }}>
+                  <input
+                    type={verClave ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '10px 44px 10px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 15 }}
+                  />
+                  {/* El ojito: ver lo que se escribe evita el tercer intento en un teclado de celular. */}
+                  <button
+                    type="button"
+                    onClick={() => setVerClave((v) => !v)}
+                    aria-label={verClave ? 'Ocultar la contraseña' : 'Mostrar la contraseña'}
+                    title={verClave ? 'Ocultar' : 'Mostrar'}
+                    style={{
+                      position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+                      width: 34, height: 34, border: 0, background: 'transparent', color: '#475467',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 6,
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      {verClave ? (
+                        <>
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                          <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                        </>
+                      ) : (
+                        <>
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </>
+                      )}
+                    </svg>
+                  </button>
+                </span>
               </label>
               <button
                 type="submit"
