@@ -2942,13 +2942,31 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         id: p.id,
                         title: nombreCorto(p.name),
                         right: <span className="acc-note">{p.sede || 'sin sede'}</span>,
-                        fields: [
-                          ['Cédula', p.cedula || 'sin cédula'],
-                          ['Horario', horario(p)],
-                          ['Limitar ubicación', <Toggle key="l" on={p.validarSede} label="Limitar a su sede" onClick={() => alternarFlag(p, 'validarSede')} />],
-                          ['Validar ubicación', <Toggle key="v" on={p.validarUbicacion} label="Registrar GPS al marcar" onClick={() => alternarFlag(p, 'validarUbicacion')} />],
-                          ['Última marcación', fmtUltima(ultimaMarca.get(p.id))],
-                        ],
+                        cuerpo: (
+                          <>
+                            <div className="acc-tiles dos">
+                              <div className="acc-tile">
+                                <b>{p.cedula || '—'}</b>
+                                <small>cédula</small>
+                              </div>
+                              <div className="acc-tile">
+                                <b>{fmtUltima(ultimaMarca.get(p.id))}</b>
+                                <small>última marcación</small>
+                              </div>
+                            </div>
+                            <div className="acc-lineas">
+                              <span className="acc-linea" title="Horario"><Icon name="clock" size={14} /><span>{horario(p)}</span></span>
+                              <span className="acc-linea acc-sw" title="Solo puede marcar dentro del radio de su sede">
+                                <Icon name="lock" size={14} /><span>Limitar a su sede</span>
+                                <Toggle on={p.validarSede} label="Limitar a su sede" onClick={() => alternarFlag(p, 'validarSede')} />
+                              </span>
+                              <span className="acc-linea acc-sw" title="Guarda el punto GPS de cada marcación">
+                                <Icon name="pin" size={14} /><span>GPS al marcar</span>
+                                <Toggle on={p.validarUbicacion} label="Registrar GPS al marcar" onClick={() => alternarFlag(p, 'validarUbicacion')} />
+                              </span>
+                            </div>
+                          </>
+                        ),
                         actions: <button className="btn primary block" onClick={() => openEdit(p)}>Editar</button>,
                       }))}
                     />
@@ -6545,6 +6563,11 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .acc-field span { color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums; }
 /* Asistencia: tres fichas (valor grande, palabra corta debajo) y líneas con icono. */
 .acc-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.acc-tiles.dos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Línea con interruptor: el texto a la izquierda, el interruptor al final. */
+.acc-linea.acc-sw { display: flex; }
+.acc-linea.acc-sw > span { flex: 1 1 auto; }
+.acc-linea.acc-sw .sw { flex: none; }
 .acc-tile { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 4px; border-radius: 8px; background: var(--page); text-align: center; min-width: 0; }
 .acc-tile b { font-family: var(--f-data); font-size: 14.5px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .acc-tile b .libre { font-weight: 500; }
