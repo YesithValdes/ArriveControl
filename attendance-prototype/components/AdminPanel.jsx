@@ -2402,12 +2402,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <button className={`cfg-item${tab === 'cfg-nomina' ? ' on' : ''}`} onClick={() => setTab('cfg-nomina')}>
                 <span className="cfg-ico"><Icon name="clock" size={16} /></span> Valorización
               </button>
-              <button className={`cfg-item${tab === 'cfg-simulador' ? ' on' : ''}`} onClick={() => setTab('cfg-simulador')}>
-                <span className="cfg-ico"><Icon name="file" size={16} /></span> Simulador
-              </button>
             </div>
             <div className="cfg-grupo">
               <h4>Herramientas</h4>
+              <button className={`cfg-item${tab === 'cfg-simulador' ? ' on' : ''}`} onClick={() => setTab('cfg-simulador')}>
+                <span className="cfg-ico"><Icon name="file" size={16} /></span> Simulador
+              </button>
               <button className="cfg-item" onClick={abrirPruebaReconocimiento}>
                 <span className="cfg-ico"><Icon name="monitor" size={16} /></span> Probar reconocimiento
               </button>
@@ -3569,15 +3569,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   <span className="tool-txt"><b>Valorización</b><small>Cuánto vale cada hora extra</small></span>
                   <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
                 </button>
+              </div>
+
+              <div className="tools-grupo">
+                <h3>Herramientas</h3>
                 <button className="tool" onClick={() => setTab('cfg-simulador')}>
                   <span className="icon"><Icon name="file" size={19} /></span>
                   <span className="tool-txt"><b>Simulador</b><small>Probar el cálculo de horas extra</small></span>
                   <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
                 </button>
-              </div>
-
-              <div className="tools-grupo">
-                <h3>Herramientas</h3>
                 <button className="tool" onClick={abrirPruebaReconocimiento}>
                   <span className="icon"><Icon name="monitor" size={19} /></span>
                   <span className="tool-txt"><b>Probar reconocimiento</b><small>Reconoce sin registrar; sin iniciar sesión</small></span>
