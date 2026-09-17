@@ -48,6 +48,7 @@ import GpsDebug from './GpsDebug.jsx';
 // Formulario de alta de empleados: el mismo de /admin/registro, embebido en
 // un cajón para registrar sin salir de la pestaña.
 import { RegistroEmpleadoForm } from './EmployeeRegister.jsx';
+import { getDeviceKey } from '../services/kioskoApi.js';
 
 /** Iconos de línea (estilo Lucide, inline SVG): heredan el color del texto. */
 function Icon({ name, size = 17 }) {
@@ -638,6 +639,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [sesionAbierta, setSesionAbierta] = useState(false); // detalle de quién entró
   const [sedeFilter, setSedeFilter] = useState('all'); // 'all' | nombre de sede
   const [tick, setTick] = useState(0); // fuerza relectura de localStorage
+  // ¿Este navegador es además un kiosco registrado? Entonces la barra lleva
+  // un botón para volver a él sin buscar nada (se decide al montar: la clave
+  // vive en localStorage y en el servidor no existe).
+  const [esKiosco, setEsKiosco] = useState(false);
+  useEffect(() => { setEsKiosco(Boolean(getDeviceKey())); }, []);
 
   // El acceso lo protege la SESIÓN (app/admin/page.jsx redirige a
   // /login si no la hay). Aquí ya no existe el PIN de prototipo.
@@ -2223,6 +2229,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           </span>
         </div>
         <div className="head-right">
+          {/* En un aparato que es kiosco (tiene clave de dispositivo), la vuelta
+              rápida: un toque y está de nuevo marcando. */}
+          {esKiosco && (
+            <a className="head-kiosco" href="/" title="Volver al kiosco" aria-label="Volver al kiosco">
+              <Icon name="monitor" size={18} />
+              <span className="solo-pc">Kiosco</span>
+            </a>
+          )}
           {/* Guía de arranque: solo en el dashboard, que es la puerta de
               entrada. En las demás pantallas quitaba sitio a lo que sí importa. */}
           {tab === 'dashboard' && (
@@ -5608,6 +5622,11 @@ const CSS = `
 .head-tab { font-family: var(--f-display); font-size: 15px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .app-header .date-note { color: rgba(255,255,255,.65); font-size: 11.5px; font-family: var(--f-data); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .head-right { margin-left: auto; display: flex; align-items: center; gap: 10px; position: relative; }
+.head-kiosco {
+  display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 10px; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.3); color: #fff; text-decoration: none; font-size: 13px; font-weight: 600; flex: 0 0 auto;
+}
+.head-kiosco:hover { background: rgba(255,255,255,.12); }
 /* Botón de la guía en la barra: píldora translúcida sobre el azul. */
 .head-guia {
   flex: 0 0 auto; font: inherit; font-size: 12.5px; font-weight: 700;
