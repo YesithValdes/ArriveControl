@@ -1482,6 +1482,19 @@ await test('sin salario: valor null, se cuenta aparte y no rompe los totales', (
   assert.equal(luis.pago, 'pendiente');
   assert.equal(totales.sinSalario, 1);
 });
+await test('el período se pide por mes y quincena, o por desde/hasta', async () => {
+  const { rangoPedido } = await import('../lib/accesoHoras.js');
+  const q = (s) => rangoPedido(new URLSearchParams(s));
+  assert.deepEqual(q('mes=2026-09&quincena=1'), { desde: '2026-09-01', hasta: '2026-09-15' });
+  assert.deepEqual(q('mes=2026-09&quincena=2'), { desde: '2026-09-16', hasta: '2026-09-30' });
+  assert.deepEqual(q('mes=2026-02&quincena=2'), { desde: '2026-02-16', hasta: '2026-02-28' }, 'febrero termina el 28');
+  assert.deepEqual(q('mes=2026-09'), { desde: '2026-09-01', hasta: '2026-09-30' }, 'sin quincena, el mes entero');
+  assert.deepEqual(q('desde=2026-09-01&hasta=2026-09-15'), { desde: '2026-09-01', hasta: '2026-09-15' });
+  assert.equal(q(''), null, 'sin parámetros no hay rango');
+  assert.ok(q('mes=2026-13').error, 'mes 13 no existe');
+  assert.ok(q('mes=2026-09&quincena=3').error, 'solo hay dos quincenas');
+  assert.ok(q('desde=2026-09-20&hasta=2026-09-10').error, 'desde no puede ir después de hasta');
+});
 await test('las tres rutas de /api/horas entran con la clave de API (accesoHoras)', () => {
   for (const ruta of ['../app/api/horas/route.js', '../app/api/horas/resumen/route.js', '../app/api/horas/pagadas/route.js']) {
     const fuente = leerCss(new URL(ruta, import.meta.url), 'utf8');

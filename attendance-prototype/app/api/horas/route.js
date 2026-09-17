@@ -14,7 +14,7 @@
  */
 import { NextResponse } from 'next/server'
 import { construirLote } from '../../../lib/nomina.js'
-import { accesoHoras, fechaValida } from '../../../lib/accesoHoras.js'
+import { accesoHoras, rangoPedido } from '../../../lib/accesoHoras.js'
 
 export const runtime = 'nodejs'
 
@@ -22,13 +22,9 @@ export async function GET(req) {
   const { esquema, error } = await accesoHoras(req, 'ver')
   if (error) return error
 
-  const { searchParams } = new URL(req.url)
-  const desde = searchParams.get('desde')
-  const hasta = searchParams.get('hasta')
-  if ((desde || hasta) && !(fechaValida(desde) && fechaValida(hasta) && desde <= hasta)) {
-    return NextResponse.json({ ok: false, error: 'desde y hasta deben ser fechas YYYY-MM-DD, y desde ≤ hasta.' }, { status: 400 })
-  }
-  const rango = desde && hasta ? { desde, hasta } : null
+  // Por período de pago (mes + quincena) o por desde/hasta; sin nada, todo.
+  const rango = rangoPedido(new URL(req.url).searchParams)
+  if (rango?.error) return NextResponse.json({ ok: false, error: rango.error }, { status: 400 })
 
   const { registros, porEmpleado } = await construirLote(esquema, rango)
 
