@@ -22,7 +22,7 @@ import { cargarV2, descriptorV2, puntos5DeMediaPipe, similitudV2, promedioV2, V2
 import {
   cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
   getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
-  olvidarActivacion, ClaveRechazada, getPruebaToken, adjuntarUbicacion,
+  olvidarActivacion, ClaveRechazada, getPruebaToken, adjuntarUbicacion, miDispositivo,
 } from '../services/kioskoApi.js';
 
 /**
@@ -151,6 +151,10 @@ export default function KioskMode() {
   // un aparato) y aquí se teclea. No existe activación con sesión desde el
   // kiosco: el panel es la única puerta de administración.
   const [configurado, setConfigurado] = useState(true); // se evalúa al montar
+  // ¿Este aparato muestra el botón de Administración? Lo decide el panel
+  // (Ajustes → Dispositivos); se pregunta al arrancar y de nuevo al volver
+  // a la pestaña, para que un cambio en el panel llegue sin reinstalar.
+  const [accesoPanel, setAccesoPanel] = useState(false);
   const [cfgError, setCfgError] = useState(null);
   const [cfgCodigo, setCfgCodigo] = useState('');
   const [activando, setActivando] = useState(false);
@@ -179,6 +183,10 @@ export default function KioskMode() {
     // vale. Sin red no se toca nada — la gente sigue fichando contra el caché,
     // que para eso existe la cola offline.
     setConfigurado(true);
+    const leerAcceso = () => { miDispositivo().then((d) => setAccesoPanel(Boolean(d?.acceso_panel))); };
+    leerAcceso();
+    const alVolver = () => { if (document.visibilityState === 'visible') leerAcceso(); };
+    document.addEventListener('visibilitychange', alVolver);
     cargarSedes().catch((e) => {
       if (e instanceof ClaveRechazada) {
         olvidarActivacion();
@@ -187,6 +195,7 @@ export default function KioskMode() {
       }
       // Cualquier otro error es de red: se ignora y el kiosco sigue.
     });
+    return () => document.removeEventListener('visibilitychange', alVolver);
   }, []);
 
   // Cola offline: reintenta al ABRIR la app, al reconectar y cada minuto.
@@ -1219,7 +1228,15 @@ export default function KioskMode() {
           </div>
           {/* Detener es la ÚNICA vía al reposo: marca la parada como manual
               para que el auto-arranque no vuelva a encender la cámara solo. */}
-          <button style={s.hudDetener} onClick={() => { setDetenido(true); setStatusNote('Kiosco en pausa.'); stopAll(); }}>⏹ Detener</button>
+          <span style={s.kBotones}>
+            {/* Solo si el administrador lo encendió para ESTE aparato
+                (Ajustes → Dispositivos → Acceso al panel). Lleva al inicio
+                de sesión con contraseña: mostrar la puerta no es abrirla. */}
+            {accesoPanel && (
+              <a style={s.hudDetener} href="/login?destino=/admin" title="Entrar al panel de administración">⚙ Administración</a>
+            )}
+            <button style={s.hudDetener} onClick={() => { setDetenido(true); setStatusNote('Kiosco en pausa.'); stopAll(); }}>⏹ Detener</button>
+          </span>
         </div>
         {/* ── El cuadro de la cámara, con TODOS los mensajes DENTRO ──
             Como la cámara de un celular: la instrucción arriba en una
@@ -1524,8 +1541,9 @@ const s = {
   },
   // Detener vive DENTRO de la pantalla de cámara: es la única salida del modo
   // kiosco. Anclado arriba a la derecha, espejo de la marca.
+  kBotones: { display: 'inline-flex', alignItems: 'center', gap: 8, flex: '0 0 auto' },
   hudDetener: {
-    flex: '0 0 auto',
+    flex: '0 0 auto', textDecoration: 'none', display: 'inline-flex', alignItems: 'center',
     background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)',
     borderRadius: 8, fontSize: 13, padding: '6px 12px', cursor: 'pointer', fontFamily: 'inherit',
   },

@@ -888,6 +888,24 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     setCodigoVinc({ ...j, reconectando: d.nombre });
   };
 
+  // ¿Muestra este kiosco el botón de Administración? Solo abre la puerta al
+  // inicio de sesión; la contraseña sigue siendo la llave.
+  const alternarAccesoPanel = async (d) => {
+    const valor = !d.acceso_panel;
+    setDispositivos((lista) => lista.map((x) => (x.id === d.id ? { ...x, acceso_panel: valor } : x)));
+    const r = await fetch(`/api/dispositivos/${d.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ acceso_panel: valor }),
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j?.ok) {
+      setDispositivos((lista) => lista.map((x) => (x.id === d.id ? { ...x, acceso_panel: !valor } : x)));
+      showToast(`No se guardó: ${j?.error ?? r.status}`);
+      return;
+    }
+    showToast(valor ? `"${d.nombre}" ya muestra el acceso al panel` : `"${d.nombre}" ya no muestra el acceso al panel`);
+  };
+
   const revocarDispositivo = async (d) => {
     if (!confirm(`¿Revocar "${d.nombre}"? Dejará de marcar.`)) return;
     const r = await fetch(`/api/dispositivos/${d.id}`, { method: 'DELETE' });
@@ -2256,6 +2274,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   <b>{sesion.nombre || sesion.email}</b>
                   <span>{sesion.email}</span>
                   <span>{sesion.empresa ?? ROL_ETIQUETA[sesion.rol] ?? sesion.rol}</span>
+                  <a className="lock-btn" href="/" title="Volver a la pantalla del kiosco">
+                    <span className="icon"><Icon name="monitor" size={14} /></span>
+                    <span className="lbl">Ir al kiosco</span>
+                  </a>
                   <button className="lock-btn" onClick={cerrarSesion} title="Cerrar sesión">
                     <span className="icon"><Icon name="lock" size={14} /></span>
                     <span className="lbl">Cerrar sesión</span>
@@ -3948,7 +3970,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <div className="att-tablewrap">
                   <table className="att-table">
                     <thead>
-                      <tr><th>Dispositivo</th><th>Sede</th><th>Estado</th><th>Último uso</th><th>Activado por</th><th></th></tr>
+                      <tr>
+                        <th>Dispositivo</th><th>Sede</th><th>Estado</th>
+                        <th title="Si está activo, el kiosco muestra el botón «Administración», que lleva al inicio de sesión del panel">Acceso al panel</th>
+                        <th>Último uso</th><th>Activado por</th><th></th>
+                      </tr>
                     </thead>
                     <tbody>
                       {dispositivos.map((d) => (
@@ -3956,6 +3982,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           <td className="att-name">{d.nombre}</td>
                           <td>{d.sede_nombre ?? '—'}</td>
                           <td>{d.activo ? '🟢 activo' : '⛔ revocado'}</td>
+                          <td><Toggle on={Boolean(d.acceso_panel)} disabled={!d.activo} label="Mostrar el acceso al panel en este kiosco" onClick={() => alternarAccesoPanel(d)} /></td>
                           <td>{d.ultimo_uso ? fmtTs(d.ultimo_uso) : 'nunca'}</td>
                           <td>{d.activado_por ?? '—'}</td>
                           <td>
@@ -3986,6 +4013,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     fields: [
                       ['Sede', d.sede_nombre ?? '—'],
                       ['Estado', d.activo ? 'activo' : 'revocado'],
+                      ['Acceso al panel', <Toggle key="p" on={Boolean(d.acceso_panel)} disabled={!d.activo} label="Mostrar el acceso al panel en este kiosco" onClick={() => alternarAccesoPanel(d)} />],
                       ['Último uso', d.ultimo_uso ? fmtTs(d.ultimo_uso) : 'nunca'],
                       ['Activado por', d.activado_por ?? '—'],
                     ],

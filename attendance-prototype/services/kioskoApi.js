@@ -106,6 +106,22 @@ export async function cargarSedes() {
  *        dejar datos biométricos guardados ahí.
  * @returns {{empleados: Array, deCache: boolean}}
  */
+/**
+ * Lo que este aparato sabe de sí mismo: nombre, sede y si muestra el acceso
+ * al panel (Ajustes → Dispositivos). Sin clave de dispositivo no hay nada
+ * que preguntar; ante cualquier fallo se asume que NO (el botón no aparece).
+ */
+export async function miDispositivo() {
+  if (!getDeviceKey()) return null;
+  try {
+    const r = await fetch('/api/dispositivos/yo', { headers: headers() });
+    const j = await r.json().catch(() => null);
+    return r.ok && j?.ok ? j.dispositivo : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function cargarRoster({ guardar = true } = {}) {
   try {
     const r = await fetch('/api/empleados?rostros=1', { headers: headers() });

@@ -46,7 +46,7 @@ export async function activarDispositivo({ empresa, nombre, sedeId = null, activ
 /** Dispositivos de una empresa, con el nombre de su sede. */
 export async function listarDispositivos(empresa) {
   const { rows } = await control(
-    `select d.id, d.nombre, d.sede_id, d.activo, d.activado_por, d.creada_en, d.ultimo_uso
+    `select d.id, d.nombre, d.sede_id, d.activo, d.acceso_panel, d.activado_por, d.creada_en, d.ultimo_uso
        from control.dispositivos d
       where d.empresa_id = $1
       order by d.creada_en desc`,
@@ -189,6 +189,20 @@ export async function vinculacionesPendientes(empresa) {
  * Revoca (desactiva) un dispositivo. El aparato queda fuera al instante.
  * Se exige la empresa para que nadie revoque el kiosco de otro cliente.
  */
+/**
+ * ¿Este kiosco muestra el acceso al panel? Se enciende por dispositivo desde
+ * Ajustes → Dispositivos. Solo muestra u oculta el botón: entrar sigue
+ * exigiendo la contraseña del administrador.
+ */
+export async function fijarAccesoPanel(empresa, id, valor) {
+  const { rowCount } = await control(
+    `update control.dispositivos set acceso_panel = $3
+      where id = $1 and empresa_id = $2`,
+    [id, empresa.id, Boolean(valor)],
+  )
+  return rowCount > 0
+}
+
 export async function revocarDispositivo(empresa, id) {
   const { rowCount } = await control(
     `update control.dispositivos set activo = false
