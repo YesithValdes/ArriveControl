@@ -1434,4 +1434,16 @@ await test('el detector no se asusta con callbacks, comentarios ni cadenas', () 
   assert.deepEqual(usosAntesDeDeclarar(sano, 'X'), []);
 });
 
+// ── Mi empresa: lo que se guarda se tiene que poder leer ─────────────
+// El NIT se guardaba (PATCH /api/empresa) pero la lista de columnas con la
+// que la sesión carga la empresa no lo traía: el GET devolvía siempre vacío
+// y en pantalla parecía que no se guardaba.
+console.log('\n🏢 Mi empresa');
+await test('la empresa se carga con las columnas que el panel edita (nombre y NIT)', () => {
+  const fuente = leerCss(new URL('../lib/empresas.js', import.meta.url), 'utf8');
+  const campos = /const CAMPOS = `([^`]+)`/.exec(fuente)?.[1] ?? '';
+  const lista = campos.split(',').map((c) => c.trim());
+  for (const c of ['nombre', 'nit']) assert.ok(lista.includes(c), `falta «${c}» en CAMPOS`);
+});
+
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);
