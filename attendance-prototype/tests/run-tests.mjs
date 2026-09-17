@@ -1519,6 +1519,14 @@ await test('rechaza lo que no es imagen: vacío, otro tipo, texto suelto, demasi
   assert.ok(decodificarImagen('esto no es base64!!').error);
   assert.ok(decodificarImagen('A'.repeat(Math.ceil((MAX_ENTRADA_BYTES + 1000) * 4 / 3))).error, 'más de 6 MB');
 });
+await test('la copia de persona que usan Asistencia y Anomalías conserva la foto (avatarEn)', () => {
+  // La miniatura no salía en Asistencia porque esa pantalla trabaja con una
+  // copia recortada de cada persona, y la copia no traía avatarEn.
+  const fuente = leerCss(new URL('../components/AdminPanel.jsx', import.meta.url), 'utf8');
+  const copia = /byId\.set\(p\.id, \{[^}]*\}\)/.exec(fuente)?.[0] ?? '';
+  assert.ok(copia, 'no se encontró la copia de persona');
+  assert.match(copia, /avatarEn:/, 'la copia debe llevar avatarEn');
+});
 await test('la ruta del avatar acepta id interno o cédula y guarda solo JPEG normalizado', () => {
   const fuente = leerCss(new URL('../app/api/empleados/[id]/avatar/route.js', import.meta.url), 'utf8');
   assert.match(fuente, /\(id = \$1 or cedula = \$1\)/, 'busca por id o por cédula');

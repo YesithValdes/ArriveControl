@@ -1272,7 +1272,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
     // Personas: roster ∪ personas vistas en eventos (con sede y horario).
     const byId = new Map();
-    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '', expectedEntry: p.expectedEntry || '', expectedExit: p.expectedExit || '', breakMinutes: p.breakMinutes ?? null, jornadaDias: p.jornadaDias ?? null });
+    // La copia lleva también la foto de perfil: sin `avatarEn` la miniatura
+    // de Asistencia, Anomalías y el dashboard caía siempre a las iniciales.
+    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '', expectedEntry: p.expectedEntry || '', expectedExit: p.expectedExit || '', breakMinutes: p.breakMinutes ?? null, jornadaDias: p.jornadaDias ?? null, avatarEn: p.avatarEn ?? null });
     for (const e of events) if (!byId.has(e.personId)) byId.set(e.personId, { id: e.personId, name: e.personName, sede: e.sede || '', expectedEntry: '', expectedExit: '', breakMinutes: null, jornadaDias: null });
     const people = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 
