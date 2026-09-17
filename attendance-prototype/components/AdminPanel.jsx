@@ -4327,10 +4327,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       Salario mensual
                       <small>{valorHora == null ? 'Escribe un salario para ver valores.' : `Hora ordinaria: ${fmtCOP(valorHora)} (÷ ${divisor} h)`}</small>
                     </label>
-                    <div className="cfg-input">
+                    <div className="cfg-input con-prefijo">
+                      <span className="prefijo">$</span>
                       <input
-                        id="sim-salario" type="number" min="0" step="1000" inputMode="numeric"
-                        value={simSalario} onChange={(e) => setSimSalario(e.target.value)}
+                        id="sim-salario" className="num ancho" type="text" inputMode="numeric"
+                        value={Number(simSalario) > 0 ? Number(simSalario).toLocaleString('es-CO') : ''}
+                        onChange={(e) => setSimSalario(e.target.value.replace(/\D/g, ''))}
                       />
                     </div>
                   </div>
@@ -5986,7 +5988,10 @@ const CSS = `
 .cfg-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
 .rep-en-curso { margin: 0 0 10px; padding: 8px 10px; background: #fdf3d3; border: 1px solid #eedfa8; border-radius: 6px; color: #8a6100; }
 .cfg-note code { background: var(--grid); padding: 1px 5px; border-radius: 4px; }
-.cfg-time { width: 106px !important; } /* un <input type="time"> no cabe en los 64px de .cfg-input */
+/* Un <input type="time"> o type="date" no cabe en los 64px de .cfg-input:
+   ancho automático con mínimo, y sin centrar (el selector nativo se corta). */
+.cfg-time { width: auto !important; min-width: 128px; text-align: left !important; padding: 7px 8px !important; font-family: var(--f-data); }
+input[type="date"].cfg-time { min-width: 150px; }
 
 /* ── Ficha de empleado ──
    Los mismos campos de antes, agrupados por tema y con el espacio libre
