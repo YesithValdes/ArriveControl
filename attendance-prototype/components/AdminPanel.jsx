@@ -813,6 +813,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     const d = await r.json().catch(() => null);
     if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
     setEmpDraft(null);
+    // Lo guardado se pinta ya, con lo que respondió el servidor.
+    if (d.empresa) setMiEmpresa((m) => ({ ...m, nombre: d.empresa.nombre, nit: d.empresa.nit ?? '' }));
     showToast('Empresa actualizada');
     cargarMiEmpresa();
   };

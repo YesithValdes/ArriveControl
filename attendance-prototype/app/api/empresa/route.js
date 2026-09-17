@@ -21,11 +21,17 @@ export async function GET() {
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const { actuales, limite } = await cabeOtroEmpleado(empresa)
+  // Nombre y NIT, frescos de la base: la empresa de la sesión sale de una
+  // caché de un minuto por instancia, y en Vercel el PATCH limpia la caché
+  // de SU instancia, no la de la que atiende este GET. Editar y no ver el
+  // cambio es peor que una consulta más.
+  const { rows: frescos } = await control(`select nombre, nit from control.empresas where id = $1`, [empresa.id])
+  const actual = frescos[0] ?? empresa
   return NextResponse.json({
     ok: true,
     empresa: {
-      nombre: empresa.nombre,
-      nit: empresa.nit ?? '',
+      nombre: actual.nombre,
+      nit: actual.nit ?? '',
       plan: empresa.plan,
       estado: empresa.estado,
       empleados: actuales,
