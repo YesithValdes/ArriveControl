@@ -153,6 +153,7 @@ function AccList({ items }) {
         return (
           <div className={`acc-item${open ? ' open' : ''}`} key={it.id}>
             <button className="acc-head" aria-expanded={open} onClick={() => setOpenId(open ? null : it.id)}>
+              {it.avatar}
               <span className="acc-title">{it.title}</span>
               {it.right}
               <span className="acc-chev"><Icon name="chevronRight" size={14} /></span>
@@ -1998,6 +1999,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   }, [costos, tramosDia, diaAsistencia, esHoy]);
   // Roster completo sin filtro de sede (para conteos por sede).
   const allPeople = useMemo(() => listPeople(), [tick]);
+  // Por cédula, para las pantallas que reciben tramos del servidor (Reportes)
+  // y quieren la miniatura de la persona.
+  const personaPorCedula = useMemo(() => new Map(allPeople.map((p) => [p.cedula, p])), [allPeople]);
 
   // Cambia un flag de ubicación desde la tabla, sin abrir la ficha.
   const alternarFlag = async (p, campo) => {
@@ -2532,6 +2536,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           return {
                             id: r.person.id,
                             title: nombreCorto(r.person.name),
+                            avatar: <AvatarEmp person={r.person} />,
                             right: <span className={`punto-estado ${r.present ? 'on' : 'off'}`} />,
                             cuerpo: (
                               <>
@@ -2682,7 +2687,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       const base = r.rangoHours - extra;
                       return (
                         <div className="hrow compacta" key={r.person.id} title={`${r.person.name}: ${fmtH(r.rangoHours)}${extra > 0 ? ` (${fmtH(extra)} extra)` : ''}`}>
-                          <span className="name">{r.person.name}</span>
+                          <span className="name"><AvatarEmp person={r.person} className="av av-mini" /><span className="name-txt">{nombreCorto(r.person.name)}</span></span>
                           <span className="track">
                             <span className="fill" style={{ width: `${(base / maxRango) * 100}%` }} />
                             {/* lo que traspasa las horas legales, en azul oscuro */}
@@ -3026,6 +3031,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       items={empPagina.map((p) => ({
                         id: p.id,
                         title: nombreCorto(p.name),
+                        avatar: <AvatarEmp person={p} />,
                         right: <span className="acc-note">{p.sede || 'sin sede'}</span>,
                         cuerpo: (
                           <>
@@ -3314,7 +3320,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               onClick={() => irAAsistenciaEmpleado(r.cedula)}
                               title={`${r.name} — ver su asistencia en este período`}
                             >
-                              {nombreCorto(r.name)}
+                              <AvatarEmp person={personaPorCedula.get(r.cedula)} className="av av-mini" texto={r.name} />
+                              <span className="rep-name-txt">{nombreCorto(r.name)}</span>
                             </button>
                             {tipos.map((t) => (
                               <span key={t.codigo} className={`num ${r.horasPorTipo[t.codigo] > 0 ? 'warn-num' : 'muted-cell'}`}>
@@ -3422,6 +3429,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               {abierto && p.lista.map((e) => (
                                 <div className="rep-emp" key={e.cedula}>
                                   <button className="rep-emp-btn" onClick={() => irAAsistenciaEmpleado(e.cedula)} title="Ver sus marcaciones del período">
+                                    <AvatarEmp person={personaPorCedula.get(e.cedula)} texto={e.name} />
                                     <span className="rep-emp-txt">
                                       <b>{nombreCorto(e.name)}</b>
                                       <small>{CODIGOS_HORA.filter((c) => e.horasPorTipo[c] > 0.001).map((c) => `${c} ${fmtHoras(e.horasPorTipo[c])}`).join(' · ')}</small>
@@ -4725,7 +4733,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setDrawer(null)}>
           <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Marcaciones de ${drawer.personName}`}>
             <div className="drawer-head">
-              <div>
+              <div className="drawer-quien">
+                <AvatarEmp person={allPeople.find((p) => p.id === drawer.personId)} className="av av-cajon" texto={drawer.personName} />
                 <h3>{drawer.personName}</h3>
               </div>
               <button className="btn" onClick={() => setDrawer(null)}>Cerrar</button>
@@ -5993,6 +6002,14 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 }
 /* La foto de perfil en las listas: misma caja que las iniciales. */
 .av-foto { object-fit: cover; background: var(--page); padding: 0; }
+/* Miniatura pequeña (tablas y barras) y la del cajón (sobre azul marino). */
+.av-mini { width: 22px; height: 22px; font-size: 9px; border: 0; margin: 0; flex: 0 0 auto; }
+.av-cajon { width: 36px; height: 36px; font-size: 12.5px; border: 0; margin: 0; flex: 0 0 auto; background: rgba(255,255,255,.16); color: #fff; }
+.drawer-quien { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.rep-row .rep-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.rep-name-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow .name { display: inline-flex; align-items: center; gap: 6px; }
+.hrow .name-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* En la ficha el avatar es un botón: tocarlo cambia la foto. */
 .ficha-avatar-btn { position: relative; border: 0; padding: 0; color: #fff; cursor: pointer; overflow: visible; }
 .ficha-avatar-btn:disabled { opacity: .6; cursor: default; }
