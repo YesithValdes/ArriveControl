@@ -155,6 +155,8 @@ export default function KioskMode() {
   // (Ajustes → Dispositivos); se pregunta al arrancar y de nuevo al volver
   // a la pestaña, para que un cambio en el panel llegue sin reinstalar.
   const [accesoPanel, setAccesoPanel] = useState(false);
+  const leerAcceso = () => { miDispositivo().then((d) => setAccesoPanel(Boolean(d?.acceso_panel))); };
+  useEffect(() => { if (detenido) leerAcceso(); }, [detenido]);
   const [cfgError, setCfgError] = useState(null);
   const [cfgCodigo, setCfgCodigo] = useState('');
   const [activando, setActivando] = useState(false);
@@ -183,7 +185,6 @@ export default function KioskMode() {
     // vale. Sin red no se toca nada — la gente sigue fichando contra el caché,
     // que para eso existe la cola offline.
     setConfigurado(true);
-    const leerAcceso = () => { miDispositivo().then((d) => setAccesoPanel(Boolean(d?.acceso_panel))); };
     leerAcceso();
     const alVolver = () => { if (document.visibilityState === 'visible') leerAcceso(); };
     document.addEventListener('visibilitychange', alVolver);
@@ -1228,15 +1229,7 @@ export default function KioskMode() {
           </div>
           {/* Detener es la ÚNICA vía al reposo: marca la parada como manual
               para que el auto-arranque no vuelva a encender la cámara solo. */}
-          <span style={s.kBotones}>
-            {/* Solo si el administrador lo encendió para ESTE aparato
-                (Ajustes → Dispositivos → Acceso al panel). Lleva al inicio
-                de sesión con contraseña: mostrar la puerta no es abrirla. */}
-            {accesoPanel && (
-              <a style={s.hudDetener} href="/login?destino=/admin" title="Entrar al panel de administración">⚙ Administración</a>
-            )}
-            <button style={s.hudDetener} onClick={() => { setDetenido(true); setStatusNote('Kiosco en pausa.'); stopAll(); }}>⏹ Detener</button>
-          </span>
+          <button style={s.hudDetener} onClick={() => { setDetenido(true); setStatusNote('Kiosco en pausa.'); stopAll(); }}>⏹ Detener</button>
         </div>
         {/* ── El cuadro de la cámara, con TODOS los mensajes DENTRO ──
             Como la cámara de un celular: la instrucción arriba en una
@@ -1403,6 +1396,13 @@ export default function KioskMode() {
               {arranqueFallo && !detenido ? '↻ Reintentar' : '▶️ Iniciar kiosco'}
             </button>
           )}
+          {/* Solo con el kiosco en pausa y solo si el administrador lo
+              encendió para ESTE aparato (Ajustes → Dispositivos → Acceso al
+              panel). Lleva al inicio de sesión con contraseña: mostrar la
+              puerta no es abrirla. */}
+          {!running && configurado && detenido && accesoPanel && (
+            <a style={s.adminBtn} href="/login?destino=/admin" title="Entrar al panel de administración">⚙ Administración</a>
+          )}
           {pendientes > 0 && (
             <div style={s.pendNote}>
               📶 {pendientes === 1 ? '1 marcación guardada' : `${pendientes} marcaciones guardadas`} por enviar; se envían solas al volver el internet.
@@ -1541,7 +1541,6 @@ const s = {
   },
   // Detener vive DENTRO de la pantalla de cámara: es la única salida del modo
   // kiosco. Anclado arriba a la derecha, espejo de la marca.
-  kBotones: { display: 'inline-flex', alignItems: 'center', gap: 8, flex: '0 0 auto' },
   hudDetener: {
     flex: '0 0 auto', textDecoration: 'none', display: 'inline-flex', alignItems: 'center',
     background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)',
@@ -1648,6 +1647,7 @@ const s = {
   },
   idleCta: { textAlign: 'center', fontSize: 19, fontWeight: 600, marginTop: 26, textWrap: 'balance', maxWidth: 300 },
   startBtn: { marginTop: 24, background: 'var(--accent)', color: 'var(--accent-ink)', border: 'none', fontSize: 16, fontFamily: 'inherit', fontWeight: 700, padding: '14px 44px', borderRadius: 'var(--r-md)', cursor: 'pointer', boxShadow: 'var(--elev-1)' },
+  adminBtn: { marginTop: 12, display: 'inline-block', background: 'transparent', color: 'var(--ink-2)', border: '1px solid var(--border)', fontSize: 14, fontFamily: 'inherit', fontWeight: 600, padding: '10px 28px', borderRadius: 'var(--r-md)', textDecoration: 'none' },
   stopBtn: { marginTop: 24, background: 'transparent', color: 'var(--muted)', border: '1px solid var(--border)', fontSize: 14, fontFamily: 'inherit', padding: '10px 28px', borderRadius: 'var(--r-md)', cursor: 'pointer' },
   privacy: { marginTop: 'auto', paddingTop: 24, textAlign: 'center', fontSize: 11, color: 'var(--muted)' },
   errNote: { marginTop: 10, fontSize: 12, color: 'var(--k-no)', textAlign: 'center', fontFamily: 'var(--f-data)' },
