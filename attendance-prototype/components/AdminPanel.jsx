@@ -3807,6 +3807,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   <div className="cfg-group-head">
                     <h3>Clave de API</h3>
                     <div className="cfg-acciones">
+                      {/* La documentación para quien integre nómina o gestión:
+                          una página pública, sin datos de nadie. */}
+                      <a
+                        className="btn btn-ico" href="/docs/api" target="_blank" rel="noreferrer"
+                        title="Documentación de la API (cómo consumirla desde otro sistema)" aria-label="Documentación de la API"
+                      >
+                        <Icon name="file" size={16} />
+                      </a>
                       <button
                         className="btn btn-ico" onClick={() => setApiKeyVisible((v) => !v)}
                         title={apiKeyVisible ? 'Ocultar la clave' : 'Ver la clave'} aria-label={apiKeyVisible ? 'Ocultar la clave' : 'Ver la clave'}
@@ -3828,7 +3836,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     </div>
                   </div>
                   <code className="api-key">{apiKeyVisible ? miEmpresa.apiKey : '••••••••••••••••••••••••'}</code>
-                  <p className="cfg-note">Para nómina: <code>GET /api/horas</code> con el encabezado <code>X-API-Key</code>.</p>
                 </div>
 
                 <div className="cfg-group">
