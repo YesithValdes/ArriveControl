@@ -1502,4 +1502,28 @@ await test('las tres rutas de /api/horas entran con la clave de API (accesoHoras
   }
 });
 
+// ── Foto de perfil (avatar) ──────────────────────────────────────────
+console.log('\n🖼️  Foto de perfil');
+const { decodificarImagen, MAX_ENTRADA_BYTES } = await import('../lib/avatar.js');
+const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+await test('acepta data URL y base64 a secas, y devuelve los mismos bytes', () => {
+  const a = decodificarImagen(`data:image/png;base64,${PNG_1PX}`);
+  const b = decodificarImagen(PNG_1PX);
+  assert.equal(a.error, null); assert.equal(b.error, null);
+  assert.ok(a.bytes.equals(b.bytes));
+  assert.equal(a.bytes.subarray(1, 4).toString(), 'PNG');
+});
+await test('rechaza lo que no es imagen: vacío, otro tipo, texto suelto, demasiado grande', () => {
+  assert.ok(decodificarImagen('').error);
+  assert.ok(decodificarImagen('data:text/plain;base64,aG9sYQ==').error);
+  assert.ok(decodificarImagen('esto no es base64!!').error);
+  assert.ok(decodificarImagen('A'.repeat(Math.ceil((MAX_ENTRADA_BYTES + 1000) * 4 / 3))).error, 'más de 6 MB');
+});
+await test('la ruta del avatar acepta id interno o cédula y guarda solo JPEG normalizado', () => {
+  const fuente = leerCss(new URL('../app/api/empleados/[id]/avatar/route.js', import.meta.url), 'utf8');
+  assert.match(fuente, /\(id = \$1 or cedula = \$1\)/, 'busca por id o por cédula');
+  assert.match(fuente, /prepararAvatar\(bytes\)/, 'siempre pasa por la normalización');
+  assert.match(fuente, /x-api-key/, 'entra con la clave de API');
+});
+
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);

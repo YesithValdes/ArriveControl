@@ -86,7 +86,7 @@ export async function GET(req) {
   const { rows: empleados } = await conEmpresa(esquema, (db) => db.query(
     `select e.id, e.nombre, e.cedula, e.correo, e.sede_id, s.nombre as sede_nombre, e.validar_sede, e.validar_ubicacion,
             e.entrada_esperada, e.salida_esperada, e.almuerzo_min, e.jornada_dias, e.jornada_semanal,
-            e.salario_mensual, e.activo, e.creado_en,
+            e.salario_mensual, e.activo, e.creado_en, e.avatar_en,
             (e.descriptor_facial is not null) as tiene_rostro,
             (select count(*)::int from rostros r where r.empleado_id = e.id and r.descriptor_v2 is not null) as rostros_v2
        from empleados e

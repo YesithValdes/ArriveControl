@@ -326,6 +326,9 @@ export async function syncPanel() {
     createdAt: e.creado_en,
     activo: e.activo,
     tieneRostro: e.tiene_rostro,
+    // Foto de PERFIL (no el rostro): cuándo se puso; null = no tiene. Sirve
+    // para pedir la imagen con ?v= y que el caché no muestre la anterior.
+    avatarEn: e.avatar_en ?? null,
     // Cuántos de sus rostros ya tienen descriptor del MODELO V2: con 0 aún
     // le falta la foto nueva (el kiosco decide con v2 cuando nadie esté en 0).
     rostrosV2: e.rostros_v2 ?? 0,

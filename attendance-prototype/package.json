@@ -24,7 +24,8 @@
     "onnxruntime-web": "^1.29.0",
     "pg": "^8.22.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "sharp": "0.34.5"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

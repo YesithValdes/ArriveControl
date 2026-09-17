@@ -166,6 +166,7 @@ export default function DocsApiPage() {
           <a href="#resumen">GET /api/horas/resumen</a>
           <a href="#tramos">GET /api/horas</a>
           <a href="#pagadas">POST /api/horas/pagadas</a>
+          <a href="#avatar">PUT /api/empleados/{'{cédula}'}/avatar</a>
           <span className="grupo">Referencia</span>
           <a href="#tipos">Tipos de hora</a>
           <a href="#reglas">Reglas del cálculo</a>
@@ -295,6 +296,26 @@ export default function DocsApiPage() {
           <code>afectados</code> es cuántas referencias cambiaron de estado; las que ya estaban pagadas no cuentan (repetir la petición no hace daño).
           En el panel esas horas pasan a verse como pagadas, anotadas por <code>api</code>.
         </p>
+      </section>
+
+      <section id="avatar">
+        <div className="ruta"><span className="metodo post">PUT</span><code>/api/empleados/{'{cédula}'}/avatar</code></div>
+        <p>
+          Pone la <b>foto de perfil</b> de un empleado: la imagen que lo identifica en las listas del panel. Puede ser una foto,
+          un dibujo o un símbolo. <b>No tiene nada que ver con el reconocimiento facial</b>: no se compara con nada, no toca los
+          rostros registrados en el kiosco y no sirve para marcar.
+        </p>
+        <pre><code>{`// Cuerpo (JSON). La imagen en data URL o en base64 a secas; JPG, PNG o WebP; hasta 6 MB.
+{ "imagen": "data:image/jpeg;base64,/9j/4AAQSkZJRg…" }
+
+// Respuesta
+{ "ok": true, "empleado": { "id": "…", "cedula": "1004415216" }, "avatar_en": "2026-09-17T18:02:11Z", "bytes": 14872 }`}</code></pre>
+        <ul>
+          <li>AsistencIA la recorta al centro, la deja en <b>256×256 JPEG</b> (unos 15 KB) y la guarda así; la imagen original no se conserva.</li>
+          <li>Repetir la llamada reemplaza la foto anterior. <code>DELETE</code> a la misma ruta la quita.</li>
+          <li><code>GET</code> a la misma ruta devuelve la imagen (JPEG), con <code>ETag</code> para cachearla.</li>
+          <li>Errores: <code>404</code> si la cédula no existe en la empresa; <code>400</code> si no es una imagen legible o pesa más de 6 MB.</li>
+        </ul>
       </section>
 
       <section id="tipos">

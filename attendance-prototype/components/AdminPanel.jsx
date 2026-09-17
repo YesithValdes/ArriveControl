@@ -552,6 +552,25 @@ function useFlip(ref, deps) {
 }
 
 /** Iniciales para el avatar de la sesión: "Ana María Ruiz" → "AR". */
+/**
+ * El avatar de un empleado: su foto de perfil si la tiene (viene del panel o
+ * del sistema de gestión por la API), y si no, sus iniciales. La foto NO es
+ * el rostro del reconocimiento: es una imagen cualquiera que lo identifique.
+ * Si la imagen falla (404, red), se cae a las iniciales sin dejar un hueco.
+ */
+function AvatarEmp({ person, className = 'av av-tabla', texto }) {
+  const [rota, setRota] = useState(false);
+  const ini = iniciales(texto ?? nombreCorto(person?.name ?? ''));
+  if (!person?.avatarEn || rota) return <span className={className}>{ini}</span>;
+  return (
+    <img
+      className={`${className} av-foto`}
+      src={`/api/empleados/${person.id}/avatar?v=${new Date(person.avatarEn).getTime()}`}
+      alt="" loading="lazy" onError={() => setRota(true)}
+    />
+  );
+}
+
 const iniciales = (texto) =>
   texto.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
 
@@ -923,6 +942,33 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // Edición de empleado (CRUD): diálogo con datos no biométricos.
   const [editEmp, setEditEmp] = useState(null); // { id, name, cedula, sede, expectedEntry }
+  // Foto de perfil desde la ficha: se manda al servidor tal cual (él la
+  // recorta y comprime) y se refleja al instante con la fecha que devuelve.
+  const avatarFileRef = useRef(null);
+  const [avatarOcupado, setAvatarOcupado] = useState(false);
+  const cambiarAvatar = async (id, e) => {
+    const archivo = e.target.files?.[0];
+    e.target.value = '';
+    if (!archivo) return;
+    setAvatarOcupado(true);
+    try {
+      const imagen = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(archivo); });
+      const r = await fetch(`/api/empleados/${id}/avatar`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imagen }) });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.ok) { showToast(`No se pudo poner la foto: ${j?.error ?? r.status}`); return; }
+      setEditEmp((ed) => (ed && ed.id === id ? { ...ed, avatarEn: j.avatar_en } : ed));
+      showToast('Foto de perfil actualizada');
+      refresh();
+    } finally { setAvatarOcupado(false); }
+  };
+  const quitarAvatar = async (id) => {
+    const r = await fetch(`/api/empleados/${id}/avatar`, { method: 'DELETE' });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j?.ok) { showToast(`No se pudo quitar la foto: ${j?.error ?? r.status}`); return; }
+    setEditEmp((ed) => (ed && ed.id === id ? { ...ed, avatarEn: null } : ed));
+    showToast('Foto de perfil quitada');
+    refresh();
+  };
 
   // ── Rostros del empleado abierto en la ficha ────────────────────────
   // Agregar una foto no debe obligar a registrar de nuevo a la persona.
@@ -1101,6 +1147,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     // Solo para mostrar: la ficha dice si esta persona puede marcar en el
     // kiosco. El rostro no se edita desde aquí.
     tieneRostro: Boolean(p.tieneRostro),
+    avatarEn: p.avatarEn ?? null,
   });
 
   /**
@@ -2417,7 +2464,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     // Nombre corto en la lista; el completo, en el title.
                     const celdaEmpleado = (r) => (
                       <span className="emp-cell" title={r.person.name}>
-                        <span className="av av-tabla">{iniciales(nombreCorto(r.person.name))}</span>
+                        <AvatarEmp person={r.person} />
                         <span>
                           <span className="att-name">
                             {nombreCorto(r.person.name)}
@@ -2760,7 +2807,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         return (
                           <div className={`caso${abierta ? ' abierto' : ''}`} key={key}>
                             <button className="caso-cab" aria-expanded={abierta} onClick={() => abrirCaso(a, key)}>
-                              <span className="av av-tabla">{iniciales(a.person.name)}</span>
+                              <AvatarEmp person={a.person} />
                               <span className="caso-nom">
                                 <b>{a.person.name}</b>
                                 <small>{aDay(a)}{a.person.sede ? ` · ${a.person.sede}` : ''}</small>
@@ -2945,7 +2992,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               <td>
                                 {/* Nombre y apellido; el completo, en el title. */}
                                 <span className="emp-cell" title={p.name}>
-                                  <span className="av av-tabla">{iniciales(nombreCorto(p.name))}</span>
+                                  <AvatarEmp person={p} />
                                   <span>
                                     <span className="att-name">{nombreCorto(p.name)}</span>
                                     <span className="emp-cedula">{p.cedula || 'sin cédula'}</span>
@@ -3034,7 +3081,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     {archPagina.map((p) => (
                       <div key={p.id} className="arch-fila">
                         <span className="emp-cell" title={p.name}>
-                          <span className="av av-tabla">{iniciales(nombreCorto(p.name))}</span>
+                          <AvatarEmp person={p} />
                           <span>
                             <span className="att-name">{nombreCorto(p.name)}</span>
                             <span className="emp-cedula">{p.cedula || 'sin cédula'}</span>
@@ -5211,7 +5258,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         const salario = Number(String(editEmp.salarioMensual).replace(/\D/g, '')) || 0;
         const divisor = cfg.divisorHorasMes || DIVISOR_210;
         const valorHora = salario > 0 ? salario / divisor : null;
-        const iniciales = editEmp.name.trim().split(/\s+/).slice(0, 2).map((p) => p[0] ?? '').join('').toUpperCase();
 
         return (
         <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setEditEmp(null)}>
@@ -5220,7 +5266,19 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             {/* Cabecera: el nombre y cómo se identifica a alguien al hablar
                 (cédula y sede). El id interno no ocupa el mejor sitio. */}
             <div className="ficha-head">
-              <span className="ficha-avatar" aria-hidden="true">{iniciales || '—'}</span>
+              {/* La foto de perfil se cambia tocando el avatar (o se quita con la
+                  ✕). Es solo para las listas: no toca los rostros del kiosco. */}
+              <input ref={avatarFileRef} type="file" accept="image/*" hidden onChange={(e) => cambiarAvatar(editEmp.id, e)} />
+              <button
+                type="button" className="ficha-avatar ficha-avatar-btn" title="Cambiar la foto de perfil" aria-label="Cambiar la foto de perfil"
+                onClick={() => avatarFileRef.current?.click()} disabled={avatarOcupado}
+              >
+                <AvatarEmp person={{ id: editEmp.id, name: editEmp.name, avatarEn: editEmp.avatarEn }} className="ficha-avatar-img" texto={editEmp.name} />
+                <span className="ficha-avatar-lapiz" aria-hidden="true"><Icon name="edit" size={11} /></span>
+              </button>
+              {editEmp.avatarEn && (
+                <button type="button" className="ficha-avatar-quitar" title="Quitar la foto de perfil" aria-label="Quitar la foto de perfil" onClick={() => quitarAvatar(editEmp.id)}>×</button>
+              )}
               <div className="ficha-quien">
                 <h3>{editEmp.name.trim() || 'Empleado'}</h3>
                 <span className="ficha-sub">
@@ -5933,6 +5991,15 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
   background: rgba(255,255,255,.14); display: grid; place-items: center;
   font-weight: 650; font-size: 14px;
 }
+/* La foto de perfil en las listas: misma caja que las iniciales. */
+.av-foto { object-fit: cover; background: var(--page); padding: 0; }
+/* En la ficha el avatar es un botón: tocarlo cambia la foto. */
+.ficha-avatar-btn { position: relative; border: 0; padding: 0; color: #fff; cursor: pointer; overflow: visible; }
+.ficha-avatar-btn:disabled { opacity: .6; cursor: default; }
+.ficha-avatar-img { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 650; font-size: 14px; background: rgba(255,255,255,.14); color: #fff; }
+.ficha-avatar-lapiz { position: absolute; right: -3px; bottom: -3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; color: var(--btn-primary); display: grid; place-items: center; border: 1.5px solid var(--btn-primary); }
+.ficha-avatar-quitar { flex: 0 0 auto; width: 22px; height: 22px; margin-left: -6px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35); background: transparent; color: #fff; font-size: 14px; line-height: 1; cursor: pointer; }
+.ficha-avatar-quitar:hover { background: rgba(255,255,255,.14); }
 .ficha-quien { flex: 1; min-width: 0; }
 .ficha-quien h3 { font-size: 16.5px; font-weight: 650; letter-spacing: -.01em; color: #fff; }
 .ficha-sub {
