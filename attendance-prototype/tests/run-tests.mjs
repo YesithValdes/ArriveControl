@@ -1483,7 +1483,7 @@ await test('sin salario: valor null, se cuenta aparte y no rompe los totales', (
   assert.equal(totales.sinSalario, 1);
 });
 await test('el período se pide por mes y quincena, o por desde/hasta', async () => {
-  const { rangoPedido } = await import('../lib/accesoHoras.js');
+  const { rangoPedido } = await import('../lib/periodoHoras.js');
   const q = (s) => rangoPedido(new URLSearchParams(s));
   assert.deepEqual(q('mes=2026-09&quincena=1'), { desde: '2026-09-01', hasta: '2026-09-15' });
   assert.deepEqual(q('mes=2026-09&quincena=2'), { desde: '2026-09-16', hasta: '2026-09-30' });
