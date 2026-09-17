@@ -35,7 +35,7 @@ const store = {
   cfg: {
     weeklyHours: 42, graceMinutes: 15, holidays: [],
     factores: FACTORES_DEFECTO, divisorHorasMes: DIVISOR_DEFECTO,
-    nocturnoInicio: '21:00', nocturnoFin: '06:00', modoExtra: 'semana', extraMinimaMin: 30, periodoPago: 'quincena',
+    nocturnoInicio: '21:00', nocturnoFin: '06:00', modoExtra: 'semana', extraMinimaMin: 30, periodoPago: 'quincena', vigenciasPago: [],
   },
   audit: [],        // correcciones crudas (para trazabilidad extendida)
   cargado: false,
@@ -352,6 +352,15 @@ export async function syncPanel() {
     extraMinimaMin: Number.isFinite(Number(cfg.config.extra_minima_min)) ? Number(cfg.config.extra_minima_min) : 30,
     // Cada cuánto se liquidan las extras: agrupa el reporte por períodos.
     periodoPago: cfg.config.periodo_pago === 'mes' ? 'mes' : 'quincena',
+    // Historia de los parámetros de pago (más reciente primero). Cada semana
+    // del cajón se reparte con la vigencia de SU lunes; ver pagoVigenteEn.
+    vigenciasPago: (cfg.vigencias_pago ?? []).map((v) => ({
+      desde: v.desde,
+      modoExtra: v.modo_extra === 'dia' ? 'dia' : 'semana',
+      extraMinimaMin: Number.isFinite(Number(v.extra_minima_min)) ? Number(v.extra_minima_min) : 30,
+      nocturnoInicio: v.nocturno_inicio ?? '21:00',
+      nocturnoFin: v.nocturno_fin ?? '06:00',
+    })),
   };
 
   store.audit = corr.correcciones;

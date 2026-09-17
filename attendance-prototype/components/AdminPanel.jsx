@@ -1836,9 +1836,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       const [h, m] = String(hhmm ?? '').split(':').map(Number);
       return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : defecto;
     };
-    const nocturno = { inicio: aMinutos(cfg.nocturnoInicio, 21 * 60), fin: aMinutos(cfg.nocturnoFin, 6 * 60) };
-    // El mínimo de la empresa (Reglamento), en horas; de fábrica, media hora.
-    const minimaH = Number.isFinite(Number(cfg.extraMinimaMin)) ? Number(cfg.extraMinimaMin) / 60 : EXTRA_MINIMA_H;
+    // Los parámetros de pago que regían el LUNES de cada semana (modo, mínimo,
+    // franja nocturna): la misma regla que el motor de nómina (pagoVigenteEn
+    // en lib/configLaboral.js). Un cambio hecho a mitad de semana rige desde
+    // la siguiente; las semanas viejas se reparten como se repartieron.
+    const vigenciaDe = (lunes) => {
+      const lista = cfg.vigenciasPago ?? [];
+      const v = lista.find((x) => x.desde <= lunes) ?? lista[lista.length - 1];
+      return v ?? { modoExtra: cfg.modoExtra, extraMinimaMin: cfg.extraMinimaMin, nocturnoInicio: cfg.nocturnoInicio, nocturnoFin: cfg.nocturnoFin };
+    };
     const ahora = Date.now();
     return [...porSemana.entries()]
       .sort((a, b) => b[0].localeCompare(a[0]))
@@ -1858,8 +1864,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         // Domingo y festivo salen siempre en los dos.
         const pares = dias.flatMap((d) => paresDe(d.evs, ahora, drawerPersona)
           .map((p) => ({ ...p, dominical: p.dow === 0 || festivos.has(p.fecha) })));
-        const porDia = cfg.modoExtra === 'dia';
-        const minima = minimaH;
+        const vig = vigenciaDe(lunes);
+        const porDia = vig.modoExtra === 'dia';
+        const minima = Number.isFinite(Number(vig.extraMinimaMin)) ? Number(vig.extraMinimaMin) / 60 : EXTRA_MINIMA_H;
+        const nocturno = { inicio: aMinutos(vig.nocturnoInicio, 21 * 60), fin: aMinutos(vig.nocturnoFin, 6 * 60) };
         const tramos = porDia
           ? tramosDeDia({
             pares,
@@ -1889,9 +1897,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             if (exceso > 0.001 && exceso < minima) bajoMinimoPorDia.set(fecha, exceso);
           }
         }
-        return { dias, ...semana, porCodigo, porDia, extraPorDia, domPorDia, bajoMinimoPorDia };
+        return { dias, ...semana, porCodigo, porDia, minimaMin: Math.round(minima * 60), extraPorDia, domPorDia, bajoMinimoPorDia };
       });
-  }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin, cfg.modoExtra, cfg.extraMinimaMin]);
+  }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin, cfg.modoExtra, cfg.extraMinimaMin, cfg.vigenciasPago]);
 
   const saveEvForm = async () => {
     if (!evForm?.time || !evForm.reason.trim()) return;
@@ -4839,7 +4847,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
                 // Una fila de día, común a las dos vistas del cajón. `extraDia` solo
                 // llega con valor en modo por día: cada día trae su extra.
-                const filaDia = (d, { extra = 0, dom = 0, bajoMinimo = 0 } = {}) => {
+                const filaDia = (d, { extra = 0, dom = 0, bajoMinimo = 0, minimaMin = cfg.extraMinimaMin ?? 30 } = {}) => {
                   const abierto = openDia === d.fecha;
                   // Bloques como CHIPS (envuelven a varias líneas: soporta
                   // cualquier número de pares sin superponerse).
@@ -4871,8 +4879,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               <em className="dia-extra dom" title="Domingo o festivo: recargo desde la primera hora (HEDDF/HENDF)">D +{fmtH(dom)}</em>
                             )}
                             {bajoMinimo > 0.001 && (
-                              <em className="dia-extra min" title={`Pasó ${Math.round(bajoMinimo * 60)} min de su jornada: menos del mínimo de ${cfg.extraMinimaMin ?? 30} min (Reglamento), no cuenta como extra`}>
-                                +{fmtH(bajoMinimo)} &lt; {cfg.extraMinimaMin ?? 30} min
+                              <em className="dia-extra min" title={`Pasó ${Math.round(bajoMinimo * 60)} min de su jornada: menos del mínimo de ${minimaMin} min (Reglamento), no cuenta como extra`}>
+                                +{fmtH(bajoMinimo)} &lt; {minimaMin} min
                               </em>
                             )}
                           </span>
@@ -5002,11 +5010,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               {c} {fmtH(s.porCodigo[c])}
                             </span>
                           ))}
-                          {!s.porDia && s.cerrada && s.extra < (cfg.extraMinimaMin ?? 30) / 60 && (
+                          {!s.porDia && s.cerrada && s.extra < s.minimaMin / 60 && (
                             <span
                               className="sem-chip"
                               title={s.extra > 0.001
-                                ? `Sobraron ${fmtH(s.extra)}: menos del mínimo de ${cfg.extraMinimaMin ?? 30} min`
+                                ? `Sobraron ${fmtH(s.extra)}: menos del mínimo de ${s.minimaMin} min`
                                 : s.faltante > 0.001 ? `Faltaron ${fmtH(s.faltante)} para ${horasSem} h` : `${horasSem} h justas`}
                             >
                               Sin extra
@@ -5027,6 +5035,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       extra: s.porDia ? s.extraPorDia.get(d.fecha) : 0,
                       dom: s.domPorDia.get(d.fecha),
                       bajoMinimo: s.bajoMinimoPorDia.get(d.fecha),
+                      minimaMin: s.minimaMin,
                     }))}
                     </section>
                     </Fragment>

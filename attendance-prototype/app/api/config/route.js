@@ -8,7 +8,7 @@
  */
 import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../lib/db.js'
-import { configLaboral, MODOS_EXTRA } from '../../../lib/configLaboral.js'
+import { configLaboral, vigenciasPago, MODOS_EXTRA } from '../../../lib/configLaboral.js'
 import { horasSemanaEn } from '../../../lib/jornada.js'
 import { CODIGOS_HORA, factorValido } from '../../../lib/tiposHora.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../lib/sesion'
@@ -27,9 +27,21 @@ export async function GET() {
   ))
   const laboral = await configLaboral(esquema)
   const hoy = new Date().toISOString().slice(0, 10)
+  // Vigencias de los parámetros de pago (más reciente primero): el panel
+  // reparte cada semana con el modo, el mínimo y la franja que regían ese
+  // lunes, igual que el motor de nómina. Sin ellas, el cajón calculaba TODO
+  // con lo de hoy y no cuadraba con Reportes tras cambiar un ajuste.
+  const vigencias = await vigenciasPago(esquema).catch(() => [])
 
   return NextResponse.json({
     ok: true,
+    vigencias_pago: vigencias.map((v) => ({
+      desde: v.desde,
+      modo_extra: v.modoExtra,
+      extra_minima_min: Math.round(v.extraMinimaH * 60),
+      nocturno_inicio: aHHMM(v.nocturno.inicio),
+      nocturno_fin: aHHMM(v.nocturno.fin),
+    })),
     config: {
       gracia_min: rows[0].gracia_min,
       horas_semana: horasSemanaEn(laboral.vigencias, hoy),
