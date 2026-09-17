@@ -1561,7 +1561,7 @@ const s = {
     // deformar; `containerType` habilita las unidades cqw de los textos.
     // Más alto que ancho (3:4.4) y con tope generoso en dvh: ocupa casi todo
     // lo que queda bajo la cabecera, sin salirse en pantallas cortas.
-    position: 'relative', width: 'min(92vw, 440px, 52dvh)', aspectRatio: '3 / 4.4', alignSelf: 'center', justifySelf: 'center',
+    position: 'relative', width: 'min(84vw, 400px, 47dvh)', aspectRatio: '3 / 4.4', alignSelf: 'center', justifySelf: 'center',
     borderRadius: 20, overflow: 'hidden', containerType: 'inline-size',
     background: '#0f151c', color: '#fff',
     fontFamily: 'var(--font-sora), var(--f-body)',
