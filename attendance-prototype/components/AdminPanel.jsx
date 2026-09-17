@@ -4113,9 +4113,26 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <p className="cfg-note" style={{ marginTop: 0, marginBottom: 10 }}>
                   Porcentaje <b>total</b>: 125&nbsp;% ya incluye la hora.
                 </p>
+                {/* Salario de ejemplo (el mismo del Simulador): con él, cada tipo
+                    muestra al lado lo que valdría la hora, en pesos. */}
+                <div className="cfg-row">
+                  <label htmlFor="pct-salario">
+                    Salario de ejemplo
+                    <small>Para ver cuánto vale cada hora. No se guarda.</small>
+                  </label>
+                  <div className="cfg-input con-prefijo">
+                    <span className="prefijo">$</span>
+                    <input
+                      id="pct-salario" className="num ancho" type="text" inputMode="numeric"
+                      value={Number(simSalario) > 0 ? Number(simSalario).toLocaleString('es-CO') : ''}
+                      onChange={(e) => setSimSalario(e.target.value.replace(/\D/g, ''))}
+                    />
+                  </div>
+                </div>
                 {TIPOS_HORA.map((t) => {
                   const factor = cfg.factores?.[t.codigo] ?? t.factor;
                   const mostrado = pctDraft?.[t.codigo] ?? String(Math.round(factor * 100));
+                  const valorHoraEj = Number(simSalario) > 0 ? Number(simSalario) / (cfg.divisorHorasMes || DIVISOR_210) : null;
                   return (
                     <div className="cfg-row" key={t.codigo}>
                       <label htmlFor={`pct-${t.codigo}`}>
@@ -4124,6 +4141,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           {t.dominical ? ', domingo o festivo' : ', día hábil'}</small>
                       </label>
                       <div className="cfg-input">
+                        {valorHoraEj != null && (
+                          <span className="cfg-precio" title={`Con ${fmtCOP(Number(simSalario))} de salario: ${fmtCOP(Math.round(valorHoraEj))} la hora ordinaria × ${factor.toLocaleString('es-CO')}`}>
+                            {fmtCOP(Math.round(valorHoraEj * factor))}<small>/h</small>
+                          </span>
+                        )}
                         <input
                           id={`pct-${t.codigo}`} type="number" min="100" max="1000" step="5"
                           value={mostrado}
@@ -4166,9 +4188,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </div>
                 </div>
                 <p className="cfg-note">
-                  Ejemplo con $1.500.000: hora ordinaria{' '}
-                  <b>{fmtCOP(Math.round(1500000 / (cfg.divisorHorasMes || DIVISOR_210)))}</b>, extra diurna{' '}
-                  <b>{fmtCOP(Math.round((1500000 / (cfg.divisorHorasMes || DIVISOR_210)) * (cfg.factores?.HED ?? 1.25)))}</b>.
+                  Con {fmtCOP(Number(simSalario) || 1500000)} de salario, la hora ordinaria vale{' '}
+                  <b>{fmtCOP(Math.round((Number(simSalario) || 1500000) / (cfg.divisorHorasMes || DIVISOR_210)))}</b>.
                 </p>
               </div>
 
@@ -5955,6 +5976,10 @@ const CSS = `
 .cfg-row label small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); max-width: 320px; }
 .cfg-input { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); flex-shrink: 0; }
 .cfg-input input { width: 64px; font: inherit; font-size: 15px; font-weight: 600; text-align: center; padding: 7px 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+.cfg-input input.ancho { width: 130px; text-align: right; padding-left: 24px !important; font-family: var(--f-data); }
+.cfg-input.con-prefijo .prefijo { left: 9px; bottom: 9px; }
+.cfg-precio { display: inline-flex; align-items: baseline; gap: 2px; margin-right: 8px; padding: 4px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-2); font-family: var(--f-data); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cfg-precio small { font-size: 10.5px; font-weight: 600; color: var(--muted); }
 .cfg-sede { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 6px 0; border-top: 1px solid var(--grid); font-size: 13.5px; }
 .cfg-sede:first-of-type { border-top: 0; }
 .cfg-sede small { color: var(--muted); font-variant-numeric: tabular-nums; }
