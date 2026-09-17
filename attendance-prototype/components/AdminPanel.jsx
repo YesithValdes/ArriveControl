@@ -752,6 +752,16 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // Simulador de horas extra (Ajustes): salario de prueba + horas por código.
   const [simSalario, setSimSalario] = useState('1500000');
+  // El salario de ejemplo se recuerda en este navegador (no es un dato de la
+  // empresa: es lo que esta persona usa para hacer cuentas). Se lee al montar
+  // y se escribe en cada cambio.
+  useEffect(() => {
+    try { const g = localStorage.getItem('sim_salario'); if (g && /^\d+$/.test(g)) setSimSalario(g); } catch { /* sin almacenamiento */ }
+  }, []);
+  const guardarSimSalario = (v) => {
+    setSimSalario(v);
+    try { localStorage.setItem('sim_salario', v); } catch { /* sin almacenamiento */ }
+  };
   const [simHoras, setSimHoras] = useState(() => Object.fromEntries(CODIGOS_HORA.map((c) => [c, ''])));
   // Simulador de turno: fecha + entrada + salida → códigos que emite el motor.
   // `acumuladas`: horas que la semana ya lleva antes del turno simulado. Con
@@ -4125,7 +4135,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <input
                       id="pct-salario" className="num ancho" type="text" inputMode="numeric"
                       value={Number(simSalario) > 0 ? Number(simSalario).toLocaleString('es-CO') : ''}
-                      onChange={(e) => setSimSalario(e.target.value.replace(/\D/g, ''))}
+                      onChange={(e) => guardarSimSalario(e.target.value.replace(/\D/g, ''))}
                     />
                   </div>
                 </div>
@@ -4332,7 +4342,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       <input
                         id="sim-salario" className="num ancho" type="text" inputMode="numeric"
                         value={Number(simSalario) > 0 ? Number(simSalario).toLocaleString('es-CO') : ''}
-                        onChange={(e) => setSimSalario(e.target.value.replace(/\D/g, ''))}
+                        onChange={(e) => guardarSimSalario(e.target.value.replace(/\D/g, ''))}
                       />
                     </div>
                   </div>
