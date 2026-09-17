@@ -1398,10 +1398,11 @@ export default function KioskMode() {
           )}
           {/* Solo con el kiosco en pausa y solo si el administrador lo
               encendió para ESTE aparato (Ajustes → Dispositivos → Acceso al
-              panel). Lleva al inicio de sesión con contraseña: mostrar la
-              puerta no es abrirla. */}
+              panel). Va directo al panel: con sesión guardada abre de una; sin
+              sesión, el panel mismo manda al inicio de sesión con contraseña.
+              Mostrar la puerta no es abrirla. */}
           {!running && configurado && detenido && accesoPanel && (
-            <a style={s.adminBtn} href="/login?destino=/admin" title="Entrar al panel de administración">⚙ Administración</a>
+            <a style={s.adminBtn} href="/admin" title="Entrar al panel de administración (si ya hay sesión, abre de una)">⚙ Administración</a>
           )}
           {pendientes > 0 && (
             <div style={s.pendNote}>
