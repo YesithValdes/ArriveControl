@@ -158,7 +158,9 @@ function AccList({ items }) {
             </button>
             {open && (
               <div className="acc-body">
-                {it.fields.map(([label, value]) => (
+                {/* `cuerpo`: un diseño propio (fichas, líneas con icono) en vez
+                    de la lista rótulo/valor, que se leía como una tabla. */}
+                {it.cuerpo ?? it.fields.map(([label, value]) => (
                   <div className="acc-field" key={label}><b>{label}</b><span>{value}</span></div>
                 ))}
                 {it.actions && <div className="acc-actions">{it.actions}</div>}
@@ -2446,17 +2448,37 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                             id: r.person.id,
                             title: nombreCorto(r.person.name),
                             right: <span className={`punto-estado ${r.present ? 'on' : 'off'}`} />,
-                            fields: [
-                              ['Última marcación', ultima(r)],
-                              ['Jornada prevista', jornadaPrevista(r)],
-                              ['Trabajado', `${fmtH(r.hoursToday)}${e && e.horas > 0 ? ` (+${fmtHM(e.horas)} extra)` : ''}`],
-                              ['Extras (COP)', celdaExtras(r)],
-                              ...(novedadDe(r) ? [['Novedad', novedadDe(r)]] : []),
-                              ['Sede', r.sede || '—'],
-                              ...(r.lugar ? [['Marcó desde', (
-                                <Lugar key="l" enlace lat={r.lugar.lat} lon={r.lugar.lon} direccion={r.lugar.direccion} />
-                              )]] : []),
-                            ],
+                            cuerpo: (
+                              <>
+                                <div className="acc-tiles">
+                                  <div className="acc-tile">
+                                    <b>{r.ultimoEv ? horaCorta(r.ultimoEv.ts) : '—'}</b>
+                                    <small>{r.ultimoEv ? (r.ultimoEv.type === 'in' ? 'entró' : 'salió') : 'sin marcar'}</small>
+                                  </div>
+                                  <div className="acc-tile">
+                                    <b>{fmtH(r.hoursToday)}</b>
+                                    <small>trabajado</small>
+                                  </div>
+                                  <div className="acc-tile">
+                                    <b>{celdaExtras(r)}</b>
+                                    <small>extras</small>
+                                  </div>
+                                </div>
+                                <div className="acc-lineas">
+                                  <span className="acc-linea" title="Jornada prevista y sede">
+                                    <Icon name="clock" size={14} />
+                                    <span>{jornadaPrevista(r)}{r.sede ? ` · ${r.sede}` : ''}</span>
+                                    {e && e.horas > 0 && <em className="dia-extra" title="Extra de hoy">+{fmtH(e.horas)}</em>}
+                                  </span>
+                                  {novedadDe(r) && (
+                                    <span className="acc-linea aviso" title="Novedad del día"><Icon name="alert" size={14} /><span>{novedadDe(r)}</span></span>
+                                  )}
+                                  {r.lugar && (
+                                    <Lugar enlace lat={r.lugar.lat} lon={r.lugar.lon} direccion={r.lugar.direccion} />
+                                  )}
+                                </div>
+                              </>
+                            ),
                             actions: (
                               <button className="btn primary block" onClick={() => openDrawer(r.person.id, r.person.name, esHoy ? null : diaAsistencia)}>
                                 Ver marcaciones
@@ -6521,6 +6543,18 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .acc-field { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; }
 .acc-field b { color: var(--muted); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; flex: 0 0 auto; }
 .acc-field span { color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums; }
+/* Asistencia: tres fichas (valor grande, palabra corta debajo) y líneas con icono. */
+.acc-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.acc-tile { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 4px; border-radius: 8px; background: var(--page); text-align: center; min-width: 0; }
+.acc-tile b { font-family: var(--f-data); font-size: 14.5px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.acc-tile b .libre { font-weight: 500; }
+.acc-tile small { font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.acc-lineas { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.acc-linea { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); min-width: 0; }
+.acc-linea > svg { flex: none; color: var(--muted); }
+.acc-linea .dia-extra { margin-left: 2px; }
+.acc-linea.aviso { color: var(--warn-text); }
+.acc-linea.aviso > svg { color: var(--warn-text); }
 .acc-actions { margin-top: 4px; display: flex; flex-direction: column; gap: 6px; }
 .acc-actions .btn.block { margin-top: 0; }
 
