@@ -11,11 +11,12 @@
  *
  * Permiso `liquidar`: lo tiene el dueño y el rol de consulta (quien arma la
  * nómina). No exige `corregir` a propósito — anotar un pago no debe requerir
- * poder modificar la asistencia que se está pagando.
+ * poder modificar la asistencia que se está pagando. Con la clave de API
+ * (X-API-Key) entra el sistema de nómina, que es quien de verdad paga.
  */
 import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../../lib/db.js'
-import { estadoAcceso } from '../../../../lib/sesion'
+import { accesoHoras } from '../../../../lib/accesoHoras.js'
 
 export const runtime = 'nodejs'
 
@@ -23,13 +24,8 @@ export const runtime = 'nodejs'
 const MAX_REFERENCIAS = 5000
 
 export async function POST(req) {
-  const { estado, usuario, esquema } = await estadoAcceso('liquidar')
-  if (estado !== 'OK') {
-    return NextResponse.json(
-      { ok: false, error: 'Sin permiso para marcar horas como pagadas.' },
-      { status: estado === 'SIN_SESION' ? 401 : 403 },
-    )
-  }
+  const { esquema, quien, error } = await accesoHoras(req, 'liquidar')
+  if (error) return error
 
   let c
   try { c = await req.json() } catch { return NextResponse.json({ ok: false, error: 'JSON inválido.' }, { status: 400 }) }
@@ -59,7 +55,7 @@ export async function POST(req) {
     `insert into horas_pagadas (referencia_externa, documento, pagado_por)
      select * from unnest($1::text[], $2::text[], $3::text[])
      on conflict (referencia_externa) do nothing`,
-    [referencias, documentos, referencias.map(() => usuario.email ?? usuario.nombre ?? 'admin')],
+    [referencias, documentos, referencias.map(() => quien)],
   ))
   return NextResponse.json({ ok: true, pagado: true, afectados: rowCount })
 }

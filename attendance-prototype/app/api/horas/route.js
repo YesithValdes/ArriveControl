@@ -14,44 +14,35 @@
  */
 import { NextResponse } from 'next/server'
 import { construirLote } from '../../../lib/nomina.js'
-import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../lib/sesion'
-import { empresaPorApiKey } from '../../../lib/empresas.js'
+import { accesoHoras, fechaValida } from '../../../lib/accesoHoras.js'
 
 export const runtime = 'nodejs'
 
 export async function GET(req) {
-  const enviada = req.headers.get('x-api-key')
-  let esquema = null
-
-  if (enviada) {
-    // Cada empresa tiene su PROPIA clave, guardada en control.empresas. Antes
-    // era una sola variable de entorno para toda la instalación, que con
-    // varios clientes entregaría las horas de cualquiera a cualquiera.
-    // Se responde 401 sin mirar la sesión: es un sistema, no una persona.
-    const empresa = await empresaPorApiKey(enviada)
-    if (!empresa) {
-      return NextResponse.json({ ok: false, error: 'Clave de API inválida.' }, { status: 401 })
-    }
-    esquema = empresa.esquema
-  } else {
-    const acceso = await estadoAcceso('ver')
-    if (acceso.estado !== 'OK') {
-      return NextResponse.json({ ok: false, error: estadoAMensaje(acceso.estado) }, { status: estadoAHttp(acceso.estado) })
-    }
-    esquema = acceso.esquema
-  }
+  const { esquema, error } = await accesoHoras(req, 'ver')
+  if (error) return error
 
   const { searchParams } = new URL(req.url)
   const desde = searchParams.get('desde')
   const hasta = searchParams.get('hasta')
+  if ((desde || hasta) && !(fechaValida(desde) && fechaValida(hasta) && desde <= hasta)) {
+    return NextResponse.json({ ok: false, error: 'desde y hasta deben ser fechas YYYY-MM-DD, y desde ≤ hasta.' }, { status: 400 })
+  }
   const rango = desde && hasta ? { desde, hasta } : null
 
-  const { registros } = await construirLote(esquema, rango)
+  const { registros, porEmpleado } = await construirLote(esquema, rango)
 
-  // Los campos internos (_empleadoId, _semana) no salen de aquí.
+  // Los campos internos (_empleadoId, _semana) no salen de aquí; el nombre
+  // sí, para que quien reciba el lote no tenga que cruzar la cédula.
   return NextResponse.json({
     ok: true,
+    desde: rango?.desde ?? null,
+    hasta: rango?.hasta ?? null,
     total: registros.length,
-    registros: registros.map(({ _empleadoId, _semana, ...r }) => r),
+    registros: registros.map(({ _empleadoId, _semana, ...r }) => ({
+      ...r,
+      nombre: porEmpleado.get(_empleadoId)?.nombre ?? null,
+      sede: porEmpleado.get(_empleadoId)?.sede ?? null,
+    })),
   })
 }

@@ -1446,4 +1446,47 @@ await test('la empresa se carga con las columnas que el panel edita (nombre y NI
   for (const c of ['nombre', 'nit']) assert.ok(lista.includes(c), `falta «${c}» en CAMPOS`);
 });
 
+// ── API de horas para nómina / gestión ───────────────────────────────
+console.log('\n🔌 API de horas');
+const { resumirLote } = await import('../lib/nomina.js');
+const tramo = (documento, tipoHora, horas, valor, pagado, n) => ({
+  documento, tipoHora, horas, valor, pagado, _empleadoId: `E${documento}`,
+  referenciaExterna: `arrive-${documento}-20260901-0800-1700-${tipoHora}-${n}`,
+});
+const LOTE = {
+  registros: [
+    tramo('111', 'HED', 2, 20000, true, 1), tramo('111', 'HED', 1.5, 15000.4, false, 2), tramo('111', 'HEDDF', 1, 18000, false, 3),
+    tramo('222', 'HED', 3, null, false, 4),
+  ],
+  porEmpleado: new Map([['E111', { nombre: 'Ana Pérez', sede: 'Centro' }], ['E222', { nombre: 'Luis Gómez', sede: null }]]),
+};
+await test('resume por empleado: horas por tipo, valor redondeado una vez y estado de pago', () => {
+  const { empleados, totales } = resumirLote(LOTE);
+  const ana = empleados.find((e) => e.documento === '111');
+  assert.equal(ana.nombre, 'Ana Pérez');
+  assert.equal(ana.horas.HED, 3.5);
+  assert.equal(ana.horas.HEDDF, 1);
+  assert.equal(ana.horasExtra, 4.5);
+  assert.equal(ana.valor, 53000, 'el peso se redondea sobre el total, no tramo a tramo');
+  assert.equal(ana.pago, 'parcial');
+  assert.deepEqual(ana.referenciasPendientes.length, 2);
+  assert.equal(totales.empleados, 2);
+  assert.equal(totales.valor, 53000);
+  assert.equal(totales.valorPendiente, 33000);
+});
+await test('sin salario: valor null, se cuenta aparte y no rompe los totales', () => {
+  const { empleados, totales } = resumirLote(LOTE);
+  const luis = empleados.find((e) => e.documento === '222');
+  assert.equal(luis.valor, null);
+  assert.equal(luis.sinSalario, true);
+  assert.equal(luis.pago, 'pendiente');
+  assert.equal(totales.sinSalario, 1);
+});
+await test('las tres rutas de /api/horas entran con la clave de API (accesoHoras)', () => {
+  for (const ruta of ['../app/api/horas/route.js', '../app/api/horas/resumen/route.js', '../app/api/horas/pagadas/route.js']) {
+    const fuente = leerCss(new URL(ruta, import.meta.url), 'utf8');
+    assert.match(fuente, /accesoHoras\(req, '(ver|liquidar)'\)/, `${ruta} no pasa por accesoHoras`);
+  }
+});
+
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);

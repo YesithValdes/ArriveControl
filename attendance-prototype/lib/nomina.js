@@ -10,7 +10,7 @@ import { conEmpresa } from './db.js'
 import { configLaboral, vigenciasPago, pagoVigenteEn } from './configLaboral.js'
 import { calcularRegistros } from './calculoHoras.js'
 import { lunesDe, domingoDe } from './semanaLaboral.js'
-import { valorizarRegistro } from './tiposHora.js'
+import { valorizarRegistro, CODIGOS_HORA } from './tiposHora.js'
 
 /**
  * Tramos con recargo de todos los empleados en un rango [desde, hasta]
@@ -119,6 +119,60 @@ export async function construirLote(esquema, rango = null) {
     porEmpleado,
   }
 }
+
+/**
+ * El lote resumido POR EMPLEADO: lo mismo que muestra la tabla de Reportes.
+ * Horas por tipo, total de extra, valor en pesos y estado de pago, con las
+ * referencias de los tramos para que quien liquide pueda anotarlos.
+ *
+ * @param {{registros: Array, porEmpleado: Map}} lote  lo que devuelve construirLote
+ * @returns {{empleados: Array, totales: object}}
+ */
+export function resumirLote({ registros, porEmpleado }) {
+  const por = new Map()
+  for (const r of registros) {
+    if (!por.has(r.documento)) {
+      const e = porEmpleado.get(r._empleadoId)
+      por.set(r.documento, {
+        documento: r.documento,
+        nombre: e?.nombre ?? null,
+        sede: e?.sede ?? null,
+        horas: Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0])),
+        horasExtra: 0,
+        valor: 0,
+        sinSalario: false,
+        referencias: [],
+        referenciasPendientes: [],
+      })
+    }
+    const p = por.get(r.documento)
+    p.horas[r.tipoHora] = redondear(p.horas[r.tipoHora] + r.horas)
+    p.horasExtra = redondear(p.horasExtra + r.horas)
+    if (r.valor == null) p.sinSalario = true
+    else p.valor += r.valor
+    p.referencias.push(r.referenciaExterna)
+    if (!r.pagado) p.referenciasPendientes.push(r.referenciaExterna)
+  }
+  const empleados = [...por.values()]
+    .map((p) => ({
+      ...p,
+      // El peso se redondea UNA vez, sobre el total de la persona.
+      valor: p.sinSalario ? null : Math.round(p.valor),
+      pago: p.referenciasPendientes.length === 0 ? 'pagado'
+        : p.referenciasPendientes.length === p.referencias.length ? 'pendiente' : 'parcial',
+    }))
+    .sort((a, b) => (b.valor ?? 0) - (a.valor ?? 0) || b.horasExtra - a.horasExtra)
+  const totales = {
+    empleados: empleados.length,
+    horas: Object.fromEntries(CODIGOS_HORA.map((c) => [c, redondear(empleados.reduce((s, e) => s + e.horas[c], 0))])),
+    horasExtra: redondear(empleados.reduce((s, e) => s + e.horasExtra, 0)),
+    valor: Math.round(empleados.reduce((s, e) => s + (e.valor ?? 0), 0)),
+    valorPendiente: Math.round(registros.reduce((s, r) => s + (!r.pagado && r.valor != null ? r.valor : 0), 0)),
+    sinSalario: empleados.filter((e) => e.sinSalario).length,
+  }
+  return { empleados, totales }
+}
+const redondear = (h) => Math.round(h * 10000) / 10000
 
 /**
  * Subconjunto de referencias que ya están marcadas como pagadas.
