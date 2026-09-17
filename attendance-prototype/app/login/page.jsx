@@ -51,15 +51,14 @@ function LoginForm() {
 
   const destino = params.get('destino') || '/admin'
 
-  // ¿Corre como app instalada (icono en la pantalla de inicio, o la app de
-  // Android)? Ahí Google abre OTRO navegador y la sesión no queda en la app:
-  // se entra con correo y contraseña, que sí se guarda aquí mismo.
+  // ¿Corre donde Google NO puede entrar? Solo dos casos: la app de Android
+  // (Capacitor: Google bloquea su inicio de sesión en una WebView) y la app
+  // del icono en iPhone (Safari abre Google aparte y la sesión no vuelve a la
+  // app). La PWA de Android en Chrome NO cuenta: ahí Google sí funciona.
+  // Google se muestra siempre; aquí solo se avisa cuál es el camino seguro.
   const [enApp, setEnApp] = useState(false)
   useEffect(() => {
-    const standalone = window.navigator.standalone === true
-      || window.matchMedia?.('(display-mode: standalone)')?.matches
-      || Boolean(window.Capacitor)
-    setEnApp(Boolean(standalone))
+    setEnApp(window.navigator.standalone === true || Boolean(window.Capacitor))
   }, [])
 
   // ¿Ya hay alguien conectado en este navegador?
@@ -242,15 +241,14 @@ function LoginForm() {
 
           {enApp && (
             <p style={{ margin: 0, fontSize: 13, color: '#1e3a5f', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '10px 12px' }}>
-              En la app se entra con <b>correo y contraseña</b>: así la sesión queda guardada aquí y no vuelve a pedirla.
-              Es la que definiste al entrar por primera vez desde el computador; si no la recuerdas, entra allá con Google y ponla de nuevo.
+              En esta app conviene entrar con <b>correo y contraseña</b>: la sesión queda guardada aquí y no vuelve a pedirla.
+              Si Google no abre o al volver no quedas dentro, usa la contraseña (la que definiste al entrar por primera vez desde el computador).
             </p>
           )}
-          {/* Único camino en producción de escritorio. Un solo botón: entrar y
-              registrarse son lo mismo — quien llega sin empresa recibe la suya
-              al entrar. Dentro de la app instalada se oculta: Google abriría
-              otro navegador y la sesión no quedaría en la app. */}
-          {!enApp && <button
+          {/* Un solo botón: entrar y registrarse son lo mismo — quien llega sin
+              empresa recibe la suya al entrar. Se muestra siempre; donde Google
+              no puede entrar, el aviso de arriba señala la contraseña. */}
+          <button
             type="button"
             onClick={entrarConGoogle}
             disabled={cargando}
@@ -268,7 +266,7 @@ function LoginForm() {
               <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.4 29.9 2 24 2 15.4 2 8.1 6.9 4.4 14l7.1 5.5c1.8-5.3 6.7-8.9 12.5-8.9z" />
             </svg>
             {cargando ? 'Abriendo Google…' : 'Continuar con Google'}
-          </button>}
+          </button>
 
           {error && (
             <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 14 }}>{error}</p>
