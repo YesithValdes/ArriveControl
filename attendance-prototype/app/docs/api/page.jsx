@@ -14,49 +14,70 @@ export const metadata = {
 };
 
 const CSS = `
-.doc { max-width: 860px; margin: 0 auto; padding: 24px 16px 56px; color: var(--ink); font-size: 14.5px; line-height: 1.55; }
+.doc { min-height: 100dvh; background: var(--page); color: var(--ink); font-size: 14.5px; line-height: 1.55; }
 .doc * { box-sizing: border-box; }
-.doc header { background: var(--btn-primary); color: #fff; border-radius: 14px; padding: 24px 26px; margin-bottom: 18px; }
-.doc header .eyebrow { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; opacity: .75; }
-.doc header h1 { margin: 6px 0 8px; font-size: 26px; font-weight: 800; letter-spacing: -.01em; line-height: 1.2; }
-.doc header p { margin: 0; opacity: .9; max-width: 62ch; }
-.doc header .base { display: inline-block; margin-top: 14px; font-family: var(--f-data); font-size: 13px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22); border-radius: 8px; padding: 6px 10px; }
-.doc nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
-.doc nav a { font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--surface-blanca); border: 1px solid var(--grid); border-radius: 999px; padding: 5px 11px; text-decoration: none; }
-.doc nav a:hover { color: var(--accent); border-color: var(--accent); }
-.doc section { background: var(--surface-blanca); border: 1px solid var(--grid); border-radius: 12px; padding: 20px 22px; margin-bottom: 14px; }
-.doc h2 { margin: 0 0 10px; font-size: 17px; font-weight: 800; }
-.doc h3 { margin: 18px 0 8px; font-size: 14px; font-weight: 700; color: var(--ink-2); }
-.doc p { margin: 0 0 10px; max-width: 72ch; }
+/* Barra superior a todo el ancho, como la del panel. */
+.doc .barra { background: var(--btn-primary); color: #fff; padding: 12px clamp(16px, 3vw, 32px); display: flex; align-items: center; gap: 14px; flex-wrap: wrap; position: sticky; top: 0; z-index: 2; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+.doc .marca { display: inline-flex; align-items: center; gap: 10px; font-family: var(--f-display); font-weight: 800; letter-spacing: .06em; font-size: 15px; }
+.doc .marca svg { flex: none; border-radius: 8px; }
+.doc .marca em { font-style: normal; color: #9fd3ff; }
+.doc .barra .titulo { font-size: 13px; opacity: .8; padding-left: 14px; border-left: 1px solid rgba(255,255,255,.25); }
+.doc .barra .base { margin-left: auto; font-family: var(--f-data); font-size: 12.5px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22); border-radius: 8px; padding: 5px 10px; }
+/* Cuerpo: índice + contenido. */
+.doc .cuerpo { display: grid; grid-template-columns: 1fr; gap: 0; padding: 0 clamp(16px, 3vw, 32px) 56px; }
+.doc .indice { display: flex; gap: 6px; overflow-x: auto; padding: 14px 0 4px; scrollbar-width: thin; }
+.doc .indice a { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--surface-blanca); border: 1px solid var(--grid); border-radius: 999px; padding: 6px 12px; text-decoration: none; white-space: nowrap; }
+.doc .indice a:hover, .doc .indice a:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+.doc .indice .grupo { display: none; }
+.doc .contenido { min-width: 0; }
+.doc .portada { padding: 22px 0 6px; }
+.doc .portada .eyebrow { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.doc .portada h1 { margin: 6px 0 8px; font-family: var(--f-display); font-size: clamp(24px, 3.2vw, 34px); font-weight: 800; letter-spacing: -.015em; line-height: 1.15; text-wrap: balance; }
+.doc .portada p { margin: 0; color: var(--ink-2); max-width: 70ch; font-size: 15px; }
+.doc section { padding: 26px 0 8px; border-top: 1px solid var(--grid); margin-top: 18px; scroll-margin-top: 70px; }
+.doc section:first-of-type { border-top: 0; margin-top: 0; }
+.doc h2 { margin: 0 0 10px; font-family: var(--f-display); font-size: 19px; font-weight: 800; letter-spacing: -.01em; }
+.doc h3 { margin: 20px 0 8px; font-size: 13.5px; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
+.doc p { margin: 0 0 10px; max-width: 78ch; }
 .doc p:last-child { margin-bottom: 0; }
-.doc code { font-family: var(--f-data); font-size: .92em; background: var(--page); border: 1px solid var(--grid); border-radius: 5px; padding: 1px 5px; }
+.doc code { font-family: var(--f-data); font-size: .92em; background: var(--surface-blanca); border: 1px solid var(--grid); border-radius: 5px; padding: 1px 5px; }
 .doc pre { margin: 10px 0 0; background: #0f1b2d; color: #e6eef8; border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-family: var(--f-data); font-size: 12.5px; line-height: 1.55; }
 .doc pre code { background: none; border: 0; padding: 0; color: inherit; font-size: inherit; }
 .doc .ruta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .doc .metodo { font-family: var(--f-data); font-size: 12px; font-weight: 700; letter-spacing: .04em; padding: 3px 9px; border-radius: 6px; color: #fff; background: var(--accent); }
 .doc .metodo.post { background: #1a7f4b; }
 .doc .ruta code { font-size: 14px; font-weight: 600; }
-.doc .pasos { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 6px; }
-.doc .paso { background: var(--page); border: 1px solid var(--grid); border-radius: 10px; padding: 12px 13px; }
+.doc .pasos { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 6px; }
+.doc .paso { background: var(--surface-blanca); border: 1px solid var(--grid); border-radius: 10px; padding: 12px 13px; }
 .doc .paso b { display: block; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
 .doc .paso span { font-size: 13px; color: var(--ink-2); }
-.doc .tabla { overflow-x: auto; margin-top: 8px; }
+.doc .tabla { overflow-x: auto; margin-top: 8px; background: var(--surface-blanca); border: 1px solid var(--grid); border-radius: 10px; }
 .doc table { border-collapse: collapse; width: 100%; font-size: 13px; }
-.doc th, .doc td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
-.doc th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.doc th, .doc td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+.doc tr:last-child td { border-bottom: 0; }
+.doc th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 700; background: var(--page); }
 .doc td.tipo { font-family: var(--f-data); font-size: 12px; color: var(--muted); white-space: nowrap; }
 .doc .chip { display: inline-block; font-family: var(--f-data); font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 .doc .chip.dom { background: #f3e8ff; color: #6b21a8; }
-.doc .nota { border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: 13.5px; margin-top: 10px; }
+.doc .nota { border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: 13.5px; margin-top: 12px; max-width: 78ch; }
 .doc .nota.ojo { border-left-color: #8a6100; background: var(--warn-soft); }
 .doc ul { margin: 6px 0 0; padding-left: 20px; }
-.doc li { margin-bottom: 5px; max-width: 72ch; }
+.doc li { margin-bottom: 6px; max-width: 78ch; }
 .doc .estado { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; margin-right: 4px; }
 .doc .estado.pend { background: var(--page); color: var(--muted); border: 1px solid var(--grid); }
 .doc .estado.parc { background: var(--warn-soft); color: #8a6100; }
 .doc .estado.pag { background: var(--good-soft); color: #1a7f4b; }
-.doc footer { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 8px; }
-@media (max-width: 520px) { .doc header { padding: 20px 18px; } .doc section { padding: 16px; } }
+.doc footer { color: var(--muted); font-size: 12.5px; padding: 28px 0 0; border-top: 1px solid var(--grid); margin-top: 26px; }
+/* PC: el índice fijo a la izquierda, el contenido usa el resto del ancho. */
+@media (min-width: 960px) {
+  .doc .cuerpo { grid-template-columns: 230px minmax(0, 1fr); gap: 40px; }
+  .doc .indice { position: sticky; top: 64px; align-self: start; flex-direction: column; gap: 2px; overflow: visible; padding: 26px 0 0; max-height: calc(100dvh - 64px); }
+  .doc .indice .grupo { display: block; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin: 12px 0 4px 10px; }
+  .doc .indice .grupo:first-child { margin-top: 0; }
+  .doc .indice a { background: transparent; border: 0; border-radius: 8px; padding: 7px 10px; font-size: 13px; white-space: normal; }
+  .doc .indice a:hover, .doc .indice a:focus-visible { background: var(--accent-soft); }
+  .doc .contenido { max-width: 1100px; }
+}
 `;
 
 const RESUMEN = `{
@@ -118,27 +139,48 @@ export default function DocsApiPage() {
   return (
     <main className="doc">
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <header>
-        <div className="eyebrow">AsistencIA · integración</div>
-        <h1>API de horas extra para nómina y gestión</h1>
-        <p>
-          Lo que AsistencIA calcula a partir de las marcaciones de cada empleado —horas extra por tipo, su valor en pesos
-          y si ya se pagaron— tal como lo muestra la pantalla de Reportes, entregado en JSON a otro sistema.
-        </p>
+      <div className="barra">
+        <span className="marca">
+          <svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true">
+            <rect width="64" height="64" rx="14" fill="#2b6cb0" />
+            <g transform="translate(3.2 3.2) scale(0.9)" fill="none">
+              <circle cx="32" cy="31" r="20" stroke="#fff" strokeWidth="4.6" />
+              <circle cx="25.4" cy="27" r="2.2" fill="#fff" />
+              <circle cx="38.6" cy="27" r="2.2" fill="#fff" />
+              <path d="M 24 37 l 6 6 l 12 -12" stroke="#9fdcca" strokeWidth="4.4" strokeLinecap="round" strokeLinejoin="round" />
+            </g>
+          </svg>
+          ASISTENC<em>IA</em>
+        </span>
+        <span className="titulo">Documentación de la API</span>
         <span className="base">https://arrivecontrol.vercel.app</span>
-      </header>
+      </div>
 
-      <nav aria-label="Contenido">
-        <a href="#acceso">Acceso</a>
-        <a href="#cedula">Cruce por cédula</a>
-        <a href="#flujo">Flujo</a>
-        <a href="#resumen">GET /api/horas/resumen</a>
-        <a href="#tramos">GET /api/horas</a>
-        <a href="#pagadas">POST /api/horas/pagadas</a>
-        <a href="#tipos">Tipos de hora</a>
-        <a href="#reglas">Reglas del cálculo</a>
-        <a href="#errores">Errores</a>
-      </nav>
+      <div className="cuerpo">
+        <nav className="indice" aria-label="Contenido">
+          <span className="grupo">Empezar</span>
+          <a href="#acceso">Acceso</a>
+          <a href="#cedula">Cruce por cédula</a>
+          <a href="#flujo">Flujo por período</a>
+          <span className="grupo">Endpoints</span>
+          <a href="#resumen">GET /api/horas/resumen</a>
+          <a href="#tramos">GET /api/horas</a>
+          <a href="#pagadas">POST /api/horas/pagadas</a>
+          <span className="grupo">Referencia</span>
+          <a href="#tipos">Tipos de hora</a>
+          <a href="#reglas">Reglas del cálculo</a>
+          <a href="#errores">Errores</a>
+        </nav>
+
+        <div className="contenido">
+          <div className="portada">
+            <div className="eyebrow">AsistencIA · integración</div>
+            <h1>API de horas extra para nómina y gestión</h1>
+            <p>
+              Lo que AsistencIA calcula a partir de las marcaciones de cada empleado —horas extra por tipo, su valor en pesos
+              y si ya se pagaron— tal como lo muestra la pantalla de Reportes, entregado en JSON a otro sistema.
+            </p>
+          </div>
 
       <section id="acceso">
         <h2>Acceso</h2>
@@ -299,7 +341,9 @@ export default function DocsApiPage() {
         </table></div>
       </section>
 
-      <footer>AsistencIA · arrivecontrol.vercel.app · Documentación de la API de horas</footer>
+          <footer>AsistencIA · arrivecontrol.vercel.app · Documentación de la API de horas</footer>
+        </div>
+      </div>
     </main>
   );
 }
