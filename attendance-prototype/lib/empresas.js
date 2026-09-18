@@ -21,7 +21,7 @@ import { planPorId, DIAS_PRUEBA } from './planes.js'
 const sha256 = (s) => createHash('sha256').update(s).digest('hex')
 
 /** Columnas que necesita cualquiera que resuelva una empresa. */
-const CAMPOS = `id, nombre, nit, esquema, plan, limite_empleados, estado, api_key, dominio, vence_en, prueba_hasta, plan_id, bienvenida_en`
+const CAMPOS = `id, nombre, nit, esquema, plan, limite_empleados, limite_usuarios, estado, api_key, dominio, vence_en, prueba_hasta, plan_id, bienvenida_en`
 
 
 // Caché corta: son pocas filas, cambian casi nunca y se consultan en CADA
@@ -173,15 +173,17 @@ export async function cabeOtroEmpleado(empresa) {
 /**
  * ¿Cabe otra persona en el PANEL (dueño, administradores y consulta)?
  *
- * El tope sale del plan (`usuarios`); durante la prueba rige el plan más
- * pequeño. Cuentan los usuarios activos y las invitaciones pendientes: una
- * invitación es un puesto reservado.
+ * El tope sale del plan (`usuarios`); un acuerdo puntual lo sobrescribe con
+ * `limite_usuarios` (lo fija el superadmin desde la consola); durante la
+ * prueba rige el plan más pequeño. Cuentan los usuarios activos y las
+ * invitaciones pendientes: una invitación es un puesto reservado.
  * @returns {Promise<{cabe: boolean, actuales: number, limite: number|null}>}
  */
 export async function cabeOtroUsuario(empresa) {
   if (!tieneAcceso(empresa)) return { cabe: false, actuales: 0, limite: 0, sinAcceso: true }
   const delPlan = planPorId(empresa.plan_id)?.usuarios
-  const limite = delPlan !== undefined ? delPlan : (enPrueba(empresa) ? planPorId('esencial')?.usuarios ?? null : null)
+  const limite = empresa?.limite_usuarios
+    ?? (delPlan !== undefined ? delPlan : (enPrueba(empresa) ? planPorId('esencial')?.usuarios ?? null : null))
   const { rows } = await control(
     `select (select count(*)::int from control."user" where empresa_id = $1 and activo)
           + (select count(*)::int from control.invitaciones where empresa_id = $1 and aceptada_en is null and expira_en > now()) as n`,

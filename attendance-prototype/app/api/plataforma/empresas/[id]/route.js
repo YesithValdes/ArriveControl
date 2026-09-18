@@ -1,6 +1,7 @@
 /**
  * app/api/plataforma/empresas/[id]/route.js
- * PATCH  — plan, tope de empleados o estado de una empresa.
+ * PATCH  — plan contratado, estado, fechas y topes de una empresa (ver
+ *          `actualizarEmpresa` en lib/plataforma.js).
  * DELETE — la elimina ENTERA (usuarios, fila y esquema). Exige repetir el
  *          nombre del esquema en el cuerpo: { confirmacion: "t_acme" }.
  */

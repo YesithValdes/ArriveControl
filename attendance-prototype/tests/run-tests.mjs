@@ -1581,4 +1581,42 @@ await test('las rutas de la cuenta exigen «cuenta» y las de gente «usuarios»
   assert.match(usr, /cabeOtroUsuario\(empresa\)/, 'invitar respeta el cupo del plan');
 });
 
+// ── Consola de plataforma (superadmin) ─────────────────────────────────
+console.log('\n🛰  Consola de plataforma');
+await test('el cupo de accesos al panel admite un acuerdo puntual (limite_usuarios) que gana sobre el plan', () => {
+  const emp = leerCss(new URL('../lib/empresas.js', import.meta.url), 'utf8');
+  assert.match(emp, /const CAMPOS = `[^`]*limite_usuarios/, 'CAMPOS debe traer limite_usuarios');
+  assert.match(emp, /empresa\?\.limite_usuarios\s*\?\?/, 'cabeOtroUsuario mira primero el acuerdo');
+  const mig = leerCss(new URL('../db/migrations/control/015_limite_usuarios.sql', import.meta.url), 'utf8');
+  assert.match(mig, /add column if not exists limite_usuarios integer/);
+});
+await test('actualizarEmpresa acepta plan real, estado, fechas y topes; valida el plan contra el catálogo', () => {
+  const src = leerCss(new URL('../lib/plataforma.js', import.meta.url), 'utf8');
+  for (const clave of ['planId', 'estado', 'limiteEmpleados', 'limiteUsuarios']) {
+    assert.ok(src.includes(`'${clave}' in cambios`), `falta ${clave}`);
+  }
+  // Las dos fechas van por un bucle: clave del JSON → columna.
+  assert.ok(src.includes("['venceEn', 'vence_en'") && src.includes("['pruebaHasta', 'prueba_hasta'"), 'faltan las fechas');
+  assert.match(src, /planPorId\(p\)/, 'el plan se valida contra lib/planes.js');
+  // Las fechas se guardan al FINAL del día en Colombia: «vence el 30» incluye el 30.
+  assert.match(src, /::date \+ 1\) - interval '1 second'\) at time zone 'America\/Bogota'/);
+  assert.match(src, /export async function pagosDeEmpresa/);
+});
+await test('la ruta de compras existe y solo la ve el superadmin', () => {
+  const r = leerCss(new URL('../app/api/plataforma/empresas/[id]/pagos/route.js', import.meta.url), 'utf8');
+  assert.match(r, /soloSuperadmin\(\)/);
+  assert.match(r, /pagosDeEmpresa\(id\)/);
+});
+await test('la consola muestra fichas (no tabla) con el plan del catálogo y cabe en 400 px', () => {
+  const c = leerCss(new URL('../components/PlataformaPanel.jsx', import.meta.url), 'utf8');
+  assert.ok(!c.includes('value="gratis"'), 'ya no se elige gratis/pago: se elige el plan del catálogo');
+  assert.match(c, /Object\.entries\(PLANES\)\.map/);
+  assert.match(c, /className="fichas"/);
+  assert.match(c, /grid-template-columns: repeat\(auto-fill, minmax\(360px, 1fr\)\)/);
+  assert.match(c, /@media \(max-width: 560px\)[\s\S]*\.fichas \{ grid-template-columns: 1fr; \}|\.fichas \{ grid-template-columns: 1fr; \}/);
+  // Colores sólidos: los chips llevan tinta blanca sobre el tono, no tono sobre pastel.
+  assert.match(c, /\.chip \{[^}]*color: #fff/);
+  for (const k of ['planId', 'limiteUsuarios', 'venceEn', 'pruebaHasta']) assert.ok(c.includes(`cambios.${k}`), `el diálogo manda ${k}`);
+});
+
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);

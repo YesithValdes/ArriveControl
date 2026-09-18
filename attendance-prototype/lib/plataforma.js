@@ -12,6 +12,7 @@
  */
 import { control, conEmpresa, enTransaccion } from './db.js'
 import { olvidarEmpresas } from './empresas.js'
+import { planPorId } from './planes.js'
 
 /**
  * Todas las empresas con lo necesario para decidir si sobran: cuánta gente
@@ -26,13 +27,20 @@ import { olvidarEmpresas } from './empresas.js'
 export async function listarEmpresas() {
   const { rows: empresas } = await control(
     `select e.id, e.nombre, e.esquema, e.nit, e.dominio, e.plan, e.estado,
-            e.limite_empleados as "limiteEmpleados", e.creada_en as "creadaEn",
+            e.limite_empleados as "limiteEmpleados", e.limite_usuarios as "limiteUsuarios",
+            e.creada_en as "creadaEn",
+            -- Quién es el dueño: a quién se llama cuando algo pasa.
+            (select u.email from control."user" u
+              where u.empresa_id = e.id and u.rol = 'empresa' and u.activo
+              order by u.created_at limit 1) as dueno,
             -- La SUSCRIPCIÓN. Existe desde que se montaron los pagos, pero
             -- esta consola no la miraba: se veía el plan y no si estaba
             -- vigente, que es la pregunta que uno se hace de verdad.
             e.plan_id as "planId", e.vence_en as "venceEn",
             e.prueba_hasta as "pruebaHasta", e.bienvenida_en as "bienvenidaEn",
-            (select count(*)::int from control."user" u where u.empresa_id = e.id) as usuarios,
+            (select count(*)::int from control."user" u where u.empresa_id = e.id and u.activo) as usuarios,
+            (select count(*)::int from control.invitaciones i
+              where i.empresa_id = e.id and i.aceptada_en is null and i.expira_en > now()) as invitaciones,
             (select max(u.ultimo_acceso) from control."user" u where u.empresa_id = e.id) as "ultimoAcceso",
             (select count(*)::int from control.dispositivos d where d.empresa_id = e.id and d.activo) as kioscos,
             -- Lo pagado y lo que quedó a medias. Un pago PENDIENTE viejo casi
@@ -176,37 +184,118 @@ export async function eliminarEmpresa(id, confirmacion) {
   return { ok: true, nombre: empresa.nombre, esquema: empresa.esquema }
 }
 
-/** Cambia el plan o el tope de empleados de una empresa. */
+/**
+ * Cambia lo que el superadmin puede fijar de una empresa. Todo opcional;
+ * solo se toca lo que viene en `cambios`:
+ *
+ *   planId          'esencial' | 'equipo' | 'empresa' | null — el plan
+ *                   contratado; de él salen el tope de colaboradores y el
+ *                   cupo de accesos al panel.
+ *   estado          'activa' | 'vencida' | 'cancelada'
+ *   venceEn         'AAAA-MM-DD' | null — hasta cuándo está pagada
+ *   pruebaHasta     'AAAA-MM-DD' | null — hasta cuándo dura la prueba
+ *   limiteEmpleados entero | null — tope de colaboradores por acuerdo
+ *                   (null = el del plan)
+ *   limiteUsuarios  entero | null — accesos al panel por acuerdo
+ *                   (null = los del plan)
+ *   plan            'gratis' | 'pago' — la marca vieja; se conserva porque
+ *                   el panel de la empresa todavía la mira.
+ *
+ * Las fechas se reciben como DÍA y se guardan al final de ese día en hora
+ * de Colombia: «vence el 30» significa que el 30 todavía se puede usar.
+ */
 export async function actualizarEmpresa(id, cambios) {
   const campos = []
   const args = [id]
+  const poner = (columna, valor) => campos.push(`${columna} = $${args.push(valor)}`)
+
+  const enteroONulo = (v, que) => {
+    if (v === null || v === '' || v === undefined) return { valor: null }
+    const n = Number(v)
+    if (!Number.isInteger(n) || n < 1) return { error: `${que} debe ser un entero mayor que cero.` }
+    return { valor: n }
+  }
+  const fechaONula = (v, que) => {
+    if (v === null || v === '' || v === undefined) return { valor: null }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(v)) || Number.isNaN(new Date(`${v}T00:00:00Z`).getTime())) {
+      return { error: `${que} debe ser una fecha AAAA-MM-DD.` }
+    }
+    return { valor: String(v) }
+  }
+
+  if ('planId' in cambios) {
+    const p = cambios.planId
+    if (p !== null && p !== '' && !planPorId(p)) return { error: 'Plan inválido.' }
+    poner('plan_id', p || null)
+    // Con un plan del catálogo, la marca vieja pasa a «pago»; sin plan queda
+    // como estaba (puede seguir en prueba).
+    if (p) poner('plan', 'pago')
+  }
 
   if ('plan' in cambios) {
     if (!['gratis', 'pago'].includes(cambios.plan)) return { error: 'Plan inválido.' }
-    campos.push(`plan = $${args.push(cambios.plan)}`)
+    poner('plan', cambios.plan)
     // El plan de pago no tiene tope; el gratuito vuelve al de fábrica si venía
     // sin límite. Así el par (plan, límite) nunca queda en un estado absurdo.
-    campos.push(`limite_empleados = $${args.push(cambios.plan === 'pago' ? null : (cambios.limiteEmpleados ?? 10))}`)
-  } else if ('limiteEmpleados' in cambios) {
-    const n = Number(cambios.limiteEmpleados)
-    if (cambios.limiteEmpleados !== null && (!Number.isInteger(n) || n < 1)) {
-      return { error: 'El tope debe ser un entero mayor que cero.' }
+    if (!('limiteEmpleados' in cambios)) {
+      poner('limite_empleados', cambios.plan === 'pago' ? null : 10)
     }
-    campos.push(`limite_empleados = $${args.push(cambios.limiteEmpleados === null ? null : n)}`)
+  }
+
+  if ('limiteEmpleados' in cambios) {
+    const r = enteroONulo(cambios.limiteEmpleados, 'El tope de colaboradores')
+    if (r.error) return r
+    poner('limite_empleados', r.valor)
+  }
+
+  if ('limiteUsuarios' in cambios) {
+    const r = enteroONulo(cambios.limiteUsuarios, 'El cupo de accesos al panel')
+    if (r.error) return r
+    poner('limite_usuarios', r.valor)
   }
 
   if ('estado' in cambios) {
     if (!['activa', 'vencida', 'cancelada'].includes(cambios.estado)) return { error: 'Estado inválido.' }
-    campos.push(`estado = $${args.push(cambios.estado)}`)
+    poner('estado', cambios.estado)
+  }
+
+  for (const [clave, columna, que] of [['venceEn', 'vence_en', 'La fecha de vencimiento'], ['pruebaHasta', 'prueba_hasta', 'El fin de la prueba']]) {
+    if (!(clave in cambios)) continue
+    const r = fechaONula(cambios[clave], que)
+    if (r.error) return r
+    if (r.valor === null) poner(columna, null)
+    else campos.push(`${columna} = (($${args.push(r.valor)}::date + 1) - interval '1 second') at time zone 'America/Bogota'`)
   }
 
   if (campos.length === 0) return { error: 'Nada que cambiar.' }
 
   const { rows } = await control(
     `update control.empresas set ${campos.join(', ')} where id = $1
-     returning id, nombre, esquema, plan, estado, limite_empleados as "limiteEmpleados"`,
+     returning id, nombre, esquema, plan, estado, plan_id as "planId",
+               limite_empleados as "limiteEmpleados", limite_usuarios as "limiteUsuarios",
+               vence_en as "venceEn", prueba_hasta as "pruebaHasta"`,
     args,
   )
+  if (rows.length === 0) return { error: 'Esa empresa no existe.' }
   olvidarEmpresas()
   return { ok: true, empresa: rows[0] }
+}
+
+/**
+ * Lo que una empresa ha COMPRADO: cada intento de pago con su desenlace, el
+ * más reciente primero. Es lo que se mira cuando un cliente dice «yo pagué»
+ * y su plan no aparece activo.
+ */
+export async function pagosDeEmpresa(id) {
+  const { rows } = await control(
+    `select p.id, p.referencia, p.proveedor, p.estado, p.monto::float as monto, p.moneda,
+            p.meses, p.plan_contratado as "planId", p.cubre_hasta as "cubreHasta",
+            p.creado_en as "creadoEn", p.resuelto_en as "resueltoEn"
+       from control.pagos p
+      where p.empresa_id = $1
+      order by p.creado_en desc
+      limit 60`,
+    [id],
+  )
+  return rows
 }
