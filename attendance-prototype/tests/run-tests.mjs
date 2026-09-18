@@ -1282,14 +1282,16 @@ await test('todo placeholder de parámetro lleva su $ (`= $N`, nunca `= N`)', as
   // sincronización lo deshacía. Se buscan interpolaciones de args.length
   // que no vayan precedidas de $.
   const { readdirSync, statSync, readFileSync } = await import('node:fs');
-  const raiz = new URL('../app/api', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
   const archivos = [];
   const recorrer = (dir) => { for (const n of readdirSync(dir)) { const p = `${dir}/${n}`; if (statSync(p).isDirectory()) recorrer(p); else if (n.endsWith('.js')) archivos.push(p); } };
-  recorrer(raiz);
+  for (const carpeta of ['../app/api', '../lib', '../services']) {
+    recorrer(new URL(carpeta, import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+  }
   const malos = [];
   for (const p of archivos) {
     for (const [n, linea] of readFileSync(p, 'utf8').split('\n').entries()) {
-      if (/[^$]\$\{args\.length\}/.test(linea) && /=\s*\$\{args\.length\}/.test(linea)) malos.push(`${p.split('/').slice(-3).join('/')}:${n + 1}`);
+      // `= ${args.length}` o `= ${args.length - 1}` sin el $ delante.
+      if (/=\s*\$\{args\.length(\s*-\s*\d+)?\}/.test(linea) && /[^$]\$\{args\.length(\s*-\s*\d+)?\}/.test(linea)) malos.push(`${p.split('/').slice(-3).join('/')}:${n + 1}`);
     }
   }
   assert.deepEqual(malos, [], `falta el $ del placeholder en: ${malos.join(', ')}`);

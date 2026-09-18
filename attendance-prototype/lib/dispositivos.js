@@ -203,6 +203,44 @@ export async function fijarAccesoPanel(empresa, id, valor) {
   return rowCount > 0
 }
 
+/**
+ * Cambia el nombre y/o la sede de un aparato. La sede debe ser de ESTA
+ * empresa (misma comprobación que al activar).
+ * @returns {Promise<{ok: true}|{error: 'SEDE_NO_ENCONTRADA'|'NO_ENCONTRADO'}>}
+ */
+export async function editarDispositivo(empresa, id, { nombre, sedeId }) {
+  if (sedeId) {
+    const existe = await conEmpresa(empresa.esquema, async (db) =>
+      (await db.query(`select 1 from sedes where id = $1`, [sedeId])).rowCount > 0,
+    )
+    if (!existe) return { error: 'SEDE_NO_ENCONTRADA' }
+  }
+  const sets = []
+  const args = []
+  if (nombre != null) { args.push(nombre); sets.push(`nombre = $${args.length}`) }
+  if (sedeId !== undefined) { args.push(sedeId || null); sets.push(`sede_id = $${args.length}`) }
+  if (sets.length === 0) return { ok: true }
+  args.push(id, empresa.id)
+  const { rowCount } = await control(
+    `update control.dispositivos set ${sets.join(', ')} where id = $${args.length - 1} and empresa_id = $${args.length}`,
+    args,
+  )
+  return rowCount > 0 ? { ok: true } : { error: 'NO_ENCONTRADO' }
+}
+
+/**
+ * Elimina el aparato del todo: su clave deja de valer al instante y
+ * desaparece de la lista (los códigos de vinculación que lo referencian se
+ * borran en cascada; las marcaciones que hizo se conservan).
+ */
+export async function eliminarDispositivo(empresa, id) {
+  const { rowCount } = await control(
+    `delete from control.dispositivos where id = $1 and empresa_id = $2`,
+    [id, empresa.id],
+  )
+  return rowCount > 0
+}
+
 export async function revocarDispositivo(empresa, id) {
   const { rowCount } = await control(
     `update control.dispositivos set activo = false

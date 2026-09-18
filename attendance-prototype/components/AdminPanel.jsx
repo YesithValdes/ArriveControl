@@ -941,12 +941,25 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     showToast(valor ? `"${d.nombre}" ya muestra el acceso al panel` : `"${d.nombre}" ya no muestra el acceso al panel`);
   };
 
-  const revocarDispositivo = async (d) => {
-    if (!confirm(`¿Revocar "${d.nombre}"? Dejará de marcar.`)) return;
+  const eliminarDispositivo = async (d) => {
+    if (!confirm(`¿Eliminar "${d.nombre}"? Dejará de marcar al instante y desaparece de la lista (sus marcaciones se conservan).`)) return;
     const r = await fetch(`/api/dispositivos/${d.id}`, { method: 'DELETE' });
     const j = await r.json().catch(() => null);
-    if (!r.ok || !j?.ok) { showToast(`No se pudo revocar: ${j?.error ?? r.status}`); return; }
-    showToast(`"${d.nombre}" revocado`);
+    if (!r.ok || !j?.ok) { showToast(`No se pudo eliminar: ${j?.error ?? r.status}`); return; }
+    showToast(`"${d.nombre}" eliminado`);
+    cargarDispositivos();
+  };
+  // Editar nombre y sede: el mismo cajón de vincular, en modo edición.
+  const editarDispositivo = (d) => { setCodigoVinc(null); setVinculando({ nombre: d.nombre, sedeId: d.sede_id ?? '', editandoId: d.id }); };
+  const guardarDispositivo = async () => {
+    const r = await fetch(`/api/dispositivos/${vinculando.editandoId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre: vinculando.nombre.trim(), sede_id: vinculando.sedeId || null }),
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j?.ok) { showToast(`No se pudo guardar: ${j?.error ?? r.status}`); return; }
+    showToast('Dispositivo actualizado');
+    setVinculando(null);
     cargarDispositivos();
   };
 
@@ -4016,7 +4029,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               >
                 <aside className="drawer" role="dialog" aria-modal="true" aria-label="Vincular un aparato">
                   <div className="drawer-head">
-                    <div><h3>{codigoVinc?.reconectando ? `Reconectar «${codigoVinc.reconectando}»` : 'Vincular un aparato'}</h3></div>
+                    <div><h3>{codigoVinc?.reconectando ? `Reconectar «${codigoVinc.reconectando}»` : vinculando?.editandoId ? 'Editar aparato' : 'Vincular un aparato'}</h3></div>
                     <button
                       className="btn"
                       onClick={() => { setVinculando(null); if (codigoVinc) { setCodigoVinc(null); cargarDispositivos(); } }}
@@ -4061,9 +4074,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         <button
                           className="btn primary block"
                           disabled={!vinculando.nombre.trim()}
-                          onClick={generarCodigoVinculacion}
+                          onClick={vinculando.editandoId ? guardarDispositivo : generarCodigoVinculacion}
                         >
-                          Generar código
+                          {vinculando.editandoId ? 'Guardar' : 'Generar código'}
                         </button>
                       </>
                     )}
@@ -4097,12 +4110,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           <td>{d.activado_por ?? '—'}</td>
                           <td>
                             <span className="tl-actions">
+                              <button className="btn small btn-ico" title="Editar nombre y sede" aria-label="Editar" onClick={() => editarDispositivo(d)}>
+                                <Icon name="edit" size={14} />
+                              </button>
                               {/* Reconectar sirve activo o revocado: mismo aparato,
                                   clave nueva (p. ej. se borraron los datos de la app). */}
-                              <button className="btn small" onClick={() => reconectarDispositivo(d)}>Reconectar</button>
-                              {d.activo && (
-                                <button className="btn small danger-btn" onClick={() => revocarDispositivo(d)}>Revocar</button>
-                              )}
+                              <button className="btn small btn-ico" title="Reconectar: código nuevo para este mismo aparato" aria-label="Reconectar" onClick={() => reconectarDispositivo(d)}>
+                                <Icon name="refresh" size={14} />
+                              </button>
+                              <button className="btn small btn-ico danger-btn" title="Eliminar este aparato" aria-label="Eliminar" onClick={() => eliminarDispositivo(d)}>
+                                <Icon name="trash" size={14} />
+                              </button>
                             </span>
                           </td>
                         </tr>
@@ -4128,12 +4146,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       ['Activado por', d.activado_por ?? '—'],
                     ],
                     actions: (
-                      <>
-                        <button className="btn primary block" onClick={() => reconectarDispositivo(d)}>Reconectar</button>
-                        {d.activo && (
-                          <button className="btn danger-btn block" onClick={() => revocarDispositivo(d)}>Revocar</button>
-                        )}
-                      </>
+                      <div className="acc-iconos">
+                        <button className="btn btn-ico" title="Editar nombre y sede" aria-label="Editar" onClick={() => editarDispositivo(d)}><Icon name="edit" size={16} /></button>
+                        <button className="btn btn-ico" title="Reconectar: código nuevo para este mismo aparato" aria-label="Reconectar" onClick={() => reconectarDispositivo(d)}><Icon name="refresh" size={16} /></button>
+                        <button className="btn btn-ico danger-btn" title="Eliminar este aparato" aria-label="Eliminar" onClick={() => eliminarDispositivo(d)}><Icon name="trash" size={16} /></button>
+                      </div>
                     ),
                   }))}
                 />
@@ -6796,6 +6813,8 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .acc-linea.aviso { color: var(--warn-text); }
 .acc-linea.aviso > svg { color: var(--warn-text); }
 .acc-actions { margin-top: 4px; display: flex; flex-direction: column; gap: 6px; }
+.acc-iconos { display: flex; gap: 8px; }
+.acc-iconos .btn { flex: 1 1 0; justify-content: center; }
 .acc-actions .btn.block { margin-top: 0; }
 
 /* ─── Móvil (<900px): los drawers laterales se vuelven hojas inferiores ─── */
