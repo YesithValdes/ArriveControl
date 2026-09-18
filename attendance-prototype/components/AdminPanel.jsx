@@ -589,10 +589,10 @@ const nombreCorto = (texto) => {
   return [p[0], p[p.length >= 4 ? 2 : 1]].map(cap).join(' ');
 };
 
-const ROL_ETIQUETA = { empresa: 'Dueño', admin: 'Administrador', consulta: 'Consulta', superadmin: 'Superadministrador' };
+const ROL_ETIQUETA = { empresa: 'Propietario', admin: 'Administrador', consulta: 'Consulta', superadmin: 'Superadministrador' };
 /** Roles que se pueden dar a alguien de la empresa, con lo que puede hacer. */
 const ROLES_EMPRESA = [
-  ['empresa', 'Dueño', 'Todo, incluida la cuenta: plan, clave de API y quién entra.'],
+  ['empresa', 'Propietario', 'Todo, incluida la cuenta: plan, clave de API y quién entra.'],
   ['admin', 'Administrador', 'Toda la operación: asistencia, correcciones, colaboradores, reglamento, sedes, dispositivos y cierres. No toca la cuenta ni invita.'],
   ['consulta', 'Consulta', 'Solo ver: asistencia, reportes, historial y exportar.'],
 ];

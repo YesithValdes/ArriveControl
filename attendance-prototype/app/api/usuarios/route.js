@@ -69,7 +69,7 @@ export async function POST(req) {
   // dar cualquiera de los tres roles de empresa.
   const rol = c?.rol ?? 'consulta'
   if (!esRolDeEmpresa(rol)) {
-    return NextResponse.json({ ok: false, error: 'El rol debe ser dueño, administrador o consulta.' }, { status: 400 })
+    return NextResponse.json({ ok: false, error: 'El rol debe ser propietario, administrador o consulta.' }, { status: 400 })
   }
   // Los accesos al panel se venden con el plan.
   const cupo = await cabeOtroUsuario(empresa)

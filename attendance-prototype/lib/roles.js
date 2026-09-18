@@ -35,7 +35,7 @@ export const ACCIONES = ['ver', 'corregir', 'empleados', 'config', 'liquidar', '
 
 export const ROLES = {
   empresa: {
-    etiqueta: 'Dueño',
+    etiqueta: 'Propietario',
     descripcion: 'Todo, incluida la cuenta: plan, clave de API y quién entra.',
     acciones: [...ACCIONES],
     alcance: 'todas',
