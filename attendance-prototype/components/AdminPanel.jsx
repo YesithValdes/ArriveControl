@@ -5540,9 +5540,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </div>
                   {valorHora ? (
                     <div className="derivado">
-                      {TIPOS_HORA.filter((t) => !t.dominical).map((t) => (
-                        <div key={t.codigo}>
-                          <span className="k">{t.nocturna ? 'Extra nocturna' : 'Extra diurna'}</span>
+                      {/* Los cuatro tipos, con su sigla: es lo que se ve en Reportes. */}
+                      {TIPOS_HORA.map((t) => (
+                        <div key={t.codigo} title={t.nombre}>
+                          <span className="k">{t.codigo} · {t.dominical ? (t.nocturna ? 'dom. nocturna' : 'dom. diurna') : (t.nocturna ? 'nocturna' : 'diurna')}</span>
                           <span className="v">{fmtCOP(Math.round(valorHora * (cfg.factores?.[t.codigo] ?? t.factor)))}</span>
                         </div>
                       ))}
@@ -6162,7 +6163,7 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 
 /* Lo derivado no se edita: por eso no parece un campo. */
 .derivado {
-  display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 9px;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin-top: 9px;
   padding: 9px 12px; background: var(--accent-soft); border-radius: var(--r-sm);
 }
 .derivado > div { display: flex; flex-direction: column; gap: 1px; }
