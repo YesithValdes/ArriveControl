@@ -2108,7 +2108,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     // es la misma (tarjetaAsistencia), solo cambia dónde se muestra.
     { id: 'asistencia', icon: 'users', label: 'Asistencia', grupo: 'Operación' },
     { id: 'anomalias', icon: 'alert', label: 'Anomalías', badge: data.anomalies.length, grupo: 'Operación' },
-    { id: 'empleados', icon: 'user', label: 'Empleados', grupo: 'Personal' },
+    { id: 'empleados', icon: 'user', label: 'Colaboradores', grupo: 'Personal' },
     { id: 'horarios', icon: 'clock', label: 'Horarios', grupo: 'Personal' },
     // Infraestructura al PRIMER nivel: sedes y dispositivos se usan lo
     // suficiente como para no esconderlos dentro de Ajustes.
@@ -2905,7 +2905,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'empleados' && (
           <section className="card grow">
             <h2>
-              Empleados registrados{' '}
+              Colaboradores registrados{' '}
               <span className="muted-count">
                 {/* Con tope, el uso del plan se ve ANTES de chocar con él. */}
                 {sesion?.limiteEmpleados != null ? `${allPeople.length} de ${sesion.limiteEmpleados}` : empRows.length}
