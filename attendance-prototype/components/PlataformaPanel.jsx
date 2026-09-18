@@ -222,15 +222,21 @@ export default function PlataformaPanel({ sesion }) {
   // La pantalla va en el hash (#empresas) para poder volver a ella al
   // recargar y para enlazarla desde el resumen.
   useEffect(() => {
-    const h = window.location.hash.replace('#', '');
-    if (SECCIONES.some((s) => s.id === h)) setTab(h);
+    const leer = () => {
+      const h = window.location.hash.replace('#', '');
+      if (SECCIONES.some((s) => s.id === h)) setTab(h);
+    };
+    leer();
+    // También al usar «atrás» del navegador o tocar un enlace con #.
+    window.addEventListener('hashchange', leer);
+    return () => window.removeEventListener('hashchange', leer);
   }, []);
   const irA = (id, opciones = {}) => {
     setTab(id);
     setNavOpen(false);
     if (opciones.buscar !== undefined) setFiltro(opciones.buscar);
     if (opciones.segmento) setSegmento(opciones.segmento);
-    try { window.history.replaceState(null, '', `#${id}`); } catch { /* sin historial, sin drama */ }
+    try { if (window.location.hash !== `#${id}`) window.history.pushState(null, '', `#${id}`); } catch { /* sin historial, sin drama */ }
   };
 
   /**
@@ -622,12 +628,9 @@ export default function PlataformaPanel({ sesion }) {
                         <th>Empresa</th>
                         <th>Plan</th>
                         <th>Vigencia</th>
-                        <th className="num">Pagado</th>
-                        <th className="num">Accesos</th>
-                        <th className="num">Colab.</th>
-                        <th className="num">Kioscos</th>
-                        <th className="num">Marcac.</th>
                         <th>Actividad</th>
+                        <th>Uso</th>
+                        <th className="num">Pagado</th>
                         <th className="num" aria-label="Acciones" />
                       </tr>
                     </thead>
@@ -643,7 +646,7 @@ export default function PlataformaPanel({ sesion }) {
                             <td>
                               <span className="att-name">{e.nombre}</span>
                               <span className="sub"><code>{e.esquema}</code>{e.nit ? ` · NIT ${e.nit}` : ''}</span>
-                              {e.dueno && <span className="sub">{e.dueno}</span>}
+                              {e.dueno && <span className="sub una-linea" title={e.dueno}>{e.dueno}</span>}
                             </td>
                             <td>
                               <span className={c.plan ? 'att-name' : 'libre'}>{c.nombre}</span>
@@ -658,6 +661,23 @@ export default function PlataformaPanel({ sesion }) {
                               <span className={`chip ${sus.tono === 'info' ? 'neutral' : sus.tono}`}>{sus.etiqueta}</span>
                               <span className="sub">{sus.detalle}</span>
                             </td>
+                            <td>
+                              <span className={`chip ${s.tono}`} title={`Creada el ${fmtFecha(e.creadaEn)}`}>{s.etiqueta}</span>
+                              <span className="sub">{e.esquemaRoto ? 'sin datos' : haceCuanto(diasSinUso(e))}</span>
+                              {falta && <span className="sub aviso-txt">{falta}</span>}
+                            </td>
+                            {/* Cuatro cifras en dos líneas: contra el tope, y en ámbar si ya lo tocó. */}
+                            <td className="uso-td">
+                              <span className={`uso-linea${c.cupo != null && accesos >= c.cupo ? ' al-tope' : ''}`}>
+                                <b>{nf.format(accesos)}</b>{c.cupo != null ? `/${c.cupo}` : ''} accesos
+                              </span>
+                              <span className={`uso-linea${c.tope != null && e.empleados >= c.tope ? ' al-tope' : ''}`}>
+                                <b>{e.empleados == null ? '—' : nf.format(e.empleados)}</b>{c.tope != null && e.empleados != null ? `/${c.tope}` : ''} colab.
+                              </span>
+                              <span className="uso-linea">
+                                <b>{nf.format(e.kioscos ?? 0)}</b> kiosco{e.kioscos === 1 ? '' : 's'} · <b>{e.marcaciones == null ? '—' : nf.format(e.marcaciones)}</b> marc.
+                              </span>
+                            </td>
                             <td className="num">
                               {e.pagosOk > 0 ? (
                                 <>
@@ -666,19 +686,6 @@ export default function PlataformaPanel({ sesion }) {
                                 </>
                               ) : <span className="libre">—</span>}
                               {e.pagosPendientes > 0 && <span className="sub aviso-txt">{e.pagosPendientes} sin resolver</span>}
-                            </td>
-                            <td className={`num${c.cupo != null && accesos >= c.cupo ? ' al-tope' : ''}`}>
-                              {nf.format(accesos)}{c.cupo != null ? <span className="libre"> / {c.cupo}</span> : null}
-                            </td>
-                            <td className={`num${c.tope != null && e.empleados >= c.tope ? ' al-tope' : ''}`}>
-                              {e.empleados == null ? <span className="libre">—</span> : nf.format(e.empleados)}{c.tope != null && e.empleados != null ? <span className="libre"> / {c.tope}</span> : null}
-                            </td>
-                            <td className="num">{nf.format(e.kioscos ?? 0)}</td>
-                            <td className="num">{e.marcaciones == null ? <span className="libre">—</span> : nf.format(e.marcaciones)}</td>
-                            <td>
-                              <span className={`chip ${s.tono}`} title={`Creada el ${fmtFecha(e.creadaEn)}`}>{s.etiqueta}</span>
-                              <span className="sub">{e.esquemaRoto ? 'sin datos' : haceCuanto(diasSinUso(e))}</span>
-                              {falta && <span className="sub aviso-txt">{falta}</span>}
                             </td>
                             <td className="num"><div className="tl-actions">{accionesDe(e)}</div></td>
                           </tr>
@@ -719,7 +726,8 @@ export default function PlataformaPanel({ sesion }) {
                               {e.pagosOk > 0 ? `${fmtDinero(e.totalPagado ?? 0, e.moneda || MONEDA)} · ${e.pagosOk} pago${e.pagosOk === 1 ? '' : 's'} · último el ${fmtFecha(e.ultimoPago)}` : 'Nunca ha pagado'}
                               {e.pagosPendientes > 0 ? ` · ${e.pagosPendientes} sin resolver` : ''}
                             </span>
-                            <span className="acc-linea"><Icono name="user" size={14} />{e.dueno ?? 'sin dueño activo'} · <code>{e.esquema}</code>{e.nit ? ` · NIT ${e.nit}` : ''}</span>
+                            <span className="acc-linea"><Icono name="user" size={14} />{e.dueno ?? 'sin dueño activo'}</span>
+                            <span className="acc-linea"><Icono name="database" size={14} /><code>{e.esquema}</code>{e.nit ? ` · NIT ${e.nit}` : ''}</span>
                             <span className="acc-linea"><span className={`chip ${s.tono}`}>{s.etiqueta}</span><span className="libre">creada el {fmtFecha(e.creadaEn)}</span></span>
                             {falta && <span className="acc-linea aviso"><Icono name="alert" size={14} />{falta}</span>}
                             {e.esquemaRoto && <span className="acc-linea aviso"><Icono name="alert" size={14} />El esquema no responde: alta a medias o borrado a mano.</span>}
@@ -785,12 +793,12 @@ export default function PlataformaPanel({ sesion }) {
                           const plan = planPorId(p.planId);
                           return (
                             <tr className="static" key={p.id}>
-                              <td>{fmtFechaHora(p.creadoEn)}</td>
+                              <td className="nw">{fmtFechaHora(p.creadoEn)}</td>
                               <td><span className="att-name">{p.empresa}</span><span className="sub"><code>{p.esquema}</code></span></td>
                               <td>{plan ? plan.nombre : (p.planId ?? '—')}<span className="sub">{p.meses} mes{p.meses === 1 ? '' : 'es'} · {p.proveedor}</span></td>
                               <td className="num att-name">{fmtDinero(p.monto, p.moneda)}</td>
                               <td>{chipPago(p.estado)}</td>
-                              <td>{p.cubreHasta ? fmtFecha(p.cubreHasta) : <span className="libre">—</span>}</td>
+                              <td className="nw">{p.cubreHasta ? fmtFecha(p.cubreHasta) : <span className="libre">—</span>}</td>
                               <td><code className="ref">{p.referencia}</code></td>
                               <td className="num"><button className="btn small" onClick={() => irA('empresas', { buscar: p.empresa, segmento: 'todas' })}>Empresa</button></td>
                             </tr>
@@ -1221,7 +1229,7 @@ img.sesion-avatar { object-fit: cover; display: block; }
 
 /* ── Tabla (PC) y acordeón (móvil), como en Colaboradores ─── */
 .att-tablewrap { display: none; overflow-x: auto; }
-.att-table { border-collapse: collapse; width: 100%; min-width: 880px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.att-table { border-collapse: collapse; width: 100%; min-width: 960px; font-size: 13px; font-variant-numeric: tabular-nums; }
 .att-table th { text-align: left; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--grid); white-space: nowrap; }
 .att-table td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--grid); color: var(--ink); vertical-align: top; }
 .att-table th.num, .att-table td.num { text-align: right; }
@@ -1229,12 +1237,19 @@ img.sesion-avatar { object-fit: cover; display: block; }
 .att-table tbody tr.con-novedad td { background: color-mix(in srgb, var(--crit-soft) 55%, transparent); }
 .att-table .att-name { font-weight: 600; display: block; }
 .att-table td.num.att-name { display: table-cell; }
-.att-table .sub { display: block; font-size: 11.5px; color: #475467; margin-top: 2px; white-space: nowrap; }
-.att-table .sub.aviso-txt { color: var(--warn-text); font-weight: 600; white-space: normal; max-width: 220px; }
-.att-table td.al-tope { color: var(--warn-text); font-weight: 700; }
+.att-table .sub { display: block; font-size: 11.5px; color: #475467; margin-top: 2px; line-height: 1.35; max-width: 230px; overflow-wrap: anywhere; }
+.att-table td.num .sub { margin-left: auto; white-space: nowrap; }
+.att-table .sub.una-linea { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
+.att-table .sub.aviso-txt { color: var(--warn-text); font-weight: 600; max-width: 200px; }
+.uso-td { white-space: nowrap; }
+.uso-linea { display: block; font-size: 12px; color: var(--ink-2); line-height: 1.45; }
+.uso-linea b { font-weight: 600; color: var(--ink); }
+.uso-linea.al-tope, .uso-linea.al-tope b { color: var(--warn-text); font-weight: 700; }
 .att-table .chip { margin-bottom: 2px; }
-.att-table code.ref, .compra code.ref { background: transparent; padding: 0; font-size: 11.5px; color: var(--muted); }
-.tl-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.att-table code.ref, .compra code.ref { background: transparent; padding: 0; font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.att-table td.nw { white-space: nowrap; }
+.tl-actions { display: flex; gap: 5px; justify-content: flex-end; }
+.tl-actions .btn.btn-ico { padding: 6px 7px; min-width: 32px; }
 
 .acc { display: flex; flex-direction: column; gap: 8px; }
 .acc-item { background: var(--surface); border: 1px solid var(--grid); border-radius: 10px; box-shadow: var(--elev-1); }
@@ -1288,13 +1303,15 @@ img.sesion-avatar { object-fit: cover; display: block; }
 
 /* ── Diálogos (los del panel) ─────────────────────────────── */
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 70; }
-.dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--grid); border-radius: 10px; padding: 18px 20px; max-width: 440px; width: 100%; box-shadow: 0 12px 40px rgba(16,24,40,0.18); max-height: calc(100dvh - 32px); overflow: auto; }
+/* min-width: 0 porque el diálogo es un ítem flex: sin eso, un <select> con
+   una opción larga lo ensancha más que la pantalla del celular. */
+.dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--grid); border-radius: 10px; padding: 18px 20px; max-width: 440px; width: 100%; min-width: 0; box-shadow: 0 12px 40px rgba(16,24,40,0.18); max-height: calc(100dvh - 32px); overflow: auto; }
 .dialog.ancho { max-width: 520px; }
 .dialog h3 { font-family: var(--f-display); font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 2px; }
 .dialog .hint { font-size: 13px; color: var(--muted); margin-bottom: 12px; line-height: 1.5; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .field label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
-.field input, .field select { font-family: var(--f-data); font-size: 14px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); color-scheme: light; min-width: 0; }
+.field input, .field select { font-family: var(--f-data); font-size: 14px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); color-scheme: light; min-width: 0; width: 100%; }
 .hours-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 .hours-row.dos { grid-template-columns: 1fr 1fr; }
 .hours-row .sub-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); min-width: 0; }
@@ -1317,8 +1334,12 @@ img.sesion-avatar { object-fit: cover; display: block; }
   .hours-row { grid-template-columns: 1fr; }
   .hours-row.dos { grid-template-columns: 1fr 1fr; }
   .card-cab { flex-direction: column; align-items: stretch; }
-  .controles { flex-direction: column; align-items: stretch; }
-  .segmentos { align-self: stretch; }
+  /* En columna, el wrap de la fila haría que la columna tome el ancho de
+     su contenido (se salía de la tarjeta) y el flex-basis del buscador se
+     volvería ALTO: por eso aquí van sin wrap y con ancho fijo. */
+  .controles { flex-direction: column; flex-wrap: nowrap; align-items: stretch; width: 100%; }
+  .segmentos { align-self: stretch; width: 100%; }
+  .buscar { flex: 0 0 auto; width: 100%; }
 }
 
 /* ── PC: barra arriba, menú en columna, contenido con su scroll ── */
