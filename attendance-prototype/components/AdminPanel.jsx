@@ -3522,26 +3522,27 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           // las eliminadas y el motivo de cada ajuste. Filtro por el día en
           // que se hizo el ajuste y paginación sobre lo filtrado.
           const HIST_PAGE = 15;
-          const hora = (iso) => (iso ? new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : '—');
-          const diaCorto = (iso) => (iso ? new Date(iso).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) : '');
-          const tipoTxt = (t) => (t === 'entrada' ? 'entrada' : t === 'salida' ? 'salida' : 'marcación');
-          // Qué se hizo, en una frase, a partir de la acción y los valores.
+          const hora = (iso) => (iso ? new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—');
+          const diaCorto = (iso) => (iso ? new Date(iso).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }).replace('.', '') : '');
+          const tipoTxt = (t) => (t === 'entrada' ? 'Entrada' : t === 'salida' ? 'Salida' : 'Marcación');
+          // Qué se hizo, corto: «Entrada del 14 sep: 08:22 → 08:00».
           const describir = (c) => {
             const ant = c.valor_anterior ?? {}; const nue = c.valor_nuevo ?? {};
-            const quien = <b>{nombreCorto(c.empleado_nombre ?? '') || 'un colaborador'}</b>;
             switch (c.accion) {
               case 'crear':
-                return { icono: 'userPlus', clase: 'crear', texto: <>Agregó una <b>{tipoTxt(nue.tipo)}</b> a las <b>{hora(nue.ts)}</b> del {diaCorto(nue.ts)} para {quien}</> };
+                return { icono: 'userPlus', clase: 'crear', texto: <>Agregó <b>{tipoTxt(nue.tipo).toLowerCase()} {hora(nue.ts)}</b> del {diaCorto(nue.ts)}</> };
               case 'editar_hora':
-                return { icono: 'edit', clase: 'editar', texto: <>Cambió la {tipoTxt(nue.tipo ?? ant.tipo)} del {diaCorto(ant.ts)} de {quien}: <s>{hora(ant.ts)}</s> → <b>{hora(nue.ts)}</b></> };
+                return { icono: 'edit', clase: 'editar', texto: <>{tipoTxt(nue.tipo ?? ant.tipo)} del {diaCorto(ant.ts)}: <s>{hora(ant.ts)}</s> → <b>{hora(nue.ts)}</b></> };
               case 'editar_tipo':
-                return { icono: 'edit', clase: 'editar', texto: <>Cambió una marcación del {diaCorto(ant.ts)} de {quien}: <s>{tipoTxt(ant.tipo)} {hora(ant.ts)}</s> → <b>{tipoTxt(nue.tipo)} {hora(nue.ts)}</b></> };
+                return { icono: 'edit', clase: 'editar', texto: <>Del {diaCorto(ant.ts)}: <s>{tipoTxt(ant.tipo).toLowerCase()} {hora(ant.ts)}</s> → <b>{tipoTxt(nue.tipo).toLowerCase()} {hora(nue.ts)}</b></> };
               case 'eliminar':
-                return { icono: 'trash', clase: 'eliminar', texto: <>Eliminó la <b>{tipoTxt(ant.tipo)}</b> de las <b>{hora(ant.ts)}</b> del {diaCorto(ant.ts)} de {quien}</> };
+                return { icono: 'trash', clase: 'eliminar', texto: <>Eliminó <b>{tipoTxt(ant.tipo).toLowerCase()} {hora(ant.ts)}</b> del {diaCorto(ant.ts)}</> };
               default:
-                return { icono: 'edit', clase: 'editar', texto: <>Ajustó una marcación de {quien}</> };
+                return { icono: 'edit', clase: 'editar', texto: <>Ajustó una marcación</> };
             }
           };
+          // Quien hizo el ajuste: su nombre; el correo solo si no hay nombre.
+          const quienAjusto = (c) => nombreCorto(c.admin_nombre ?? '') || (c.admin_email ?? 'admin').split('@')[0];
           const filtrados = listCorrecciones().filter((c) => {
             const dia = dayKey(c.ts);
             if (histFiltro.desde && dia < histFiltro.desde) return false;
@@ -3583,19 +3584,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   const d = describir(c);
                   return (
                     <div className={`hist-item ${d.clase}`} key={c.id}>
-                      <span className="hist-ico" aria-hidden="true"><Icon name={d.icono} size={15} /></span>
+                      <span className="hist-ico" aria-hidden="true"><Icon name={d.icono} size={14} /></span>
                       <div className="hist-cuerpo">
-                        <div className="hist-quien">
-                          <time>{fmtTs(c.ts)}</time>
-                          <span>·</span>
-                          <span className="hist-admin">{c.admin_email ?? 'admin'}</span>
+                        <div className="hist-linea">
+                          <b className="hist-nombre">{nombreCorto(c.empleado_nombre ?? '') || 'Colaborador'}</b>
+                          <time title={fmtTs(c.ts)}>{diaCorto(c.ts)} · {hora(c.ts)}</time>
                         </div>
                         <div className="hist-que">{d.texto}</div>
-                        {c.motivo ? (
-                          <div className="hist-motivo">“{c.motivo}”</div>
-                        ) : (
-                          <div className="hist-motivo sin">Sin motivo registrado</div>
-                        )}
+                        <div className="hist-motivo">
+                          {c.motivo ? <>“{c.motivo}”</> : <em>Sin motivo</em>}
+                          <span className="hist-por"> — {quienAjusto(c)}</span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -6364,19 +6363,20 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 
 /* Historial: icono por tipo de ajuste, quién y cuándo, qué cambió y el motivo. */
 .hist-lista { display: flex; flex-direction: column; }
-.hist-item { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 11px 4px; border-top: 1px solid var(--grid); }
+.hist-item { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; padding: 9px 2px; border-top: 1px solid var(--grid); }
 .hist-item:first-child { border-top: 0; }
-.hist-ico { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--btn-primary); margin-top: 1px; }
-.hist-item.crear .hist-ico { background: var(--good-soft); color: var(--good-text); }
-.hist-item.eliminar .hist-ico { background: var(--crit-soft); color: var(--crit-text); }
-.hist-cuerpo { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.hist-quien { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.hist-quien time { font-family: var(--f-data); }
-.hist-admin { overflow: hidden; text-overflow: ellipsis; }
-.hist-que { font-size: 13.5px; color: var(--ink); }
+.hist-ico { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: var(--btn-primary); color: #fff; margin-top: 1px; }
+.hist-item.crear .hist-ico { background: #1a7f4b; }
+.hist-item.eliminar .hist-ico { background: #b3403a; }
+.hist-cuerpo { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hist-linea { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.hist-nombre { font-size: 13.5px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-linea time { flex: 0 0 auto; font-family: var(--f-data); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.hist-que { font-size: 13px; color: var(--ink); }
 .hist-que s { color: var(--muted); }
-.hist-motivo { font-size: 13px; color: var(--ink-2); padding-left: 10px; border-left: 3px solid var(--grid); }
-.hist-motivo.sin { color: var(--muted); font-style: italic; }
+.hist-motivo { font-size: 13px; color: var(--ink-2); }
+.hist-motivo em { color: var(--muted); }
+.hist-por { color: var(--muted); }
 .log-item { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 9px 0; border-top: 1px solid var(--grid); font-size: 13px; }
 .log-item:first-child { border-top: 0; }
 .log-item time { color: var(--muted); font-family: var(--f-data); font-variant-numeric: tabular-nums; }
