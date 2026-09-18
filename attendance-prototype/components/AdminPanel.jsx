@@ -583,7 +583,7 @@ const iniciales = (texto) =>
  */
 const nombreCorto = (texto) => {
   const p = String(texto ?? '').trim().split(/\s+/).filter(Boolean);
-  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
   if (p.length === 0) return '';
   if (p.length <= 2) return p.map(cap).join(' ');
   return [p[0], p[p.length >= 4 ? 2 : 1]].map(cap).join(' ');
@@ -3744,12 +3744,25 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           <td>{u.activo ? '🟢 activo' : '⛔ inactivo'}</td>
                           <td>{u.ultimoAcceso ? fmtTs(u.ultimoAcceso) : 'nunca'}</td>
                           <td>
-                            {u.email !== sesion?.email && (
-                              <button className={`btn small${u.activo ? ' danger-btn' : ''}`}
-                                onClick={() => actualizarUsuario(u, { activo: !u.activo })}>
-                                {u.activo ? 'Desactivar' : 'Activar'}
+                            <span className="tl-actions">
+                              {/* El nombre que se muestra en el Historial y en el menú:
+                                  se corrige aquí cuando Google trae otro. */}
+                              <button
+                                className="btn small btn-ico" title="Cambiar el nombre para mostrar" aria-label="Cambiar el nombre"
+                                onClick={() => {
+                                  const v = prompt('Nombre para mostrar (nombre y apellido):', u.nombre ?? '');
+                                  if (v != null && v.trim() && v.trim() !== u.nombre) actualizarUsuario(u, { nombre: v.trim() });
+                                }}
+                              >
+                                <Icon name="edit" size={14} />
                               </button>
-                            )}
+                              {u.email !== sesion?.email && (
+                                <button className={`btn small${u.activo ? ' danger-btn' : ''}`}
+                                  onClick={() => actualizarUsuario(u, { activo: !u.activo })}>
+                                  {u.activo ? 'Desactivar' : 'Activar'}
+                                </button>
+                              )}
+                            </span>
                           </td>
                         </tr>
                       ))}

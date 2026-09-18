@@ -35,6 +35,17 @@ export async function PATCH(req, { params }) {
 
   const nuevoActivo = 'activo' in c ? Boolean(c.activo) : actuales[0].activo
 
+  // Nombre para mostrar (Historial, menú de la cuenta): el que llega de Google
+  // a veces es el de la empresa o va en mayúsculas; aquí se pone el de la
+  // persona. Cualquiera con permiso de usuarios puede corregirlo.
+  let nuevoNombre = null
+  if ('nombre' in c) {
+    nuevoNombre = String(c.nombre ?? '').trim().replace(/\s+/g, ' ')
+    if (nuevoNombre.length < 2 || nuevoNombre.length > 80) {
+      return NextResponse.json({ ok: false, error: 'El nombre debe tener entre 2 y 80 caracteres.' }, { status: 400 })
+    }
+  }
+
   if (id === usuario.id && !nuevoActivo) {
     return NextResponse.json({ ok: false, error: 'No puedes desactivarte a ti mismo.' }, { status: 400 })
   }
@@ -53,10 +64,10 @@ export async function PATCH(req, { params }) {
   }
 
   const { rows } = await pool.query(
-    `update control."user" set activo = $2, updated_at = now()
+    `update control."user" set activo = $2, name = coalesce($4, name), updated_at = now()
       where id = $1 and empresa_id = $3
       returning id, name as nombre, email, rol, activo`,
-    [id, nuevoActivo, empresa.id],
+    [id, nuevoActivo, empresa.id, nuevoNombre],
   )
   return NextResponse.json({ ok: true, usuario: rows[0] })
 }
