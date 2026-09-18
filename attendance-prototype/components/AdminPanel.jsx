@@ -3586,14 +3586,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <div className={`hist-item ${d.clase}`} key={c.id}>
                       <span className="hist-ico" aria-hidden="true"><Icon name={d.icono} size={14} /></span>
                       <div className="hist-cuerpo">
+                        {/* Arriba, QUIÉN hizo el ajuste; abajo, a quién se le hizo. */}
                         <div className="hist-linea">
-                          <b className="hist-nombre">{nombreCorto(c.empleado_nombre ?? '') || 'Colaborador'}</b>
+                          <b className="hist-nombre">{quienAjusto(c)}</b>
                           <time title={fmtTs(c.ts)}>{diaCorto(c.ts)} · {hora(c.ts)}</time>
                         </div>
                         <div className="hist-que">{d.texto}</div>
                         <div className="hist-motivo">
                           {c.motivo ? <>“{c.motivo}”</> : <em>Sin motivo</em>}
-                          <span className="hist-por"> — {quienAjusto(c)}</span>
+                          <span className="hist-por"> — <b>{nombreCorto(c.empleado_nombre ?? '') || 'colaborador'}</b></span>
                         </div>
                       </div>
                     </div>
@@ -6377,6 +6378,7 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .hist-motivo { font-size: 13px; color: var(--ink-2); }
 .hist-motivo em { color: var(--muted); }
 .hist-por { color: var(--muted); }
+.hist-por b { color: var(--ink); font-weight: 600; }
 .log-item { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 9px 0; border-top: 1px solid var(--grid); font-size: 13px; }
 .log-item:first-child { border-top: 0; }
 .log-item time { color: var(--muted); font-family: var(--f-data); font-variant-numeric: tabular-nums; }
