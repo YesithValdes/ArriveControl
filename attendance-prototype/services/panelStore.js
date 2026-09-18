@@ -364,6 +364,15 @@ export async function syncPanel() {
 export const panelCargado = () => store.cargado;
 
 // ── journeyService (lectura) ──────────────────────────────────────────
+/**
+ * Las correcciones tal como se registraron (quién, cuándo, qué acción, valor
+ * anterior y nuevo, y el MOTIVO): la fuente del Historial. Más reciente
+ * primero.
+ */
+export function listCorrecciones() {
+  return [...store.audit].sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+}
+
 export function listJourneyEvents() {
   return [...store.events].sort((a, b) => b.ts.localeCompare(a.ts));
 }

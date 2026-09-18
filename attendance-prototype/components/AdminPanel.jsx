@@ -13,7 +13,7 @@ import Link from 'next/link';
 // las mismas formas que los services locales que reemplaza.
 import {
   syncPanel,
-  listJourneyEvents,
+  listJourneyEvents, listCorrecciones,
   addManualEvent,
   updateEventTime,
   updateEventType,
@@ -3517,10 +3517,33 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         )}
 
         {tab === 'historial' && (() => {
-          // Filtro por día (Bogotá) y paginación sobre el resultado filtrado.
+          // El historial sale de las CORRECCIONES registradas (quién, cuándo,
+          // qué cambió y por qué), no de las marcaciones: así se ven también
+          // las eliminadas y el motivo de cada ajuste. Filtro por el día en
+          // que se hizo el ajuste y paginación sobre lo filtrado.
           const HIST_PAGE = 15;
-          const filtrados = data.audit.filter((e) => {
-            const dia = dayKey(e.ts);
+          const hora = (iso) => (iso ? new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : '—');
+          const diaCorto = (iso) => (iso ? new Date(iso).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) : '');
+          const tipoTxt = (t) => (t === 'entrada' ? 'entrada' : t === 'salida' ? 'salida' : 'marcación');
+          // Qué se hizo, en una frase, a partir de la acción y los valores.
+          const describir = (c) => {
+            const ant = c.valor_anterior ?? {}; const nue = c.valor_nuevo ?? {};
+            const quien = <b>{nombreCorto(c.empleado_nombre ?? '') || 'un colaborador'}</b>;
+            switch (c.accion) {
+              case 'crear':
+                return { icono: 'userPlus', clase: 'crear', texto: <>Agregó una <b>{tipoTxt(nue.tipo)}</b> a las <b>{hora(nue.ts)}</b> del {diaCorto(nue.ts)} para {quien}</> };
+              case 'editar_hora':
+                return { icono: 'edit', clase: 'editar', texto: <>Cambió la {tipoTxt(nue.tipo ?? ant.tipo)} del {diaCorto(ant.ts)} de {quien}: <s>{hora(ant.ts)}</s> → <b>{hora(nue.ts)}</b></> };
+              case 'editar_tipo':
+                return { icono: 'edit', clase: 'editar', texto: <>Cambió una marcación del {diaCorto(ant.ts)} de {quien}: <s>{tipoTxt(ant.tipo)} {hora(ant.ts)}</s> → <b>{tipoTxt(nue.tipo)} {hora(nue.ts)}</b></> };
+              case 'eliminar':
+                return { icono: 'trash', clase: 'eliminar', texto: <>Eliminó la <b>{tipoTxt(ant.tipo)}</b> de las <b>{hora(ant.ts)}</b> del {diaCorto(ant.ts)} de {quien}</> };
+              default:
+                return { icono: 'edit', clase: 'editar', texto: <>Ajustó una marcación de {quien}</> };
+            }
+          };
+          const filtrados = listCorrecciones().filter((c) => {
+            const dia = dayKey(c.ts);
             if (histFiltro.desde && dia < histFiltro.desde) return false;
             if (histFiltro.hasta && dia > histFiltro.hasta) return false;
             return true;
@@ -3555,14 +3578,29 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               {filtrados.length === 0 && (
                 <p className="empty">{hayFiltro ? 'Sin correcciones en ese rango de fechas.' : 'Sin correcciones.'}</p>
               )}
-              {pagina.map((e) => (
-                <div className="log-item" key={e.id}>
-                  <time>{fmtTs(e.ts)}</time>
-                  <span className="action">
-                    <b>{e.correctedBy}</b> {e.flag === 'manual' ? 'agregó' : 'corrigió'} {e.type === 'in' ? 'entrada' : 'salida'} {fmt12(e.ts)} para <b>{e.personName}</b>.
-                  </span>
-                </div>
-              ))}
+              <div className="hist-lista">
+                {pagina.map((c) => {
+                  const d = describir(c);
+                  return (
+                    <div className={`hist-item ${d.clase}`} key={c.id}>
+                      <span className="hist-ico" aria-hidden="true"><Icon name={d.icono} size={15} /></span>
+                      <div className="hist-cuerpo">
+                        <div className="hist-quien">
+                          <time>{fmtTs(c.ts)}</time>
+                          <span>·</span>
+                          <span className="hist-admin">{c.admin_email ?? 'admin'}</span>
+                        </div>
+                        <div className="hist-que">{d.texto}</div>
+                        {c.motivo ? (
+                          <div className="hist-motivo">“{c.motivo}”</div>
+                        ) : (
+                          <div className="hist-motivo sin">Sin motivo registrado</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
               {histPages > 1 && (
                 <div className="pager">
                   <button className="btn" disabled={histSafe === 0} onClick={() => setHistPage(histSafe - 1)}>Anterior</button>
@@ -6324,6 +6362,21 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .hrow .fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 0 3px 3px 0; min-width: 2px; }
 .hrow .val { text-align: right; font-family: var(--f-data); font-variant-numeric: tabular-nums; color: var(--ink-2); }
 
+/* Historial: icono por tipo de ajuste, quién y cuándo, qué cambió y el motivo. */
+.hist-lista { display: flex; flex-direction: column; }
+.hist-item { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 11px 4px; border-top: 1px solid var(--grid); }
+.hist-item:first-child { border-top: 0; }
+.hist-ico { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--btn-primary); margin-top: 1px; }
+.hist-item.crear .hist-ico { background: var(--good-soft); color: var(--good-text); }
+.hist-item.eliminar .hist-ico { background: var(--crit-soft); color: var(--crit-text); }
+.hist-cuerpo { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.hist-quien { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.hist-quien time { font-family: var(--f-data); }
+.hist-admin { overflow: hidden; text-overflow: ellipsis; }
+.hist-que { font-size: 13.5px; color: var(--ink); }
+.hist-que s { color: var(--muted); }
+.hist-motivo { font-size: 13px; color: var(--ink-2); padding-left: 10px; border-left: 3px solid var(--grid); }
+.hist-motivo.sin { color: var(--muted); font-style: italic; }
 .log-item { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 9px 0; border-top: 1px solid var(--grid); font-size: 13px; }
 .log-item:first-child { border-top: 0; }
 .log-item time { color: var(--muted); font-family: var(--f-data); font-variant-numeric: tabular-nums; }
