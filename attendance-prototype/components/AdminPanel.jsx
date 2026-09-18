@@ -3532,9 +3532,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               case 'crear':
                 return { icono: 'userPlus', clase: 'crear', texto: <>Agregó <b>{tipoTxt(nue.tipo).toLowerCase()} {hora(nue.ts)}</b> del {diaCorto(nue.ts)}</> };
               case 'editar_hora':
-                return { icono: 'edit', clase: 'editar', texto: <>{tipoTxt(nue.tipo ?? ant.tipo)} del {diaCorto(ant.ts)}: <s>{hora(ant.ts)}</s> → <b>{hora(nue.ts)}</b></> };
+                return { icono: 'edit', clase: 'editar', texto: <>Cambió <b>{tipoTxt(nue.tipo ?? ant.tipo).toLowerCase()}</b> del {diaCorto(ant.ts)}: <s>{hora(ant.ts)}</s> → <b>{hora(nue.ts)}</b></> };
               case 'editar_tipo':
-                return { icono: 'edit', clase: 'editar', texto: <>Del {diaCorto(ant.ts)}: <s>{tipoTxt(ant.tipo).toLowerCase()} {hora(ant.ts)}</s> → <b>{tipoTxt(nue.tipo).toLowerCase()} {hora(nue.ts)}</b></> };
+                return { icono: 'edit', clase: 'editar', texto: <>Cambió marcación del {diaCorto(ant.ts)}: <s>{tipoTxt(ant.tipo).toLowerCase()} {hora(ant.ts)}</s> → <b>{tipoTxt(nue.tipo).toLowerCase()} {hora(nue.ts)}</b></> };
               case 'eliminar':
                 return { icono: 'trash', clase: 'eliminar', texto: <>Eliminó <b>{tipoTxt(ant.tipo).toLowerCase()} {hora(ant.ts)}</b> del {diaCorto(ant.ts)}</> };
               default:

@@ -13,7 +13,7 @@ export async function GET() {
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const { rows } = await conEmpresa(esquema, (db) => db.query(
-    `select c.id, c.marcacion_id, c.admin_email, c.accion, c.valor_anterior,
+    `select c.id, c.marcacion_id, c.admin_user_id, c.admin_email, c.accion, c.valor_anterior,
             c.valor_nuevo, c.motivo, c.ts,
             e.nombre as empleado_nombre
        from correcciones c
