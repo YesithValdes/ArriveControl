@@ -545,8 +545,7 @@ export default function PlataformaPanel({ sesion }) {
               {resumen.pendientes > 0 && <> · <button className="enlace" onClick={() => irA('pagos')}>{resumen.pendientes} pago{resumen.pendientes === 1 ? '' : 's'} sin resolver</button></>}
             </p>
 
-            <div className="dash-grid">
-              <section className="card grow">
+            <section className="card grow">
                 <h2>Requieren atención</h2>
                 <p className="hint">Lo que conviene resolver hoy, de lo más urgente a lo menos.</p>
                 {resumen.atencion.length === 0 ? (
@@ -566,32 +565,6 @@ export default function PlataformaPanel({ sesion }) {
                   </div>
                 )}
               </section>
-              <div className="dash-lado">
-                <section className="card">
-                  <h2>Últimos envíos automáticos</h2>
-                  {tareas.length === 0 ? (
-                    <p className="empty">Sin corridas registradas todavía.</p>
-                  ) : (
-                    <div className="tarea-lista">
-                      {tareas.slice(0, 4).map((t) => <Tarea t={t} key={t.creadoEn} compacta />)}
-                    </div>
-                  )}
-                  <button className="btn small" onClick={() => irA('envios')}>Ver todos</button>
-                </section>
-                <section className="card">
-                  <h2>Últimas empresas</h2>
-                  <div className="lista-corta">
-                    {[...empresas].sort((a, b) => new Date(b.creadaEn) - new Date(a.creadaEn)).slice(0, 5).map((e) => (
-                      <button className="fila-corta" key={e.id} onClick={() => irA('empresas', { buscar: e.nombre, segmento: 'todas' })}>
-                        <span className="fila-nombre">{e.nombre}</span>
-                        <span className="fila-nota">{fmtFecha(e.creadaEn)}</span>
-                        <span className={`chip ${suscripcion(e).tono === 'info' ? 'neutral' : suscripcion(e).tono}`}>{suscripcion(e).etiqueta}</span>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              </div>
-            </div>
           </>
         )}
 
@@ -1037,7 +1010,7 @@ export default function PlataformaPanel({ sesion }) {
 }
 
 /** Una corrida de tarea programada, en una línea. */
-function Tarea({ t, compacta = false }) {
+function Tarea({ t }) {
   const d = t.detalle ?? {};
   return (
     <div className={`tarea ${t.estado}`}>
@@ -1045,11 +1018,11 @@ function Tarea({ t, compacta = false }) {
       <b>{t.tarea}</b>
       <span className="tarea-cuando">
         {fmtFechaHora(t.creadoEn)}
-        {!compacta && t.sobre ? ` · sobre el ${fmtFecha(t.sobre)}` : ''}
+        {t.sobre ? ` · sobre el ${fmtFecha(t.sobre)}` : ''}
       </span>
       <span className="tarea-detalle">
         {t.estado === 'ok'
-          ? `${d.enviados ?? 0} enviados${d.fallidos ? `, ${d.fallidos} fallidos` : ''}${!compacta && d.sinCorreo ? `, ${d.sinCorreo} sin correo` : ''}`
+          ? `${d.enviados ?? 0} enviados${d.fallidos ? `, ${d.fallidos} fallidos` : ''}${d.sinCorreo ? `, ${d.sinCorreo} sin correo` : ''}`
           : (d.error ?? 'sin detalle')}
       </span>
     </div>
@@ -1191,9 +1164,6 @@ img.sesion-avatar { object-fit: cover; display: block; }
 .totales { font-size: 12.5px; color: var(--muted); padding: 0 2px; }
 .enlace { border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 0; }
 .enlace:hover { text-decoration: underline; }
-.dash-grid { display: grid; grid-template-columns: 1fr; gap: 10px; flex: 0 0 auto; }
-.dash-lado { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.dash-lado .card .btn.small { align-self: flex-start; margin-top: 10px; }
 
 /* Requieren atención: chip de urgencia, empresa en negrita, «Ver» al final. */
 .atencion { display: flex; flex-direction: column; }
@@ -1202,12 +1172,6 @@ img.sesion-avatar { object-fit: cover; display: block; }
 .aten-texto { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .aten-texto b { font-size: 13.5px; }
 .aten-texto span { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
-.lista-corta { display: flex; flex-direction: column; margin-top: 6px; }
-.fila-corta { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; border-top: 1px solid var(--grid); background: transparent; font: inherit; padding: 8px 0; cursor: pointer; text-align: left; color: var(--ink); }
-.fila-corta:first-child { border-top: 0; }
-.fila-corta:hover .fila-nombre { color: var(--accent); }
-.fila-nombre { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
-.fila-nota { font-family: var(--f-data); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 
 /* ── Chips: los del panel (suaves, con punto) ─────────────── */
 .chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-data); font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
@@ -1371,7 +1335,6 @@ img.sesion-avatar { object-fit: cover; display: block; }
   .tiles { grid-template-columns: repeat(4, 1fr); gap: 12px; }
   .tile { border: 1px solid var(--grid); border-radius: 8px; padding: 14px 16px; }
   .tile .value { font-size: 30px; }
-  .dash-grid { grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 12px; align-items: start; }
   .att-tablewrap { display: block; }
   .acc { display: none; }
 }
