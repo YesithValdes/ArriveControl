@@ -1581,6 +1581,53 @@ await test('las rutas de la cuenta exigen «cuenta» y las de gente «usuarios»
   assert.match(usr, /cabeOtroUsuario\(empresa\)/, 'invitar respeta el cupo del plan');
 });
 
+// ── Resumen diario: correo y/o consulta por API ────────────────────────
+console.log('\n📬 Resumen diario por API');
+const { formatearResumen } = await import('../lib/resumenDiario.js');
+await test('la API entrega lo mismo del correo: horario, trabajado en hh:mm:ss, marcaciones y novedades, sin campos internos', () => {
+  const r = resumenDelDia(JUAN, [mk('entrada', '07:58'), mk('salida', '12:00'), mk('entrada', '13:00')], LUNES);
+  const api = formatearResumen({ empleado: { ...JUAN, cedula: '123' }, resumen: r });
+  assert.equal(api.documento, '123');
+  assert.equal(api.trabajado.segundos, r.trabajadoSeg);
+  assert.equal(api.trabajado.texto, hhmmss(r.trabajadoSeg));
+  assert.deepEqual(api.horario, { entrada: r.franja.entrada, salida: r.franja.salida });
+  assert.equal(api.marcaciones.length, r.marcas.length);
+  assert.equal(api.marcaciones[0].hora, '07:58');
+  assert.ok(api.marcaciones.at(-1).automatica, 'la salida puesta por el horario se marca como automática');
+  assert.deepEqual(api.novedades.map((n) => n.clase), r.avisos.map((a) => a.clase));
+  assert.ok(!('trabajadoSeg' in api) && !('franja' in api), 'sin nombres internos');
+});
+await test('la migración 018 crea los dos interruptores y /api/config los lee y los guarda', () => {
+  const mig = leerCss(new URL('../db/migrations/empresa/018_resumen_diario.sql', import.meta.url), 'utf8');
+  assert.match(mig, /resumen_correo boolean not null default true/);
+  assert.match(mig, /resumen_api boolean not null default true/);
+  const cfg = leerCss(new URL('../app/api/config/route.js', import.meta.url), 'utf8');
+  assert.match(cfg, /select gracia_min, resumen_correo, resumen_api from config_laboral/);
+  assert.match(cfg, /for \(const campo of \['resumen_correo', 'resumen_api'\]\)/);
+  assert.ok(cfg.includes("typeof c[campo] !== 'boolean'"), 'solo acepta booleanos');
+  const ps = leerCss(new URL('../services/panelStore.js', import.meta.url), 'utf8');
+  assert.match(ps, /body\.resumen_correo = Boolean\(partial\.resumenCorreo\)/);
+  assert.match(ps, /body\.resumen_api = Boolean\(partial\.resumenApi\)/);
+});
+await test('el correo nocturno y la API salen del MISMO armado, y cada uno respeta su interruptor', () => {
+  const env = leerCss(new URL('../lib/enviosDiarios.js', import.meta.url), 'utf8');
+  assert.match(env, /export async function resumenesDeEmpresa\(esquema, fechaISO\)/);
+  assert.match(env, /if \(!\(await destinoResumen\(empresa\.esquema\)\)\.correo\)/, 'con el correo apagado no se manda');
+  assert.match(env, /const resumenes = await resumenesDeEmpresa\(empresa\.esquema, fechaISO\)/);
+  const ruta = leerCss(new URL('../app/api/resumen-diario/route.js', import.meta.url), 'utf8');
+  assert.match(ruta, /accesoHoras\(req, 'ver'\)/, 'clave de API o sesión que pueda ver');
+  assert.match(ruta, /if \(!\(await destinoResumen\(esquema\)\)\.api\)/, 'con la consulta apagada responde 403');
+  assert.match(ruta, /status: 403/);
+  assert.match(ruta, /resumenesDeEmpresa\(esquema, fecha\)/);
+  assert.ok(!/export (function|const) (?!GET|runtime)/.test(ruta), 'la ruta solo exporta GET y runtime');
+  const doc = leerCss(new URL('../app/docs/api/page.jsx', import.meta.url), 'utf8');
+  assert.match(doc, /<section id="diario">/);
+  assert.match(doc, /GET \/api\/resumen-diario\?fecha=/);
+  const panel = leerCss(new URL('../components/AdminPanel.jsx', import.meta.url), 'utf8');
+  assert.match(panel, /updateCfg\(\{ resumenCorreo: /);
+  assert.match(panel, /updateCfg\(\{ resumenApi: /);
+});
+
 // ── Consola de plataforma (superadmin) ─────────────────────────────────
 console.log('\n🛰  Consola de plataforma');
 await test('el cupo de accesos al panel admite un acuerdo puntual (limite_usuarios) que gana sobre el plan', () => {

@@ -46,12 +46,64 @@ export const ayerEnBogota = () =>
  * @param {string=} fechaISO  día a resumir (YYYY-MM-DD). Por defecto, hoy.
  * @returns {Promise<{fecha, empresas, enviados, sinCorreo, fallidos, detalle}>}
  */
+/**
+ * A dónde va el resumen diario de esta empresa (Ajustes → Reglamento).
+ * @returns {Promise<{correo: boolean, api: boolean}>}
+ */
+export async function destinoResumen(esquema) {
+  const { rows } = await conEmpresa(esquema, (db) => db.query(
+    `select resumen_correo as correo, resumen_api as api from config_laboral limit 1`,
+  ))
+  return { correo: rows[0]?.correo !== false, api: rows[0]?.api !== false }
+}
+
+/**
+ * El resumen del día de CADA colaborador de una empresa: lo mismo que va en
+ * el correo, y lo mismo que consulta el sistema de la empresa por la API.
+ * Una sola función para que las dos salidas nunca cuenten distinto.
+ *
+ * @param {string} esquema
+ * @param {string} fechaISO  YYYY-MM-DD
+ * @returns {Promise<Array<{empleado: object, marcas: Array, resumen: object|null}>>}
+ *          solo quienes marcaron ese día; `resumen` sale de resumenDelDia.
+ */
+export async function resumenesDeEmpresa(esquema, fechaISO) {
+  const filas = await conEmpresa(esquema, async (db) => (await db.query(
+    `select m.empleado_id,
+            e.nombre, e.cedula, e.correo, e.jornada_dias, e.entrada_esperada, e.salida_esperada,
+            m.tipo, s.nombre as sede,
+            -- Minutos del día en hora Bogotá, con los segundos: el mismo
+            -- criterio con el que se calculan las horas de nómina.
+            (extract(hour from m.ts at time zone 'America/Bogota') * 60
+             + extract(minute from m.ts at time zone 'America/Bogota')
+             + extract(second from m.ts at time zone 'America/Bogota') / 60)::float as minutos
+       from marcaciones m
+       join empleados e on e.id = m.empleado_id
+       left join sedes s on s.id = m.sede_id
+      where not m.eliminada
+        and e.activo
+        and (m.ts at time zone 'America/Bogota')::date = $1::date
+      order by m.empleado_id, m.ts`,
+    [fechaISO],
+  )).rows)
+
+  const porEmpleado = new Map()
+  for (const f of filas) {
+    if (!porEmpleado.has(f.empleado_id)) porEmpleado.set(f.empleado_id, { empleado: f, marcas: [] })
+    porEmpleado.get(f.empleado_id).marcas.push({ tipo: f.tipo, minutos: f.minutos, sede: f.sede })
+  }
+  const dow = new Date(`${fechaISO}T12:00:00Z`).getUTCDay()
+  return [...porEmpleado.values()].map(({ empleado, marcas }) => ({
+    empleado, marcas, resumen: resumenDelDia(empleado, marcas, dow),
+  }))
+}
+
 export async function enviarResumenesDelDia(fechaISO = hoyEnBogota()) {
   const { rows: empresas } = await control(
     `select id, nombre, esquema, estado, vence_en, prueba_hasta from control.empresas`,
   )
 
-  const salida = { fecha: fechaISO, empresas: 0, enviados: 0, sinCorreo: 0, fallidos: 0, detalle: [] }
+  const salida = { fecha: fechaISO, empresas: 0, enviados: 0, sinCorreo: 0, fallidos: 0, sinCorreoActivo: 0, detalle: [] }
 
   for (const empresa of empresas) {
     // Sin suscripción ni prueba no se le presta el servicio, y mandar correos
@@ -59,38 +111,16 @@ export async function enviarResumenesDelDia(fechaISO = hoyEnBogota()) {
     if (!tieneAcceso(empresa)) continue
 
     try {
-      const filas = await conEmpresa(empresa.esquema, async (db) => (await db.query(
-        `select m.empleado_id,
-                e.nombre, e.correo, e.jornada_dias, e.entrada_esperada, e.salida_esperada,
-                m.tipo, s.nombre as sede,
-                -- Minutos del día en hora Bogotá, con los segundos: el mismo
-                -- criterio con el que se calculan las horas de nómina.
-                (extract(hour from m.ts at time zone 'America/Bogota') * 60
-                 + extract(minute from m.ts at time zone 'America/Bogota')
-                 + extract(second from m.ts at time zone 'America/Bogota') / 60)::float as minutos
-           from marcaciones m
-           join empleados e on e.id = m.empleado_id
-           left join sedes s on s.id = m.sede_id
-          where not m.eliminada
-            and e.activo
-            and (m.ts at time zone 'America/Bogota')::date = $1::date
-          order by m.empleado_id, m.ts`,
-        [fechaISO],
-      )).rows)
+      // La empresa pudo apagar el correo en Ajustes (su sistema lo consulta
+      // por la API). Se respeta y se cuenta, para que la consola lo vea.
+      if (!(await destinoResumen(empresa.esquema)).correo) { salida.sinCorreoActivo++; continue }
 
-      if (filas.length === 0) continue
+      const resumenes = await resumenesDeEmpresa(empresa.esquema, fechaISO)
+      if (resumenes.length === 0) continue
       salida.empresas++
 
-      const porEmpleado = new Map()
-      for (const f of filas) {
-        if (!porEmpleado.has(f.empleado_id)) porEmpleado.set(f.empleado_id, { empleado: f, marcas: [] })
-        porEmpleado.get(f.empleado_id).marcas.push({ tipo: f.tipo, minutos: f.minutos, sede: f.sede })
-      }
-
-      const dow = new Date(`${fechaISO}T12:00:00Z`).getUTCDay()
-      for (const { empleado, marcas } of porEmpleado.values()) {
+      for (const { empleado, resumen } of resumenes) {
         if (!empleado.correo) { salida.sinCorreo++; continue }
-        const resumen = resumenDelDia(empleado, marcas, dow)
         if (!resumen) continue
         const ok = await enviarResumenDiario({
           para: empleado.correo,

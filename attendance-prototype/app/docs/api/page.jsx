@@ -165,6 +165,7 @@ export default function DocsApiPage() {
           <span className="grupo">Endpoints</span>
           <a href="#resumen">GET /api/horas/resumen</a>
           <a href="#tramos">GET /api/horas</a>
+          <a href="#diario">GET /api/resumen-diario</a>
           <a href="#cierre">POST /api/horas/cierre</a>
           <a href="#pagadas">POST /api/horas/pagadas</a>
           <a href="#avatar">PUT /api/empleados/{'{cédula}'}/avatar</a>
@@ -287,6 +288,38 @@ export default function DocsApiPage() {
             <tr><td><code>observaciones</code></td><td className="tipo">string</td><td>Sede y lunes de la semana a la que pertenece el tramo.</td></tr>
           </tbody>
         </table></div>
+      </section>
+
+      <section id="diario">
+        <div className="ruta"><span className="metodo get">GET</span><code>/api/resumen-diario</code></div>
+        <p>
+          El <b>resumen del día de cada colaborador</b>: exactamente lo que ArriveControl le manda por correo cada noche
+          (marcaciones, horas trabajadas y novedades), para que el sistema de la empresa lo <b>consulte</b> en vez de recibirlo.
+          No son horas extra ni valores: eso es <a href="#tramos">/api/horas</a>. Solo salen quienes marcaron ese día.
+        </p>
+        <pre><code>{`GET /api/resumen-diario?fecha=2026-09-17            // por defecto, hoy (Bogotá)
+GET /api/resumen-diario?fecha=2026-09-17&documento=1085300123
+
+// Respuesta
+{ "ok": true, "fecha": "2026-09-17", "total": 2,
+  "resumenes": [
+    { "documento": "1085300123", "nombre": "Tatiana Erazo", "sede": "Centro",
+      "horario": { "entrada": "08:00", "salida": "17:00" },
+      "trabajado": { "segundos": 32400, "texto": "9:00:00" },
+      "marcaciones": [
+        { "tipo": "entrada", "hora": "07:58", "texto": "07:58 a. m.", "automatica": false },
+        { "tipo": "salida",  "hora": "17:00", "texto": "05:00 p. m.", "automatica": true }
+      ],
+      "novedades": [
+        { "clase": "sin-salida", "texto": "No marcaste tu salida. El día se cerró a las 05:00 p. m., la hora en que termina tu horario." }
+      ] }
+  ] }`}</code></pre>
+        <ul>
+          <li><code>automatica: true</code>: la salida la puso el sistema al cerrar el día con el horario (la persona no marcó). Es la misma regla con que se calculan las horas.</li>
+          <li><code>novedades.clase</code>: <code>sin-salida</code> (no marcó la salida) o <code>tarde</code> (entró más de 3 h después de su hora).</li>
+          <li>La empresa decide en <b>Ajustes → Reglamento → Resumen diario</b> si el resumen va por correo, por API o por los dos. Con la consulta apagada, esta ruta responde <code>403</code>.</li>
+          <li>El día se arma en vivo con las marcaciones vigentes: si el panel corrige una marcación, la consulta siguiente ya la trae.</li>
+        </ul>
       </section>
 
       <section id="cierre">

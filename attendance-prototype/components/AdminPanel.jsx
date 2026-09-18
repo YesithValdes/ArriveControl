@@ -4758,6 +4758,32 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 </div>
               </div>
 
+              {/* A dónde va el resumen del día de cada colaborador: al correo,
+                  y/o a disposición del sistema de la empresa por la API (lo
+                  consulta; no se le envía nada). */}
+              <div className="cfg-group">
+                <h3 className="cfg-sub">Resumen diario</h3>
+                <p className="hint">Cada noche se arma, por colaborador, lo que pasó en su día: marcaciones, horas trabajadas y novedades.</p>
+                <div className="cfg-row">
+                  <label>
+                    Correo a cada colaborador
+                    <small>Se manda a quien tenga correo registrado, entre las 11:00 y las 11:59 p. m.</small>
+                  </label>
+                  <div className="cfg-input">
+                    <Toggle on={cfg.resumenCorreo !== false} label="Enviar el resumen diario por correo" onClick={() => updateCfg({ resumenCorreo: cfg.resumenCorreo === false })} />
+                  </div>
+                </div>
+                <div className="cfg-row">
+                  <label>
+                    Consulta por API
+                    <small>El sistema de la empresa pide el mismo resumen con la clave de API: <code>GET /api/resumen-diario?fecha=AAAA-MM-DD</code>. No se envía nada; él consulta.</small>
+                  </label>
+                  <div className="cfg-input">
+                    <Toggle on={cfg.resumenApi !== false} label="Permitir la consulta del resumen diario por API" onClick={() => updateCfg({ resumenApi: cfg.resumenApi === false })} />
+                  </div>
+                </div>
+              </div>
+
               <div className="cfg-group">
                 <h3>Días festivos y dominicales</h3>
                 <p className="cfg-note">

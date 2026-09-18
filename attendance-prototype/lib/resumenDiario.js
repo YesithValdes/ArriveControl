@@ -128,3 +128,32 @@ export function enDoce(min) {
   const h = h24 % 12 === 0 ? 12 : h24 % 12
   return `${String(h).padStart(2, '0')}:${String(m % 60).padStart(2, '0')} ${h24 < 12 ? 'a. m.' : 'p. m.'}`
 }
+
+/** 478.5 → "07:58" (hora del día; pasa de 24 en turnos que cruzan medianoche). */
+const hhmm = (min) => {
+  const m = Math.round(min)
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+}
+
+/**
+ * El resumen de una persona tal como sale por la API (GET /api/resumen-diario):
+ * la misma información del correo, sin campos internos. Vive aquí, junto al
+ * armado, para que las dos salidas no puedan contar distinto.
+ */
+export function formatearResumen({ empleado, resumen }) {
+  return {
+    documento: empleado.cedula ?? null,
+    nombre: empleado.nombre,
+    sede: resumen.sede,
+    horario: resumen.franja ? { entrada: resumen.franja.entrada, salida: resumen.franja.salida } : null,
+    trabajado: { segundos: resumen.trabajadoSeg, texto: hhmmss(resumen.trabajadoSeg) },
+    marcaciones: resumen.marcas.map((m) => ({
+      tipo: m.tipo,
+      hora: hhmm(m.minutos),
+      texto: enDoce(m.minutos),
+      // Salida puesta por el sistema al cerrar el día con el horario (no marcó).
+      automatica: Boolean(m.automatica),
+    })),
+    novedades: resumen.avisos.map((a) => ({ clase: a.clase, texto: a.texto })),
+  }
+}

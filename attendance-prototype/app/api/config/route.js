@@ -23,7 +23,7 @@ export async function GET() {
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const { rows } = await conEmpresa(esquema, (db) => db.query(
-    `select gracia_min from config_laboral where id`,
+    `select gracia_min, resumen_correo, resumen_api from config_laboral where id`,
   ))
   const laboral = await configLaboral(esquema)
   const hoy = new Date().toISOString().slice(0, 10)
@@ -40,6 +40,9 @@ export async function GET() {
       modo_extra: laboral.modoExtra,
       extra_minima_min: Math.round(laboral.extraMinimaH * 60),
       periodo_pago: laboral.periodoPago,
+      // A dónde va el resumen diario de cada colaborador.
+      resumen_correo: rows[0].resumen_correo !== false,
+      resumen_api: rows[0].resumen_api !== false,
     },
   })
 }
@@ -143,6 +146,16 @@ export async function PATCH(req) {
     args.push(c.periodo_pago); sets.push(`periodo_pago = $${args.length}`)
   }
 
+  // El resumen diario: por correo a cada colaborador, y/o a disposición del
+  // sistema de la empresa por la API. Son interruptores, no reglas de pago.
+  for (const campo of ['resumen_correo', 'resumen_api']) {
+    if (!(campo in c)) continue
+    if (typeof c[campo] !== 'boolean') {
+      return NextResponse.json({ ok: false, error: `${campo} debe ser true o false.` }, { status: 400 })
+    }
+    args.push(c[campo]); sets.push(`${campo} = $${args.length}`)
+  }
+
   if (sets.length === 0) return NextResponse.json({ ok: false, error: 'Nada que actualizar.' }, { status: 400 })
 
   // `horas_semana` cuenta como cambio de pago: arrastra el divisor (× 5).
@@ -154,6 +167,7 @@ export async function PATCH(req) {
       `update config_laboral set ${sets.join(', ')} where id
        returning gracia_min, horas_semana, festivos,
                  divisor_horas_mes, factores_hora, modo_extra, extra_minima_min, periodo_pago,
+                 resumen_correo, resumen_api,
                  to_char(nocturno_inicio, 'HH24:MI') as nocturno_inicio,
                  to_char(nocturno_fin, 'HH24:MI') as nocturno_fin`,
       args,
