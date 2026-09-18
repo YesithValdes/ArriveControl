@@ -282,6 +282,26 @@ export async function actualizarEmpresa(id, cambios) {
 }
 
 /**
+ * Todos los pagos de la plataforma, el más reciente primero, con el nombre
+ * de la empresa. Es la pantalla «Pagos» de la consola: qué entró, qué quedó
+ * a medias y de quién.
+ */
+export async function listarPagos(limite = 200) {
+  const { rows } = await control(
+    `select p.id, p.empresa_id as "empresaId", e.nombre as empresa, e.esquema,
+            p.referencia, p.proveedor, p.estado, p.monto::float as monto, p.moneda,
+            p.meses, p.plan_contratado as "planId", p.cubre_hasta as "cubreHasta",
+            p.creado_en as "creadoEn", p.resuelto_en as "resueltoEn"
+       from control.pagos p
+       join control.empresas e on e.id = p.empresa_id
+      order by p.creado_en desc
+      limit $1`,
+    [Math.max(1, Math.min(Number(limite) || 200, 1000))],
+  )
+  return rows
+}
+
+/**
  * Lo que una empresa ha COMPRADO: cada intento de pago con su desenlace, el
  * más reciente primero. Es lo que se mira cuando un cliente dice «yo pagué»
  * y su plan no aparece activo.

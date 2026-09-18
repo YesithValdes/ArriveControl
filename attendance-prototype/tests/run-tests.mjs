@@ -1618,5 +1618,19 @@ await test('la consola muestra fichas (no tabla) con el plan del catálogo y cab
   assert.match(c, /\.chip \{[^}]*color: #fff/);
   for (const k of ['planId', 'limiteUsuarios', 'venceEn', 'pruebaHasta']) assert.ok(c.includes(`cambios.${k}`), `el diálogo manda ${k}`);
 });
+await test('la consola tiene el mismo armazón que el panel de empresa: barra, menú lateral que se encoge, y cuatro pantallas', () => {
+  const c = leerCss(new URL('../components/PlataformaPanel.jsx', import.meta.url), 'utf8');
+  assert.match(c, /<header className="app-header">/);
+  assert.match(c, /<nav className="tabbar"/);
+  assert.match(c, /nav-collapsed/);
+  assert.match(c, /window\.matchMedia\('\(min-width: 900px\)'\)/, 'las tres líneas encogen en PC y abren en móvil');
+  const ids = [...c.matchAll(/\{ id: '(\w+)', label:/g)].map((m) => m[1]);
+  assert.deepEqual(ids, ['resumen', 'empresas', 'pagos', 'envios']);
+  assert.match(c, /grid-template-columns: 240px minmax\(0, 1fr\)/, 'misma medida de menú que AdminPanel');
+  assert.match(c, /\.nav-collapsed \{ grid-template-columns: 74px/, 'mismo riel de iconos que AdminPanel');
+  const r = leerCss(new URL('../app/api/plataforma/pagos/route.js', import.meta.url), 'utf8');
+  assert.match(r, /soloSuperadmin\(\)/);
+  assert.match(r, /listarPagos\(\)/);
+});
 
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);
