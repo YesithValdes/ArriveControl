@@ -26,7 +26,7 @@ export const runtime = 'nodejs'
 export async function POST(req) {
   // `config` y no `ver`: contratar es una decisión de quien administra la
   // empresa, no de cualquiera que pueda consultar.
-  const { estado, empresa } = await estadoAcceso('config')
+  const { estado, empresa } = await estadoAcceso('cuenta')
   if (estado !== 'OK') {
     return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
   }

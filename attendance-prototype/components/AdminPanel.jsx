@@ -589,7 +589,13 @@ const nombreCorto = (texto) => {
   return [p[0], p[p.length >= 4 ? 2 : 1]].map(cap).join(' ');
 };
 
-const ROL_ETIQUETA = { empresa: 'Empresa', superadmin: 'Superadministrador' };
+const ROL_ETIQUETA = { empresa: 'Dueño', admin: 'Administrador', consulta: 'Consulta', superadmin: 'Superadministrador' };
+/** Roles que se pueden dar a alguien de la empresa, con lo que puede hacer. */
+const ROLES_EMPRESA = [
+  ['empresa', 'Dueño', 'Todo, incluida la cuenta: plan, clave de API y quién entra.'],
+  ['admin', 'Administrador', 'Toda la operación: asistencia, correcciones, colaboradores, reglamento, sedes, dispositivos y cierres. No toca la cuenta ni invita.'],
+  ['consulta', 'Consulta', 'Solo ver: asistencia, reportes, historial y exportar.'],
+];
 
 export default function AdminPanel({ sesion = null, permisos = {}, seccionInicial = 'dashboard' }) {
   // Cada pantalla tiene su propia dirección (/admin/empleados,
@@ -773,12 +779,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [usuarios, setUsuarios] = useState([]);
   const [invitaciones, setInvitaciones] = useState([]);
   const [usrError, setUsrError] = useState(null);
-  const [nuevoUsr, setNuevoUsr] = useState(null); // { email }
+  const [nuevoUsr, setNuevoUsr] = useState(null); // { email, rol }
+  const [cupoUsuarios, setCupoUsuarios] = useState(null); // { actuales, limite } del plan
   const cargarUsuarios = () => {
     fetch('/api/usuarios')
       .then((r) => r.json())
       .then((d) => {
-        if (d.ok) { setUsuarios(d.usuarios); setInvitaciones(d.invitaciones ?? []); setUsrError(null); }
+        if (d.ok) { setUsuarios(d.usuarios); setInvitaciones(d.invitaciones ?? []); setCupoUsuarios(d.cupo ?? null); setUsrError(null); }
         else setUsrError(d.error);
       })
       .catch((e) => setUsrError(e.message));
@@ -802,7 +809,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     const r = await fetch('/api/usuarios', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: nuevoUsr.email }),
+      body: JSON.stringify({ email: nuevoUsr.email, rol: nuevoUsr.rol }),
     });
     const d = await r.json().catch(() => null);
     if (!r.ok || !d?.ok) { showToast(d?.error ?? `Error ${r.status}`); return; }
@@ -2130,7 +2137,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     { id: 'reportes', icon: 'file', label: 'Reportes', grupo: 'Informes' },
     { id: 'historial', icon: 'history', label: 'Historial', grupo: 'Informes' },
     { id: 'ajustes', icon: 'settings', label: 'Ajustes', alClic: () => abrirAjustes(), grupo: '' },
-  ];
+  ].filter((t) => {
+    // Cada pestaña exige lo que exigen sus rutas. Lo que no puede usar no le
+    // aparece (y el servidor lo rechaza igual si entra por la URL).
+    if (t.id === 'empleados') return Boolean(permisos.empleados);
+    if (t.id === 'horarios' || t.id === 'cfg-sedes' || t.id === 'cfg-dispositivos') return Boolean(permisos.config);
+    if (t.id === 'ajustes') return Boolean(permisos.config || permisos.usuarios || permisos.cuenta);
+    return true;
+  });
 
   // Pantallas que muestran el submenú de Ajustes al lado (sedes y
   // dispositivos ya no: son pestañas del menú principal). La portada de
@@ -2143,7 +2157,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // la única forma de navegar los ajustes.
   const abrirAjustes = () => {
     if (typeof window !== 'undefined' && window.innerWidth >= 900) {
-      if (permisos.config) { setTab('cfg-empresa'); cargarMiEmpresa(); return; }
+      if (permisos.cuenta) { setTab('cfg-empresa'); cargarMiEmpresa(); return; }
       if (permisos.usuarios) { setTab('cfg-usuarios'); cargarUsuarios(); return; }
       setTab('cfg-reglamento');
       return;
@@ -2159,7 +2173,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // nunca saldría de ahí.
   useEffect(() => {
     if (tab !== 'ajustes' || typeof window === 'undefined' || window.innerWidth < 900) return;
-    const primera = permisos.config ? 'cfg-empresa' : permisos.usuarios ? 'cfg-usuarios' : 'cfg-reglamento';
+    const primera = permisos.cuenta ? 'cfg-empresa' : permisos.usuarios ? 'cfg-usuarios' : 'cfg-reglamento';
     if (primera === 'cfg-empresa') cargarMiEmpresa();
     if (primera === 'cfg-usuarios') cargarUsuarios();
     setTabEstado(primera);
@@ -2410,17 +2424,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           <aside className="cfg-menu" aria-label="Opciones de ajustes">
             {/* Mismo diseño que la lista del celular: una tarjeta por grupo,
                 con su título y las opciones con el icono en caja. */}
-            {(permisos.usuarios || permisos.config) && (
+            {(permisos.usuarios || permisos.cuenta) && (
               <div className="cfg-grupo">
                 <h4>Cuenta y acceso</h4>
-                {permisos.config && (
+                {permisos.cuenta && (
                   <button className={`cfg-item${tab === 'cfg-plan' ? ' on' : ''}`} onClick={() => setTab('cfg-plan')}>
                     <span className="cfg-ico"><Icon name="file" size={16} /></span> Plan
                     {/* El punto avisa sin gritar cuando hay algo que atender. */}
                     {sesion?.planEstado && !sesion.planEstado.pagada && <span className="cfg-punto" />}
                   </button>
                 )}
-                {permisos.config && (
+                {permisos.cuenta && (
                   <button className={`cfg-item${tab === 'cfg-empresa' ? ' on' : ''}`} onClick={() => { setTab('cfg-empresa'); cargarMiEmpresa(); }}>
                     <span className="cfg-ico"><Icon name="database" size={16} /></span> Mi empresa
                   </button>
@@ -2432,6 +2446,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 )}
               </div>
             )}
+            {permisos.config && (<>
             <div className="cfg-grupo">
               <h4>Reglas de la empresa</h4>
               <button className={`cfg-item${tab === 'cfg-reglamento' ? ' on' : ''}`} onClick={() => setTab('cfg-reglamento')}>
@@ -2453,6 +2468,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <span className="cfg-ico"><Icon name="pin" size={16} /></span> Diagnóstico GPS
               </button>
             </div>
+            </>)}
           </aside>
         )}
 
@@ -2874,7 +2890,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                   <span>{aDay(a)}{a.person.sede ? ` · ${a.person.sede}` : ''}</span>
                                   <span>{aDesc(a)}</span>
                                 </p>
-                                <div className="caso-fix">
+                                {permisos.corregir && <div className="caso-fix">
                                   <label>
                                     {a.kind === 'missing-exit' ? 'Salida' : dosTextos('Hora correcta', 'Hora')}
                                     <input
@@ -2894,7 +2910,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                     <button className="btn primary" onClick={() => guardarAnomalia(a)}>Guardar</button>
                                     <button className="costo-link" onClick={() => openFix(a)}>Ver día completo →</button>
                                   </div>
-                                </div>
+                                </div>}
+                                {!permisos.corregir && (
+                                  <button className="costo-link" onClick={() => openFix(a)}>Ver día completo →</button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -3619,10 +3638,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'ajustes' && (
           <section className="card grow ajustes-plano">
             <div className="scrollable">
-              {(permisos.usuarios || permisos.config) && (
+              {(permisos.usuarios || permisos.cuenta) && (
                 <div className="tools-grupo">
                   <h3>Cuenta y acceso</h3>
-                  {permisos.config && (
+                  {permisos.cuenta && (
                     <button className="tool" onClick={() => { setTab('cfg-empresa'); cargarMiEmpresa(); }}>
                       <span className="icon"><Icon name="database" size={19} /></span>
                       <span className="tool-txt"><b>Mi empresa</b><small>Nombre, clave de API y plan</small></span>
@@ -3639,6 +3658,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 </div>
               )}
 
+              {permisos.config && (<>
               <div className="tools-grupo">
                 <h3>Reglas de la empresa</h3>
                 <button className="tool" onClick={() => setTab('cfg-reglamento')}>
@@ -3671,6 +3691,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
                 </button>
               </div>
+              </>)}
             </div>
           </section>
         )}
@@ -3679,12 +3700,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'cfg-usuarios' && (
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
-            <h2>Acceso al panel <span className="muted-count">{usuarios.length}</span></h2>
+            <h2>Acceso al panel <span className="muted-count">{cupoUsuarios?.limite != null ? `${cupoUsuarios.actuales} de ${cupoUsuarios.limite}` : usuarios.length}</span></h2>
 
             {usrError && <p className="empty">⚠ {usrError}</p>}
             <div className="att-controls">
               {!nuevoUsr && (
-                <button className="btn primary" onClick={() => setNuevoUsr({ email: '' })}>
+                <button
+                  className="btn primary"
+                  onClick={() => setNuevoUsr({ email: '', rol: 'consulta' })}
+                  disabled={cupoUsuarios?.limite != null && cupoUsuarios.actuales >= cupoUsuarios.limite}
+                  title={cupoUsuarios?.limite != null && cupoUsuarios.actuales >= cupoUsuarios.limite ? `Tu plan permite ${cupoUsuarios.limite} acceso(s) al panel. Pasa a un plan mayor para invitar a más.` : 'Invitar a alguien al panel'}
+                >
                   Invitar
                 </button>
               )}
@@ -3696,10 +3722,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <label className="ev-form-reason">Correo de Google
                   <input
                     type="email" value={nuevoUsr.email} autoFocus placeholder="persona@empresa.com"
-                    onChange={(e) => setNuevoUsr({ email: e.target.value })}
+                    onChange={(e) => setNuevoUsr({ ...nuevoUsr, email: e.target.value })}
                   />
                 </label>
-                <small className="hint">Entra sola la primera vez que inicie sesión.</small>
+                <label className="ev-form-reason">Rol
+                  <select className="sede-select" value={nuevoUsr.rol} onChange={(e) => setNuevoUsr({ ...nuevoUsr, rol: e.target.value })}>
+                    {ROLES_EMPRESA.map(([clave, etiqueta]) => <option key={clave} value={clave}>{etiqueta}</option>)}
+                  </select>
+                </label>
+                <small className="hint">{ROLES_EMPRESA.find(([c]) => c === nuevoUsr.rol)?.[2]} Entra sola la primera vez que inicie sesión.</small>
                 <div className="dialog-actions">
                   <button className="btn" onClick={() => setNuevoUsr(null)}>Cancelar</button>
                   <button className="btn primary" disabled={!nuevoUsr.email.includes('@')} onClick={invitar}>
@@ -3732,7 +3763,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <div className="att-tablewrap">
                   <table className="att-table">
                     <thead>
-                      <tr><th>Persona</th><th>Estado</th><th>Último acceso</th><th></th></tr>
+                      <tr><th>Persona</th><th>Rol</th><th>Estado</th><th>Último acceso</th><th></th></tr>
                     </thead>
                     <tbody>
                       {usuarios.map((u) => (
@@ -3740,6 +3771,20 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           <td className="att-name">
                             {u.nombre}
                             <br /><small style={{ color: 'var(--muted)' }}>{u.email}{u.email === sesion?.email ? ' · tú' : ''}</small>
+                          </td>
+                          <td>
+                            {/* El rol se cambia aquí; nadie se cambia el suyo y siempre queda un dueño. */}
+                            {u.email === sesion?.email ? (
+                              <span>{ROL_ETIQUETA[u.rol] ?? u.rol}</span>
+                            ) : (
+                              <select
+                                className="sede-select rol-select" aria-label="Rol" value={u.rol}
+                                title={ROLES_EMPRESA.find(([c]) => c === u.rol)?.[2]}
+                                onChange={(e) => actualizarUsuario(u, { rol: e.target.value })}
+                              >
+                                {ROLES_EMPRESA.map(([clave, etiqueta]) => <option key={clave} value={clave}>{etiqueta}</option>)}
+                              </select>
+                            )}
                           </td>
                           <td>{u.activo ? '🟢 activo' : '⛔ inactivo'}</td>
                           <td>{u.ultimoAcceso ? fmtTs(u.ultimoAcceso) : 'nunca'}</td>
@@ -3784,7 +3829,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       <tbody>
                         {invitaciones.map((i) => (
                           <tr key={i.id}>
-                            <td className="att-name">{i.email}</td>
+                            <td className="att-name">{i.email} <small style={{ color: 'var(--muted)' }}>· {ROL_ETIQUETA[i.rol] ?? i.rol}</small></td>
                             <td>{fmtTs(i.expiraEn)}</td>
                             <td style={{ whiteSpace: 'nowrap' }}>
                               <button className="btn small" onClick={() => copiarInvitacion(i.email)}>
@@ -3894,7 +3939,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           <em>/mes</em>
                         </div>
                         <span className="plan-tope">
-                          Hasta {p.empleados} empleados
+                          Hasta {p.empleados} colaboradores · {p.usuarios} acceso{p.usuarios === 1 ? '' : 's'} al panel
                         </span>
                         <button
                           className={`btn ${p.sugerido ? 'primary' : ''} block`}
@@ -5008,6 +5053,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                 </span>
                                 {/* Solo iconos: el nombre va en el title y para el lector de pantalla. */}
                                 <span className="tl-actions">
+                                  {permisos.corregir && (<>
                                   <button
                                     className="btn small btn-ico"
                                     title="Editar" aria-label="Editar marcación"
@@ -5021,6 +5067,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                   <button className="btn small danger-btn btn-ico" title="Eliminar" aria-label="Eliminar marcación" onClick={() => removeEv(e)}>
                                     <Icon name="trash" size={14} />
                                   </button>
+                                  </>)}
                                   {/* Detalle de la ubicación (distancia, precisión, mapa): se abre aquí. */}
                                   {e.lat != null && e.lon != null && (
                                     <button
@@ -5047,7 +5094,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           {/* Alta manual: el formulario aparece bajo el botón, dentro del día */}
                           {evForm?.mode === 'add' && !evForm.conFecha && evForm.fecha === d.fecha
                             ? formularioEv
-                            : (
+                            : permisos.corregir && (
                               <button className="btn small block" onClick={() => setEvForm({ mode: 'add', fecha: d.fecha, type: d.evs.length % 2 === 0 ? 'in' : 'out', time: '08:00', reason: '' })}>
                                 Agregar marcación
                               </button>
@@ -5135,7 +5182,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         tenía un día en la lista, solo se pintaba dentro de su
                         acordeón (cerrado) y parecía que el botón no hacía nada. */}
                     {evForm?.mode === 'add' && evForm.conFecha ? formularioEv : null}
-                    {!evForm && (
+                    {!evForm && permisos.corregir && (
                       <button className="btn block" onClick={() => setEvForm({ mode: 'add', conFecha: true, fecha: drawer.hasta, type: 'in', time: '08:00', reason: '' })}>
                         Agregar marcación en otro día
                       </button>
@@ -6760,6 +6807,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .rep-cierre { color: var(--muted); }
 .rep-cierre.cerrado { background: var(--btn-primary); border-color: var(--btn-primary); color: #fff; }
 .rep-cierre.cerrado .ico-num { font-size: 11px; font-weight: 600; }
+.rol-select { flex: none; width: auto; font-size: 12.5px; padding: 5px 28px 5px 8px; }
 .rep-pago { color: var(--muted); }
 .rep-pago.pagado { background: #dcf3e6; border-color: #b7e4c7; color: #1a7f4b; }
 .rep-pago.parcial { background: #fdf3d3; border-color: #eedfa8; color: #8a6100; }

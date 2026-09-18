@@ -1552,4 +1552,33 @@ await test('la ruta del avatar acepta id interno o cédula y guarda solo JPEG no
   assert.match(fuente, /x-api-key/, 'entra con la clave de API');
 });
 
+// ── Roles dentro de la empresa ─────────────────────────────────────────
+console.log('\n🔐 Roles');
+const { puede, listaRoles, esRolDeEmpresa, ACCIONES } = await import('../lib/roles.js');
+const { PLANES } = await import('../lib/planes.js');
+await test('el dueño puede todo; el administrador todo menos la cuenta y la gente; consulta solo ve', () => {
+  for (const a of ACCIONES) assert.ok(puede('empresa', a), `dueño: ${a}`);
+  for (const a of ['ver', 'corregir', 'empleados', 'config', 'liquidar']) assert.ok(puede('admin', a), `admin: ${a}`);
+  for (const a of ['usuarios', 'cuenta']) assert.ok(!puede('admin', a), `admin NO: ${a}`);
+  assert.ok(puede('consulta', 'ver'));
+  for (const a of ACCIONES.filter((x) => x !== 'ver')) assert.ok(!puede('consulta', a), `consulta NO: ${a}`);
+  assert.ok(!puede('superadmin', 'ver'), 'el superadmin no entra al panel de una empresa');
+});
+await test('solo los tres roles de empresa se pueden dar; el superadmin no', () => {
+  assert.deepEqual(listaRoles().map((r) => r.clave), ['empresa', 'admin', 'consulta']);
+  assert.ok(esRolDeEmpresa('admin') && !esRolDeEmpresa('superadmin') && !esRolDeEmpresa('dueno'));
+});
+await test('cada plan dice cuántos accesos al panel incluye (es lo que se vende)', () => {
+  for (const [id, p] of Object.entries(PLANES)) assert.ok(Number.isInteger(p.usuarios) && p.usuarios >= 1, `${id} sin usuarios`);
+  assert.ok(PLANES.esencial.usuarios < PLANES.equipo.usuarios && PLANES.equipo.usuarios < PLANES.empresa.usuarios);
+});
+await test('las rutas de la cuenta exigen «cuenta» y las de gente «usuarios»', () => {
+  const emp = leerCss(new URL('../app/api/empresa/route.js', import.meta.url), 'utf8');
+  assert.equal((emp.match(/estadoAcceso\('cuenta'\)/g) ?? []).length, 2, 'GET y PATCH de /api/empresa');
+  const pago = leerCss(new URL('../app/api/pago/iniciar/route.js', import.meta.url), 'utf8');
+  assert.match(pago, /estadoAcceso\('cuenta'\)/);
+  const usr = leerCss(new URL('../app/api/usuarios/route.js', import.meta.url), 'utf8');
+  assert.match(usr, /cabeOtroUsuario\(empresa\)/, 'invitar respeta el cupo del plan');
+});
+
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);

@@ -17,7 +17,7 @@ import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../lib/sesion'
 export const runtime = 'nodejs'
 
 export async function GET() {
-  const { estado, empresa } = await estadoAcceso('config')
+  const { estado, empresa } = await estadoAcceso('cuenta')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const { actuales, limite } = await cabeOtroEmpleado(empresa)
@@ -44,7 +44,7 @@ export async function GET() {
 }
 
 export async function PATCH(req) {
-  const { estado, empresa } = await estadoAcceso('config')
+  const { estado, empresa } = await estadoAcceso('cuenta')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   let c

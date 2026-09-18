@@ -15,6 +15,7 @@
 import { NextResponse } from 'next/server'
 import { pool } from '../../../../lib/auth'
 import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../../lib/sesion'
+import { esRolDeEmpresa } from '../../../../lib/roles.js'
 
 export const runtime = 'nodejs'
 
@@ -29,11 +30,25 @@ export async function PATCH(req, { params }) {
   try { c = await req.json() } catch { return NextResponse.json({ ok: false, error: 'JSON inválido.' }, { status: 400 }) }
 
   const { rows: actuales } = await pool.query(
-    `select id, activo from control."user" where id = $1 and empresa_id = $2`, [id, empresa.id],
+    `select id, activo, rol from control."user" where id = $1 and empresa_id = $2`, [id, empresa.id],
   )
   if (actuales.length === 0) return NextResponse.json({ ok: false, error: 'Usuario no encontrado.' }, { status: 404 })
 
   const nuevoActivo = 'activo' in c ? Boolean(c.activo) : actuales[0].activo
+
+  // Cambio de rol: nadie se cambia el suyo, y siempre debe quedar un dueño.
+  let nuevoRol = null
+  if ('rol' in c && c.rol !== actuales[0].rol) {
+    if (!esRolDeEmpresa(c.rol)) return NextResponse.json({ ok: false, error: 'El rol debe ser dueño, administrador o consulta.' }, { status: 400 })
+    if (id === usuario.id) return NextResponse.json({ ok: false, error: 'No puedes cambiar tu propio rol.' }, { status: 400 })
+    if (actuales[0].rol === 'empresa') {
+      const { rows } = await pool.query(
+        `select count(*)::int as n from control."user" where empresa_id = $2 and rol = 'empresa' and activo and id <> $1`, [id, empresa.id],
+      )
+      if (rows[0].n === 0) return NextResponse.json({ ok: false, error: 'Debe quedar al menos un dueño.' }, { status: 400 })
+    }
+    nuevoRol = c.rol
+  }
 
   // Nombre para mostrar (Historial, menú de la cuenta): el que llega de Google
   // a veces es el de la empresa o va en mayúsculas; aquí se pone el de la
@@ -64,10 +79,10 @@ export async function PATCH(req, { params }) {
   }
 
   const { rows } = await pool.query(
-    `update control."user" set activo = $2, name = coalesce($4, name), updated_at = now()
+    `update control."user" set activo = $2, name = coalesce($4, name), rol = coalesce($5, rol), updated_at = now()
       where id = $1 and empresa_id = $3
       returning id, name as nombre, email, rol, activo`,
-    [id, nuevoActivo, empresa.id, nuevoNombre],
+    [id, nuevoActivo, empresa.id, nuevoNombre, nuevoRol],
   )
   return NextResponse.json({ ok: true, usuario: rows[0] })
 }

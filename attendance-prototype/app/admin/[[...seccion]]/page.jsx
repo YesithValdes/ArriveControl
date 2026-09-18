@@ -62,6 +62,7 @@ export default async function AdminPage({ params }) {
     config: tienePermiso(usuario, 'config'),
     usuarios: tienePermiso(usuario, 'usuarios'),
     liquidar: tienePermiso(usuario, 'liquidar'),
+    cuenta: tienePermiso(usuario, 'cuenta'),
   };
 
   // Último paso del registro: ponerle contraseña a la app. Se pide aquí y no

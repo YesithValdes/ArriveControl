@@ -15,6 +15,8 @@
 import { NextResponse } from 'next/server'
 import { pool } from '../../../lib/auth'
 import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../lib/sesion'
+import { esRolDeEmpresa } from '../../../lib/roles.js'
+import { cabeOtroUsuario } from '../../../lib/empresas.js'
 
 export const runtime = 'nodejs'
 
@@ -37,14 +39,17 @@ export async function GET() {
   // Invitados que aún no han entrado: aparecen en la misma lista porque para
   // quien administra son lo mismo — gente con acceso concedido.
   const { rows: invitaciones } = await pool.query(
-    `select id, email, creada_en as "creadaEn", expira_en as "expiraEn"
+    `select id, email, rol, creada_en as "creadaEn", expira_en as "expiraEn"
        from control.invitaciones
       where empresa_id = $1 and aceptada_en is null and expira_en > now()
       order by creada_en`,
     [empresa.id],
   )
 
-  return NextResponse.json({ ok: true, usuarios, invitaciones })
+  // Cuántos accesos permite el plan, para que la pantalla lo diga antes de
+  // que la invitación choque con el tope.
+  const cupo = await cabeOtroUsuario(empresa)
+  return NextResponse.json({ ok: true, usuarios, invitaciones, cupo: { actuales: cupo.actuales, limite: cupo.limite } })
 }
 
 export async function POST(req) {
@@ -59,6 +64,22 @@ export async function POST(req) {
   const email = String(c?.email ?? '').trim().toLowerCase()
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return NextResponse.json({ ok: false, error: 'Correo inválido.' }, { status: 400 })
+  }
+  // Con qué rol entrará. Solo el dueño invita (permiso `usuarios`), y puede
+  // dar cualquiera de los tres roles de empresa.
+  const rol = c?.rol ?? 'consulta'
+  if (!esRolDeEmpresa(rol)) {
+    return NextResponse.json({ ok: false, error: 'El rol debe ser dueño, administrador o consulta.' }, { status: 400 })
+  }
+  // Los accesos al panel se venden con el plan.
+  const cupo = await cabeOtroUsuario(empresa)
+  if (!cupo.cabe) {
+    return NextResponse.json({
+      ok: false,
+      error: cupo.sinAcceso
+        ? 'Sin suscripción vigente no se puede invitar.'
+        : `Tu plan permite ${cupo.limite} acceso${cupo.limite === 1 ? '' : 's'} al panel y ya ${cupo.limite === 1 ? 'está usado' : 'están usados'}. Pasa a un plan mayor en Ajustes → Plan para invitar a más personas.`,
+    }, { status: 402 })
   }
 
   // Si ya tiene cuenta, invitarlo no sirve de nada: el hook de registro solo
@@ -78,10 +99,10 @@ export async function POST(req) {
 
   try {
     const { rows } = await pool.query(
-      `insert into control.invitaciones (empresa_id, email, invitado_por)
-       values ($1, $2, $3)
-       returning id, email, expira_en as "expiraEn"`,
-      [empresa.id, email, usuario.email],
+      `insert into control.invitaciones (empresa_id, email, rol, invitado_por)
+       values ($1, $2, $3, $4)
+       returning id, email, rol, expira_en as "expiraEn"`,
+      [empresa.id, email, rol, usuario.email],
     )
     return NextResponse.json({ ok: true, invitacion: rows[0] })
   } catch (e) {

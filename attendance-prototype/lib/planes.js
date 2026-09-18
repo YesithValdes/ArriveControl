@@ -36,9 +36,11 @@ export const MAX_MESES_ENTRADA = 3
  * sistema (pantallas, cobro, límites) sale de aquí.
  */
 export const PLANES = {
-  esencial: { nombre: 'Esencial', empleados: 10, precio: 15, para: 'Negocios pequeños' },
-  equipo: { nombre: 'Equipo', empleados: 30, precio: 29, para: 'Equipos que crecen' },
-  empresa: { nombre: 'Empresa', empleados: 100, precio: 49, para: 'Varias sedes y turnos' },
+  // `usuarios`: cuántas personas pueden entrar al panel (incluido el dueño).
+  // Los roles (administrador, consulta) se venden así: más accesos, plan mayor.
+  esencial: { nombre: 'Esencial', empleados: 10, usuarios: 1, precio: 15, para: 'Negocios pequeños' },
+  equipo: { nombre: 'Equipo', empleados: 30, usuarios: 3, precio: 29, para: 'Equipos que crecen' },
+  empresa: { nombre: 'Empresa', empleados: 100, usuarios: 10, precio: 49, para: 'Varias sedes y turnos' },
 }
 
 /** Por encima del plan más grande se negocia; no se vende por autoservicio. */

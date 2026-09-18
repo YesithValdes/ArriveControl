@@ -1,31 +1,55 @@
 /**
  * lib/roles.js — Quién puede hacer qué en ArriveControl.
  *
- * DOS roles, y son de dos mundos distintos (no compiten entre sí):
+ * Un rol de PLATAFORMA y tres DENTRO de cada empresa:
  *
- *   superadmin → alcance PLATAFORMA. Crea y elimina empresas. No entra al
+ *   superadmin → alcance plataforma. Crea y elimina empresas. No entra al
  *                panel de asistencia de ninguna: no tiene empresa_id, así que
  *                `estadoAcceso` lo deja en SIN_EMPRESA por construcción.
- *   empresa    → alcance SU EMPRESA, y ahí puede todo.
+ *   empresa    → el DUEÑO. Puede todo, incluida la cuenta: plan y pagos,
+ *                clave de API, invitar y quitar gente, cambiar roles.
+ *   admin      → ADMINISTRADOR. Toda la operación: asistencia, corregir
+ *                marcaciones, colaboradores, horarios, sedes, dispositivos,
+ *                reglamento y valorización, cerrar períodos. No toca la
+ *                cuenta ni invita a nadie.
+ *   consulta   → CONSULTA. Solo ve: asistencia, reportes, historial, exportar.
  *
- * Antes había tres roles dentro de la empresa (dueño, supervisor, consulta).
- * Se quitaron a propósito: la confidencialidad de los datos es de la empresa y
- * repartir permisos internos es asunto suyo. Varias personas pueden entrar a la
- * misma empresa —cada una con su cuenta de Google— con idénticos permisos.
+ * Cuántas personas pueden entrar al panel lo decide el PLAN (lib/planes.js):
+ * es una funcionalidad que se vende, no un regalo de la cuenta.
  *
- * El vocabulario de ACCIONES se conserva aunque hoy un solo rol las tenga
- * todas: es lo que usan las rutas para declarar qué exigen, y hace que volver a
- * partir permisos algún día sea cambiar esta tabla y nada más.
+ * El vocabulario de ACCIONES es lo que usan las rutas para declarar qué
+ * exigen; repartir permisos es cambiar esta tabla y nada más.
  */
 
-/** Acciones del sistema, en el vocabulario del negocio (no CRUD genérico). */
-export const ACCIONES = ['ver', 'corregir', 'empleados', 'config', 'usuarios', 'liquidar']
+/**
+ * Acciones del sistema, en el vocabulario del negocio (no CRUD genérico).
+ *   ver        leer asistencia, reportes, historial, exportar
+ *   corregir   agregar, cambiar y eliminar marcaciones
+ *   empleados  registrar y editar colaboradores (rostros, salario, horario)
+ *   config     reglamento, valorización, horarios, sedes, dispositivos
+ *   liquidar   cerrar y reabrir períodos, anotar pagos
+ *   usuarios   invitar y desactivar gente del panel, cambiar roles
+ *   cuenta     Mi empresa: nombre y NIT, clave de API, plan y pagos
+ */
+export const ACCIONES = ['ver', 'corregir', 'empleados', 'config', 'liquidar', 'usuarios', 'cuenta']
 
 export const ROLES = {
   empresa: {
-    etiqueta: 'Empresa',
-    descripcion: 'Administra toda la asistencia de su empresa.',
+    etiqueta: 'Dueño',
+    descripcion: 'Todo, incluida la cuenta: plan, clave de API y quién entra.',
     acciones: [...ACCIONES],
+    alcance: 'todas',
+  },
+  admin: {
+    etiqueta: 'Administrador',
+    descripcion: 'Toda la operación: asistencia, correcciones, colaboradores, reglamento, sedes, dispositivos y cierres. No toca la cuenta ni invita.',
+    acciones: ['ver', 'corregir', 'empleados', 'config', 'liquidar'],
+    alcance: 'todas',
+  },
+  consulta: {
+    etiqueta: 'Consulta',
+    descripcion: 'Solo ver: asistencia, reportes, historial y exportar.',
+    acciones: ['ver'],
     alcance: 'todas',
   },
   superadmin: {
@@ -46,12 +70,15 @@ export function puede(rol, accion) {
 /** ¿Es el administrador de la plataforma? */
 export const esSuperadmin = (usuario) => usuario?.rol === 'superadmin'
 
+/** ¿Es un rol que se puede dar a alguien de la empresa? */
+export const esRolDeEmpresa = (rol) => rol === 'empresa' || rol === 'admin' || rol === 'consulta'
+
 /**
  * Sede a la que está limitado un usuario, o null si ve todas.
  *
- * Hoy devuelve siempre null: sin rol de supervisor nadie está limitado a una
- * sede. Se conserva porque las consultas la reciben y filtran con ella; el día
- * que vuelva a existir un rol por sede, se cambia aquí.
+ * Hoy devuelve siempre null: ningún rol está limitado a una sede. Se conserva
+ * porque las consultas la reciben y filtran con ella; el día que exista un
+ * rol por sede, se cambia aquí.
  */
 export function sedeDelAlcance() {
   return null

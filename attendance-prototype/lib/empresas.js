@@ -170,6 +170,28 @@ export async function cabeOtroEmpleado(empresa) {
   return { cabe: actuales < limite, actuales, limite }
 }
 
+/**
+ * ¿Cabe otra persona en el PANEL (dueño, administradores y consulta)?
+ *
+ * El tope sale del plan (`usuarios`); durante la prueba rige el plan más
+ * pequeño. Cuentan los usuarios activos y las invitaciones pendientes: una
+ * invitación es un puesto reservado.
+ * @returns {Promise<{cabe: boolean, actuales: number, limite: number|null}>}
+ */
+export async function cabeOtroUsuario(empresa) {
+  if (!tieneAcceso(empresa)) return { cabe: false, actuales: 0, limite: 0, sinAcceso: true }
+  const delPlan = planPorId(empresa.plan_id)?.usuarios
+  const limite = delPlan !== undefined ? delPlan : (enPrueba(empresa) ? planPorId('esencial')?.usuarios ?? null : null)
+  const { rows } = await control(
+    `select (select count(*)::int from control."user" where empresa_id = $1 and activo)
+          + (select count(*)::int from control.invitaciones where empresa_id = $1 and aceptada_en is null and expira_en > now()) as n`,
+    [empresa.id],
+  )
+  const actuales = Number(rows[0]?.n ?? 0)
+  if (limite == null) return { cabe: true, actuales, limite: null }
+  return { cabe: actuales < limite, actuales, limite }
+}
+
 // ── Alta de una empresa ────────────────────────────────────────────────
 
 /** Nombre de esquema a partir del nombre comercial: 'El Trigo S.A.' → 'el_trigo'. */
