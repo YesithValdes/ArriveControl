@@ -1607,15 +1607,18 @@ await test('la ruta de compras existe y solo la ve el superadmin', () => {
   assert.match(r, /soloSuperadmin\(\)/);
   assert.match(r, /pagosDeEmpresa\(id\)/);
 });
-await test('la consola muestra fichas (no tabla) con el plan del catálogo y cabe en 400 px', () => {
+await test('la consola usa el diseño del panel de empresa: tabla en PC, acordeón en móvil, chips y tiles con los mismos tokens', () => {
   const c = leerCss(new URL('../components/PlataformaPanel.jsx', import.meta.url), 'utf8');
   assert.ok(!c.includes('value="gratis"'), 'ya no se elige gratis/pago: se elige el plan del catálogo');
   assert.match(c, /Object\.entries\(PLANES\)\.map/);
-  assert.match(c, /className="fichas"/);
-  assert.match(c, /grid-template-columns: repeat\(auto-fill, minmax\(360px, 1fr\)\)/);
-  assert.match(c, /@media \(max-width: 560px\)[\s\S]*\.fichas \{ grid-template-columns: 1fr; \}|\.fichas \{ grid-template-columns: 1fr; \}/);
-  // Colores sólidos: los chips llevan tinta blanca sobre el tono, no tono sobre pastel.
-  assert.match(c, /\.chip \{[^}]*color: #fff/);
+  assert.match(c, /<table className="att-table">/);
+  assert.match(c, /<Acordeon\s/);
+  assert.match(c, /\.att-tablewrap \{ display: none;/, 'la tabla se esconde en móvil');
+  assert.match(c, /@media \(min-width: 900px\)[\s\S]*\.att-tablewrap \{ display: block; \}[\s\S]*\.acc \{ display: none; \}/, 'en PC tabla, sin acordeón');
+  // Los chips son los del panel: suaves, con punto, tokens good/warn/crit. Sin paleta propia.
+  assert.match(c, /\.chip\.good \{ color: var\(--good-text\); background: var\(--good-soft\); \}/);
+  assert.ok(!/--k-in|--k-out|--k-no|--p-good|#fff;\s*\}\s*\.chip/.test(c), 'sin colores del kiosco ni chips sólidos');
+  assert.match(c, /\.tiles \{ grid-template-columns: repeat\(4, 1fr\)/, 'tiles de 4 en PC, como el dashboard');
   for (const k of ['planId', 'limiteUsuarios', 'venceEn', 'pruebaHasta']) assert.ok(c.includes(`cambios.${k}`), `el diálogo manda ${k}`);
 });
 await test('la consola tiene el mismo armazón que el panel de empresa: barra, menú lateral que se encoge, y cuatro pantallas', () => {

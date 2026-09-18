@@ -16,8 +16,8 @@
  *   Pagos     → todos los pagos de la plataforma con su desenlace.
  *   Envíos    → las tareas programadas y si corrieron.
  *
- * Los colores son sólidos a propósito: en la consola se decide rápido y un
- * chip pálido no se distingue de otro de un vistazo.
+ * Los colores, las tarjetas, la tabla y el acordeón son los del panel de
+ * empresa: mismos tokens y mismas medidas, sin paleta propia.
  *
  * Eliminar exige teclear el nombre del esquema — la misma protección que usa
  * GitHub para borrar un repositorio.
@@ -173,6 +173,10 @@ function Icono({ name, size = 17 }) {
     x: <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>,
     refresh: <><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></>,
     chevronRight: <polyline points="9 18 15 12 9 6" />,
+    user: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
+    file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></>,
+    clock: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
+    alert: <><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -415,9 +419,26 @@ export default function PlataformaPanel({ sesion }) {
 
   const chipPago = (estado) => {
     const tono = estado === 'APROBADA' ? 'good' : estado === 'PENDIENTE' ? 'warn' : 'crit';
-    const texto = estado === 'APROBADA' ? 'Aprobado' : estado === 'PENDIENTE' ? 'Pendiente' : estado.toLowerCase();
+    const texto = estado === 'APROBADA' ? 'Aprobado' : estado === 'PENDIENTE' ? 'Pendiente' : estado === 'RECHAZADA' ? 'Rechazado' : estado === 'ANULADA' ? 'Anulado' : 'Error';
     return <span className={`chip ${tono}`}>{texto}</span>;
   };
+
+  /** Lo que le falta a una empresa para usarse de verdad, o null. */
+  const queFalta = (e) => (e.esquemaRoto ? null
+    : e.empleados === 0 ? 'Sin colaboradores registrados'
+      : e.conRostro === 0 ? 'Nadie con rostro registrado: el kiosco no reconoce a nadie'
+        : e.horarios === 0 ? 'Sin horarios: no se calculan horas'
+          : e.kioscos === 0 ? 'Sin kiosco vinculado' : null);
+
+  /** Los cuatro botones de una empresa, iguales en la tabla y en el acordeón. */
+  const accionesDe = (e) => (
+    <>
+      <button className="btn btn-ico" title="Ajustes: plan, estado, fechas y topes" aria-label="Ajustes" onClick={() => abrirAjustes(e)}><Icono name="sliders" size={16} /></button>
+      <button className="btn btn-ico" title="Regalar días de prueba o de suscripción" aria-label="Regalar días" onClick={() => setRegalando({ empresa: e, dias: 7, que: 'suscripcion' })}><Icono name="calendarPlus" size={16} /></button>
+      <button className="btn btn-ico" title="Compras: cada pago y su desenlace" aria-label="Compras" onClick={() => verCompras(e)}><Icono name="receipt" size={16} /></button>
+      <button className="btn btn-ico danger-btn" title="Eliminar la empresa y su esquema" aria-label="Eliminar" onClick={() => setBorrando({ empresa: e, confirmacion: '' })}><Icono name="trash" size={16} /></button>
+    </>
+  );
 
   return (
     <div className={`plat-root${collapsed ? ' nav-collapsed' : ''}${navOpen ? ' nav-open' : ''}`}>
@@ -500,211 +521,234 @@ export default function PlataformaPanel({ sesion }) {
         {error && <p className="aviso crit">No se pudo cargar: {error}</p>}
         {empresas === null && !error && <p className="aviso">Cargando…</p>}
 
-        {/* Resumen: el agregado y lo que requiere atención */}
+        {/* Resumen: el agregado (como el dashboard) y lo que requiere atención */}
         {tab === 'resumen' && resumen && (
           <>
-            <div className="dos">
-              <section className="card">
-                <h2>Uso</h2>
-                <p className="hint">Quién está usando la plataforma.</p>
-                <div className="tiles">
-                  <div className="tile"><span className="label">Empresas</span><span className="value">{nf.format(resumen.total)}</span></div>
-                  <div className="tile"><span className="label">En uso</span><span className="value good">{nf.format(resumen.activa)}</span></div>
-                  <div className="tile"><span className="label">Sin uso</span><span className={`value${resumen.inactiva > 0 ? ' warn' : ''}`}>{nf.format(resumen.inactiva)}</span></div>
-                  <div className="tile"><span className="label">Esquemas rotos</span><span className={`value${resumen.rota > 0 ? ' crit' : ''}`}>{nf.format(resumen.rota)}</span></div>
-                  <div className="tile"><span className="label">Colaboradores</span><span className="value">{nf.format(resumen.empleados)}</span></div>
-                  <div className="tile"><span className="label">Marcaciones</span><span className="value">{nf.format(resumen.marcaciones)}</span></div>
-                </div>
-              </section>
-              <section className="card">
-                <h2>Negocio</h2>
-                <p className="hint">Quién paga y cuánto ha entrado.</p>
-                <div className="tiles">
-                  <div className="tile"><span className="label">Pagando</span><span className="value good">{nf.format(resumen.pagando)}</span></div>
-                  <div className="tile"><span className="label">En prueba</span><span className="value info">{nf.format(resumen.enPrueba)}</span></div>
-                  <div className="tile"><span className="label">Sin acceso</span><span className={`value${resumen.vencidas > 0 ? ' crit' : ''}`}>{nf.format(resumen.vencidas)}</span></div>
-                  {/* Un pago pendiente viejo casi siempre es un webhook que no
-                      llegó: el cliente pagó y su plan no se activó. */}
-                  <div className="tile"><span className="label">Pagos sin resolver</span><span className={`value${resumen.pendientes > 0 ? ' warn' : ''}`}>{nf.format(resumen.pendientes)}</span></div>
-                  <div className="tile ancha"><span className="label">Recaudado</span><span className="value">{fmtDinero(resumen.ingresos, resumen.moneda || MONEDA)}</span></div>
-                </div>
-                <button className="btn enlace" onClick={() => irA('pagos')}>Ver los pagos <Icono name="chevronRight" size={14} /></button>
-              </section>
+            <div className="tiles">
+              <div className="tile"><span className="label">Empresas</span><span className="value">{nf.format(resumen.total)}</span></div>
+              <div className="tile"><span className="label">En uso</span><span className="value">{nf.format(resumen.activa)}</span></div>
+              <div className={`tile${resumen.inactiva > 0 ? ' alerta' : ''}`}><span className="label">Sin uso</span><span className="value">{nf.format(resumen.inactiva)}</span></div>
+              <div className={`tile${resumen.rota > 0 ? ' alerta' : ''}`}><span className="label">Esquemas rotos</span><span className="value">{nf.format(resumen.rota)}</span></div>
+              <div className="tile"><span className="label">Pagando</span><span className="value">{nf.format(resumen.pagando)}</span></div>
+              <div className="tile"><span className="label">En prueba</span><span className="value">{nf.format(resumen.enPrueba)}</span></div>
+              <div className={`tile${resumen.vencidas > 0 ? ' alerta' : ''}`}><span className="label">Sin acceso</span><span className="value">{nf.format(resumen.vencidas)}</span></div>
+              <div className="tile"><span className="label">Recaudado</span><span className="value">{fmtDinero(resumen.ingresos, resumen.moneda || MONEDA)}</span></div>
             </div>
+            <p className="totales">
+              {nf.format(resumen.empleados)} colaboradores · {nf.format(resumen.marcaciones)} marcaciones · {nf.format(resumen.kioscos)} kioscos en toda la plataforma
+              {resumen.pendientes > 0 && <> · <button className="enlace" onClick={() => irA('pagos')}>{resumen.pendientes} pago{resumen.pendientes === 1 ? '' : 's'} sin resolver</button></>}
+            </p>
 
-            <section className="card">
-              <h2>Requieren atención</h2>
-              <p className="hint">Lo que conviene resolver hoy, de lo más urgente a lo menos.</p>
-              {resumen.atencion.length === 0 ? (
-                <p className="empty">Nada pendiente. Todas las empresas están al día.</p>
-              ) : (
-                <ul className="atencion">
-                  {resumen.atencion.map((a, i) => (
-                    <li className={`aten ${a.tono}`} key={`${a.empresa.id}-${i}`}>
-                      <span className="aten-punto" aria-hidden="true" />
-                      <div className="aten-texto">
-                        <b>{a.empresa.nombre}</b>
-                        <span>{a.texto}</span>
+            <div className="dash-grid">
+              <section className="card grow">
+                <h2>Requieren atención</h2>
+                <p className="hint">Lo que conviene resolver hoy, de lo más urgente a lo menos.</p>
+                {resumen.atencion.length === 0 ? (
+                  <p className="empty">Nada pendiente. Todas las empresas están al día.</p>
+                ) : (
+                  <div className="atencion">
+                    {resumen.atencion.map((a, i) => (
+                      <div className="aten" key={`${a.empresa.id}-${i}`}>
+                        <span className={`chip ${a.tono === 'info' ? 'neutral' : a.tono}`}>{a.tono === 'crit' ? 'Urgente' : a.tono === 'warn' ? 'Pronto' : 'Aviso'}</span>
+                        <div className="aten-texto">
+                          <b>{a.empresa.nombre}</b>
+                          <span>{a.texto}</span>
+                        </div>
+                        <button className="btn small" onClick={() => irA('empresas', { buscar: a.empresa.nombre, segmento: 'todas' })}>Ver</button>
                       </div>
-                      <button className="btn small" onClick={() => irA('empresas', { buscar: a.empresa.nombre, segmento: 'todas' })}>Ver</button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <section className="card">
-              <h2>Últimos envíos automáticos</h2>
-              {tareas.length === 0 ? (
-                <p className="empty">Sin corridas registradas todavía.</p>
-              ) : (
-                <div className="tarea-lista">
-                  {tareas.slice(0, 3).map((t) => <Tarea t={t} key={t.creadoEn} />)}
-                </div>
-              )}
-              <button className="btn enlace" onClick={() => irA('envios')}>Ver todos <Icono name="chevronRight" size={14} /></button>
-            </section>
+                    ))}
+                  </div>
+                )}
+              </section>
+              <div className="dash-lado">
+                <section className="card">
+                  <h2>Últimos envíos automáticos</h2>
+                  {tareas.length === 0 ? (
+                    <p className="empty">Sin corridas registradas todavía.</p>
+                  ) : (
+                    <div className="tarea-lista">
+                      {tareas.slice(0, 4).map((t) => <Tarea t={t} key={t.creadoEn} compacta />)}
+                    </div>
+                  )}
+                  <button className="btn small" onClick={() => irA('envios')}>Ver todos</button>
+                </section>
+                <section className="card">
+                  <h2>Últimas empresas</h2>
+                  <div className="lista-corta">
+                    {[...empresas].sort((a, b) => new Date(b.creadaEn) - new Date(a.creadaEn)).slice(0, 5).map((e) => (
+                      <button className="fila-corta" key={e.id} onClick={() => irA('empresas', { buscar: e.nombre, segmento: 'todas' })}>
+                        <span className="fila-nombre">{e.nombre}</span>
+                        <span className="fila-nota">{fmtFecha(e.creadaEn)}</span>
+                        <span className={`chip ${suscripcion(e).tono === 'info' ? 'neutral' : suscripcion(e).tono}`}>{suscripcion(e).etiqueta}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            </div>
           </>
         )}
 
-        {/* Empresas: fichas con lo adquirido, lo usado y los ajustes */}
+        {/* Empresas: tabla en PC, acordeón en móvil (como Colaboradores) */}
         {tab === 'empresas' && empresas && (
-          <>
-            <div className="plat-controls">
-              <div className="segmentos" role="tablist" aria-label="Filtrar empresas">
-                {FILTROS.map((f) => (
-                  <button key={f.clave} role="tab" aria-selected={segmento === f.clave} className={segmento === f.clave ? 'activo' : ''} onClick={() => setSegmento(f.clave)}>
-                    {f.etiqueta}
-                  </button>
-                ))}
-              </div>
-              <div className="buscar-fila">
+          <section className="card grow">
+            <div className="card-cab">
+              <h2>Empresas <span className="conteo">{lista.length} de {empresas.length}</span></h2>
+              <div className="controles">
+                <div className="segmentos" role="tablist" aria-label="Filtrar empresas">
+                  {FILTROS.map((f) => (
+                    <button key={f.clave} role="tab" aria-selected={segmento === f.clave} className={segmento === f.clave ? 'activo' : ''} onClick={() => setSegmento(f.clave)}>
+                      {f.etiqueta}
+                    </button>
+                  ))}
+                </div>
                 <input
-                  className="buscar" type="search" placeholder="Buscar por nombre, esquema, NIT o correo…"
+                  className="buscar" type="search" placeholder="Buscar nombre, esquema, NIT o correo…"
                   value={filtro} onChange={(e) => setFiltro(e.target.value)}
                 />
-                <span className="conteo">{lista.length} de {empresas.length}</span>
               </div>
             </div>
 
-            {empresas.length === 0 && <p className="aviso">Todavía no hay empresas registradas.</p>}
-            {empresas.length > 0 && lista.length === 0 && <p className="aviso">Ninguna empresa coincide con este filtro.</p>}
+            {empresas.length === 0 && <p className="empty">Todavía no hay empresas registradas.</p>}
+            {empresas.length > 0 && lista.length === 0 && <p className="empty">Ninguna empresa coincide con este filtro.</p>}
 
             {lista.length > 0 && (
-              <div className="fichas">
-                {lista.map((e) => {
-                  const s = salud(e);
-                  const sus = suscripcion(e);
-                  const c = contrato(e);
-                  const dias = diasSinUso(e);
-                  const accesos = (e.usuarios ?? 0) + (e.invitaciones ?? 0);
-                  const falta = e.esquemaRoto ? null
-                    : e.empleados === 0 ? 'Sin colaboradores registrados'
-                      : e.conRostro === 0 ? 'Nadie con rostro registrado: el kiosco no reconoce a nadie'
-                        : e.horarios === 0 ? 'Sin horarios: no se calculan horas'
-                          : e.kioscos === 0 ? 'Sin kiosco vinculado' : null;
-                  return (
-                    <article className={`ficha tono-${s.tono}`} key={e.id}>
-                      <header className="ficha-cab">
-                        <div className="ficha-nombre">
-                          <b>{e.nombre}</b>
-                          <small>
-                            <code>{e.esquema}</code>
-                            {e.nit ? <span> · NIT {e.nit}</span> : null}
-                            {e.dominio ? <span> · {e.dominio}</span> : null}
-                          </small>
-                          {e.dueno && <small className="dueno">{e.dueno}</small>}
-                        </div>
-                        <span className={`chip ${s.tono}`} title={`Creada el ${fmtFecha(e.creadaEn)}`}>{s.etiqueta}</span>
-                      </header>
+              <>
+                {/* PC: una fila por empresa, con todo lo que adquirió y usa a la vista. */}
+                <div className="att-tablewrap">
+                  <table className="att-table">
+                    <thead>
+                      <tr>
+                        <th>Empresa</th>
+                        <th>Plan</th>
+                        <th>Vigencia</th>
+                        <th className="num">Pagado</th>
+                        <th className="num">Accesos</th>
+                        <th className="num">Colab.</th>
+                        <th className="num">Kioscos</th>
+                        <th className="num">Marcac.</th>
+                        <th>Actividad</th>
+                        <th className="num" aria-label="Acciones" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lista.map((e) => {
+                        const s = salud(e);
+                        const sus = suscripcion(e);
+                        const c = contrato(e);
+                        const accesos = (e.usuarios ?? 0) + (e.invitaciones ?? 0);
+                        const falta = queFalta(e);
+                        return (
+                          <tr className={`static${e.esquemaRoto ? ' con-novedad' : ''}`} key={e.id}>
+                            <td>
+                              <span className="att-name">{e.nombre}</span>
+                              <span className="sub"><code>{e.esquema}</code>{e.nit ? ` · NIT ${e.nit}` : ''}</span>
+                              {e.dueno && <span className="sub">{e.dueno}</span>}
+                            </td>
+                            <td>
+                              <span className={c.plan ? 'att-name' : 'libre'}>{c.nombre}</span>
+                              <span className="sub">
+                                {c.precio ?? (enPrueba(e) ? 'sin tarjeta' : '—')}
+                                {c.tope != null ? ` · ${c.tope} colab.` : ''}
+                                {c.cupo != null ? ` · ${c.cupo} acc.` : ''}
+                                {(c.topeAcuerdo || c.cupoAcuerdo) ? ' · acuerdo' : ''}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`chip ${sus.tono === 'info' ? 'neutral' : sus.tono}`}>{sus.etiqueta}</span>
+                              <span className="sub">{sus.detalle}</span>
+                            </td>
+                            <td className="num">
+                              {e.pagosOk > 0 ? (
+                                <>
+                                  <span className="att-name">{fmtDinero(e.totalPagado ?? 0, e.moneda || MONEDA)}</span>
+                                  <span className="sub">{e.pagosOk} pago{e.pagosOk === 1 ? '' : 's'} · {fmtFecha(e.ultimoPago)}</span>
+                                </>
+                              ) : <span className="libre">—</span>}
+                              {e.pagosPendientes > 0 && <span className="sub aviso-txt">{e.pagosPendientes} sin resolver</span>}
+                            </td>
+                            <td className={`num${c.cupo != null && accesos >= c.cupo ? ' al-tope' : ''}`}>
+                              {nf.format(accesos)}{c.cupo != null ? <span className="libre"> / {c.cupo}</span> : null}
+                            </td>
+                            <td className={`num${c.tope != null && e.empleados >= c.tope ? ' al-tope' : ''}`}>
+                              {e.empleados == null ? <span className="libre">—</span> : nf.format(e.empleados)}{c.tope != null && e.empleados != null ? <span className="libre"> / {c.tope}</span> : null}
+                            </td>
+                            <td className="num">{nf.format(e.kioscos ?? 0)}</td>
+                            <td className="num">{e.marcaciones == null ? <span className="libre">—</span> : nf.format(e.marcaciones)}</td>
+                            <td>
+                              <span className={`chip ${s.tono}`} title={`Creada el ${fmtFecha(e.creadaEn)}`}>{s.etiqueta}</span>
+                              <span className="sub">{e.esquemaRoto ? 'sin datos' : haceCuanto(diasSinUso(e))}</span>
+                              {falta && <span className="sub aviso-txt">{falta}</span>}
+                            </td>
+                            <td className="num"><div className="tl-actions">{accionesDe(e)}</div></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-                      {/* Lo que ADQUIRIÓ: plan, vigencia y pagos. Va primero
-                          porque es lo que se pregunta cuando un cliente escribe. */}
-                      <section className="compra" aria-label="Lo que tiene contratado">
-                        <div className="compra-plan">
-                          <span className="m-label">Plan</span>
-                          <b className={c.plan ? '' : 'sin'}>{c.nombre}</b>
-                          <small>
-                            {c.precio ?? (enPrueba(e) ? 'gratis, sin tarjeta' : 'nada contratado')}
-                            {c.tope != null ? ` · hasta ${c.tope} colab.` : ' · sin tope'}
-                            {c.cupo != null ? ` · ${c.cupo} acceso${c.cupo === 1 ? '' : 's'}` : ''}
-                            {(c.topeAcuerdo || c.cupoAcuerdo) ? ' · acuerdo' : ''}
-                          </small>
-                        </div>
-                        <div className="compra-vigencia">
-                          <span className="m-label">Vigencia</span>
-                          <span className={`chip ${sus.tono}`}>{sus.etiqueta}</span>
-                          <small>{sus.detalle}</small>
-                        </div>
-                        <div className="compra-pagos">
-                          <span className="m-label">Pagos</span>
-                          {e.pagosOk > 0 ? (
-                            <>
-                              <b>{fmtDinero(e.totalPagado ?? 0, e.moneda || MONEDA)}</b>
-                              <small>{e.pagosOk} pago{e.pagosOk === 1 ? '' : 's'} · último el {fmtFecha(e.ultimoPago)}</small>
-                            </>
-                          ) : (
-                            <>
-                              <b className="sin">Ninguno</b>
-                              <small>nunca ha pagado</small>
-                            </>
-                          )}
-                          {e.pagosPendientes > 0 && <span className="chip warn chico">{e.pagosPendientes} sin resolver</span>}
-                        </div>
-                      </section>
-
-                      {/* Lo que USA, contra el tope: quién está a punto de
-                          necesitar un plan mayor. */}
-                      <section className="uso" aria-label="Uso">
-                        <div className={`dato${c.cupo != null && accesos >= c.cupo ? ' tope' : ''}`}>
-                          <span className="d-etq">Accesos</span>
-                          <span className="d-val">{nf.format(accesos)}{c.cupo != null ? <em>/{c.cupo}</em> : null}</span>
-                        </div>
-                        <div className={`dato${c.tope != null && e.empleados >= c.tope ? ' tope' : ''}`}>
-                          <span className="d-etq">Colab.</span>
-                          <span className="d-val">{e.empleados == null ? '—' : nf.format(e.empleados)}{c.tope != null ? <em>/{c.tope}</em> : null}</span>
-                        </div>
-                        <div className="dato"><span className="d-etq">Kioscos</span><span className="d-val">{nf.format(e.kioscos ?? 0)}</span></div>
-                        <div className="dato"><span className="d-etq">Sedes</span><span className="d-val">{e.sedes == null ? '—' : nf.format(e.sedes)}</span></div>
-                        <div className="dato"><span className="d-etq">Marcaciones</span><span className="d-val">{e.marcaciones == null ? '—' : nf.format(e.marcaciones)}</span></div>
-                        <div className="dato">
-                          <span className="d-etq">Actividad</span>
-                          <span className="d-val chica" title={e.ultimaMarcacion ? `Última marcación el ${fmtFecha(e.ultimaMarcacion)}` : 'Sin marcaciones'}>
-                            {e.esquemaRoto ? 'sin datos' : haceCuanto(dias)}
-                          </span>
-                        </div>
-                      </section>
-
-                      {falta && <p className="falta">{falta}</p>}
-                      {e.esquemaRoto && <p className="falta crit">El esquema no responde: alta a medias o borrado a mano.</p>}
-
-                      <footer className="ficha-acciones">
-                        <button className="btn ico" title="Ajustes: plan, estado, fechas y topes" aria-label="Ajustes" onClick={() => abrirAjustes(e)}><Icono name="sliders" /></button>
-                        <button className="btn ico" title="Regalar días de prueba o de suscripción" aria-label="Regalar días" onClick={() => setRegalando({ empresa: e, dias: 7, que: 'suscripcion' })}><Icono name="calendarPlus" /></button>
-                        <button className="btn ico" title="Compras: cada pago y su desenlace" aria-label="Compras" onClick={() => verCompras(e)}><Icono name="receipt" /></button>
-                        <button className="btn ico peligro" title="Eliminar la empresa y su esquema" aria-label="Eliminar" onClick={() => setBorrando({ empresa: e, confirmacion: '' })}><Icono name="trash" /></button>
-                      </footer>
-                    </article>
-                  );
-                })}
-              </div>
+                {/* Móvil: acordeón. Cabecera = nombre y vigencia; al abrir, lo demás. */}
+                <Acordeon
+                  items={lista.map((e) => {
+                    const s = salud(e);
+                    const sus = suscripcion(e);
+                    const c = contrato(e);
+                    const accesos = (e.usuarios ?? 0) + (e.invitaciones ?? 0);
+                    const falta = queFalta(e);
+                    return {
+                      id: e.id,
+                      title: e.nombre,
+                      right: <span className={`chip ${sus.tono === 'info' ? 'neutral' : sus.tono}`}>{sus.etiqueta}</span>,
+                      cuerpo: (
+                        <>
+                          <div className="acc-tiles">
+                            <div className="acc-tile"><b>{nf.format(accesos)}{c.cupo != null ? <span className="libre">/{c.cupo}</span> : null}</b><small>Accesos</small></div>
+                            <div className="acc-tile"><b>{e.empleados == null ? '—' : nf.format(e.empleados)}{c.tope != null ? <span className="libre">/{c.tope}</span> : null}</b><small>Colab.</small></div>
+                            <div className="acc-tile"><b>{nf.format(e.kioscos ?? 0)}</b><small>Kioscos</small></div>
+                            <div className="acc-tile"><b>{e.sedes == null ? '—' : nf.format(e.sedes)}</b><small>Sedes</small></div>
+                            <div className="acc-tile"><b>{e.marcaciones == null ? '—' : nf.format(e.marcaciones)}</b><small>Marcac.</small></div>
+                            <div className="acc-tile"><b className="chica">{e.esquemaRoto ? '—' : haceCuanto(diasSinUso(e))}</b><small>Actividad</small></div>
+                          </div>
+                          <div className="acc-lineas">
+                            <span className="acc-linea"><Icono name="file" size={14} />
+                              <b>{c.nombre}</b>{c.precio ? ` · ${c.precio}` : ''}{c.tope != null ? ` · ${c.tope} colab.` : ''}{c.cupo != null ? ` · ${c.cupo} acceso${c.cupo === 1 ? '' : 's'}` : ''}{(c.topeAcuerdo || c.cupoAcuerdo) ? ' · acuerdo' : ''}
+                            </span>
+                            <span className="acc-linea"><Icono name="clock" size={14} />{sus.detalle}</span>
+                            <span className="acc-linea"><Icono name="receipt" size={14} />
+                              {e.pagosOk > 0 ? `${fmtDinero(e.totalPagado ?? 0, e.moneda || MONEDA)} · ${e.pagosOk} pago${e.pagosOk === 1 ? '' : 's'} · último el ${fmtFecha(e.ultimoPago)}` : 'Nunca ha pagado'}
+                              {e.pagosPendientes > 0 ? ` · ${e.pagosPendientes} sin resolver` : ''}
+                            </span>
+                            <span className="acc-linea"><Icono name="user" size={14} />{e.dueno ?? 'sin dueño activo'} · <code>{e.esquema}</code>{e.nit ? ` · NIT ${e.nit}` : ''}</span>
+                            <span className="acc-linea"><span className={`chip ${s.tono}`}>{s.etiqueta}</span><span className="libre">creada el {fmtFecha(e.creadaEn)}</span></span>
+                            {falta && <span className="acc-linea aviso"><Icono name="alert" size={14} />{falta}</span>}
+                            {e.esquemaRoto && <span className="acc-linea aviso"><Icono name="alert" size={14} />El esquema no responde: alta a medias o borrado a mano.</span>}
+                          </div>
+                        </>
+                      ),
+                      actions: <div className="acc-iconos">{accionesDe(e)}</div>,
+                    };
+                  })}
+                />
+              </>
             )}
-          </>
+          </section>
         )}
 
-        {/* Pagos: todos los de la plataforma */}
+        {/* Pagos: todos los de la plataforma; tabla en PC, acordeón en móvil */}
         {tab === 'pagos' && (
           <>
             {resumen && (
-              <div className="tiles tres">
+              <div className="tiles">
                 <div className="tile"><span className="label">Recaudado</span><span className="value">{fmtDinero(resumen.ingresos, resumen.moneda || MONEDA)}</span></div>
-                <div className="tile"><span className="label">Aprobados</span><span className="value good">{nf.format(pagos ? pagos.filter((p) => p.estado === 'APROBADA').length : 0)}</span></div>
-                <div className="tile"><span className="label">Sin resolver</span><span className={`value${resumen.pendientes > 0 ? ' warn' : ''}`}>{nf.format(resumen.pendientes)}</span></div>
+                <div className="tile"><span className="label">Aprobados</span><span className="value">{nf.format(pagos ? pagos.filter((p) => p.estado === 'APROBADA').length : 0)}</span></div>
+                <div className={`tile${resumen.pendientes > 0 ? ' alerta' : ''}`}><span className="label">Sin resolver</span><span className="value">{nf.format(resumen.pendientes)}</span></div>
+                <div className="tile"><span className="label">Empresas pagando</span><span className="value">{nf.format(resumen.pagando)}</span></div>
               </div>
             )}
-            <section className="card">
+            <section className="card grow">
               <div className="card-cab">
-                <h2>Pagos</h2>
+                <h2>Pagos {pagos && <span className="conteo">{listaPagos.length} de {pagos.length}</span>}</h2>
                 <div className="segmentos" role="tablist" aria-label="Filtrar pagos">
                   {FILTROS_PAGO.map((f) => (
                     <button key={f.clave} role="tab" aria-selected={filtroPago === f.clave} className={filtroPago === f.clave ? 'activo' : ''} onClick={() => setFiltroPago(f.clave)}>
@@ -721,32 +765,59 @@ export default function PlataformaPanel({ sesion }) {
               {pagos?.length === 0 && <p className="empty">Todavía no hay pagos.</p>}
               {pagos?.length > 0 && listaPagos.length === 0 && <p className="empty">Ningún pago con este filtro.</p>}
               {listaPagos.length > 0 && (
-                <ul className="pagos">
-                  {listaPagos.map((p) => {
-                    const plan = planPorId(p.planId);
-                    return (
-                      <li className="pago" key={p.id}>
-                        <div className="pago-cab">
-                          <div className="pago-quien">
-                            <b>{p.empresa}</b>
-                            <small>{fmtFechaHora(p.creadoEn)}</small>
-                          </div>
-                          <b className="pago-monto">{fmtDinero(p.monto, p.moneda)}</b>
-                          {chipPago(p.estado)}
-                        </div>
-                        <small>
-                          {plan ? plan.nombre : (p.planId ?? 'plan sin registrar')} · {p.meses} mes{p.meses === 1 ? '' : 'es'}
-                          {p.cubreHasta ? ` · cubre hasta el ${fmtFecha(p.cubreHasta)}` : ''}
-                          {' · '}{p.proveedor}
-                        </small>
-                        <div className="pago-pie">
-                          <small className="ref"><code>{p.referencia}</code></small>
-                          <button className="btn small" onClick={() => irA('empresas', { buscar: p.empresa, segmento: 'todas' })}>Ver empresa</button>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
+                <>
+                  <div className="att-tablewrap">
+                    <table className="att-table">
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Empresa</th>
+                          <th>Plan</th>
+                          <th className="num">Monto</th>
+                          <th>Estado</th>
+                          <th>Cubre hasta</th>
+                          <th>Referencia</th>
+                          <th className="num" aria-label="Acciones" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {listaPagos.map((p) => {
+                          const plan = planPorId(p.planId);
+                          return (
+                            <tr className="static" key={p.id}>
+                              <td>{fmtFechaHora(p.creadoEn)}</td>
+                              <td><span className="att-name">{p.empresa}</span><span className="sub"><code>{p.esquema}</code></span></td>
+                              <td>{plan ? plan.nombre : (p.planId ?? '—')}<span className="sub">{p.meses} mes{p.meses === 1 ? '' : 'es'} · {p.proveedor}</span></td>
+                              <td className="num att-name">{fmtDinero(p.monto, p.moneda)}</td>
+                              <td>{chipPago(p.estado)}</td>
+                              <td>{p.cubreHasta ? fmtFecha(p.cubreHasta) : <span className="libre">—</span>}</td>
+                              <td><code className="ref">{p.referencia}</code></td>
+                              <td className="num"><button className="btn small" onClick={() => irA('empresas', { buscar: p.empresa, segmento: 'todas' })}>Empresa</button></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Acordeon
+                    items={listaPagos.map((p) => {
+                      const plan = planPorId(p.planId);
+                      return {
+                        id: p.id,
+                        title: p.empresa,
+                        right: <><span className="acc-note">{fmtDinero(p.monto, p.moneda)}</span>{chipPago(p.estado)}</>,
+                        fields: [
+                          ['Fecha', fmtFechaHora(p.creadoEn)],
+                          ['Plan', `${plan ? plan.nombre : (p.planId ?? '—')} · ${p.meses} mes${p.meses === 1 ? '' : 'es'}`],
+                          ['Cubre hasta', p.cubreHasta ? fmtFecha(p.cubreHasta) : '—'],
+                          ['Pasarela', p.proveedor],
+                          ['Referencia', p.referencia],
+                        ],
+                        actions: <button className="btn small block" onClick={() => irA('empresas', { buscar: p.empresa, segmento: 'todas' })}>Ver empresa</button>,
+                      };
+                    })}
+                  />
+                </>
               )}
             </section>
           </>
@@ -754,7 +825,7 @@ export default function PlataformaPanel({ sesion }) {
 
         {/* Envíos automáticos: las tareas programadas */}
         {tab === 'envios' && (
-          <section className="card">
+          <section className="card grow">
             <h2>Envíos automáticos</h2>
             <p className="hint">
               Tareas que corren solas de madrugada y le mandan correos a los colaboradores de
@@ -777,42 +848,44 @@ export default function PlataformaPanel({ sesion }) {
 
       {/* Ajustes de la empresa: todo lo que fija el superadmin, en un solo sitio */}
       {editando && (
-        <div className="velo" onClick={(ev) => ev.target === ev.currentTarget && !guardando && setEditando(null)}>
-          <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="dlg-aj">
-            <div className="dlg-cab">
-              <h3 id="dlg-aj">Ajustes de «{editando.empresa.nombre}»</h3>
-              <button className="btn ico" aria-label="Cerrar" onClick={() => setEditando(null)}><Icono name="x" /></button>
+        <div className="overlay" onClick={(ev) => ev.target === ev.currentTarget && !guardando && setEditando(null)}>
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-aj">
+            <h3 id="dlg-aj">Ajustes de «{editando.empresa.nombre}»</h3>
+            <p className="hint">
+              Los topes vacíos siguen al plan. Una fecha vacía quita la vigencia. El acceso se
+              abre con «Al día» y una fecha de pago futura, o con la prueba corriendo.
+            </p>
+            <div className="field">
+              <label htmlFor="aj-plan">Plan contratado</label>
+              <select id="aj-plan" value={editando.planId} onChange={(ev) => setEditando({ ...editando, planId: ev.target.value })}>
+                <option value="">Sin plan (solo prueba)</option>
+                {Object.entries(PLANES).map(([id, p]) => (
+                  <option key={id} value={id}>
+                    {p.nombre} · {fmtDinero(p.precio, MONEDA)}/mes · {p.empleados} colab. · {p.usuarios} acceso{p.usuarios === 1 ? '' : 's'}
+                  </option>
+                ))}
+              </select>
             </div>
-
-            <div className="dlg-campos">
-              <label className="ancho">
-                Plan contratado
-                <select value={editando.planId} onChange={(ev) => setEditando({ ...editando, planId: ev.target.value })}>
-                  <option value="">Sin plan (solo prueba)</option>
-                  {Object.entries(PLANES).map(([id, p]) => (
-                    <option key={id} value={id}>
-                      {p.nombre} · {fmtDinero(p.precio, MONEDA)}/mes · {p.empleados} colab. · {p.usuarios} acceso{p.usuarios === 1 ? '' : 's'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
+            <div className="hours-row">
+              <div className="sub-field">
                 Estado
                 <select value={editando.estado} onChange={(ev) => setEditando({ ...editando, estado: ev.target.value })}>
                   <option value="activa">Al día</option>
                   <option value="vencida">Vencida</option>
                   <option value="cancelada">Cancelada</option>
                 </select>
-              </label>
-              <label>
+              </div>
+              <div className="sub-field">
                 Pagada hasta
                 <input type="date" value={editando.venceEn} onChange={(ev) => setEditando({ ...editando, venceEn: ev.target.value })} />
-              </label>
-              <label>
+              </div>
+              <div className="sub-field">
                 Prueba hasta
                 <input type="date" value={editando.pruebaHasta} onChange={(ev) => setEditando({ ...editando, pruebaHasta: ev.target.value })} />
-              </label>
-              <label>
+              </div>
+            </div>
+            <div className="hours-row dos">
+              <div className="sub-field">
                 Tope de colaboradores
                 <input
                   type="number" min="1" inputMode="numeric"
@@ -820,8 +893,8 @@ export default function PlataformaPanel({ sesion }) {
                   value={editando.limiteEmpleados}
                   onChange={(ev) => setEditando({ ...editando, limiteEmpleados: ev.target.value })}
                 />
-              </label>
-              <label>
+              </div>
+              <div className="sub-field">
                 Accesos al panel
                 <input
                   type="number" min="1" inputMode="numeric"
@@ -829,13 +902,9 @@ export default function PlataformaPanel({ sesion }) {
                   value={editando.limiteUsuarios}
                   onChange={(ev) => setEditando({ ...editando, limiteUsuarios: ev.target.value })}
                 />
-              </label>
+              </div>
             </div>
-            <p className="dlg-nota">
-              Los topes vacíos siguen al plan. Una fecha vacía quita la vigencia. El acceso
-              se abre con «Al día» y una fecha de pago futura, o con la prueba corriendo.
-            </p>
-            <div className="dlg-botones">
+            <div className="dialog-actions">
               <button className="btn" onClick={() => setEditando(null)} disabled={guardando}>Cancelar</button>
               <button className="btn primary" onClick={guardarAjustes} disabled={guardando}>
                 {guardando ? 'Guardando…' : 'Guardar'}
@@ -847,66 +916,66 @@ export default function PlataformaPanel({ sesion }) {
 
       {/* Compras de una empresa */}
       {compras && (
-        <div className="velo" onClick={(ev) => ev.target === ev.currentTarget && setCompras(null)}>
-          <div className="dialogo ancha" role="dialog" aria-modal="true" aria-labelledby="dlg-co">
-            <div className="dlg-cab">
-              <h3 id="dlg-co">Compras de «{compras.empresa.nombre}»</h3>
-              <button className="btn ico" aria-label="Cerrar" onClick={() => setCompras(null)}><Icono name="x" /></button>
-            </div>
-            {compras.pagos === null && <p className="dlg-cuerpo">Cargando…</p>}
-            {compras.error && <p className="dlg-alerta">{compras.error}</p>}
-            {compras.pagos?.length === 0 && !compras.error && <p className="dlg-cuerpo">Esta empresa no ha iniciado ningún pago.</p>}
+        <div className="overlay" onClick={(ev) => ev.target === ev.currentTarget && setCompras(null)}>
+          <div className="dialog ancho" role="dialog" aria-modal="true" aria-labelledby="dlg-co">
+            <h3 id="dlg-co">Compras de «{compras.empresa.nombre}»</h3>
+            {compras.pagos === null && <p className="hint">Cargando…</p>}
+            {compras.error && <p className="banner-vencida">{compras.error}</p>}
+            {compras.pagos?.length === 0 && !compras.error && <p className="hint">Esta empresa no ha iniciado ningún pago.</p>}
             {compras.pagos?.length > 0 && (
-              <ul className="pagos">
+              <div className="compras">
                 {compras.pagos.map((p) => {
                   const plan = planPorId(p.planId);
                   return (
-                    <li className="pago" key={p.id}>
-                      <div className="pago-cab">
-                        <b className="pago-monto">{fmtDinero(p.monto, p.moneda)}</b>
+                    <div className="compra" key={p.id}>
+                      <div className="compra-cab">
+                        <b>{fmtDinero(p.monto, p.moneda)}</b>
                         {chipPago(p.estado)}
+                        <span className="libre">{fmtFecha(p.creadoEn)}</span>
                       </div>
-                      <small>
+                      <span className="sub">
                         {plan ? plan.nombre : (p.planId ?? 'plan sin registrar')} · {p.meses} mes{p.meses === 1 ? '' : 'es'}
-                        {' · '}{fmtFecha(p.creadoEn)}
-                        {p.cubreHasta ? ` · cubre hasta el ${fmtFecha(p.cubreHasta)}` : ''}
-                      </small>
-                      <small className="ref">{p.proveedor} · <code>{p.referencia}</code></small>
-                    </li>
+                        {p.cubreHasta ? ` · cubre hasta el ${fmtFecha(p.cubreHasta)}` : ''} · {p.proveedor}
+                      </span>
+                      <span className="sub"><code className="ref">{p.referencia}</code></span>
+                    </div>
                   );
                 })}
-              </ul>
+              </div>
             )}
+            <div className="dialog-actions">
+              <button className="btn" onClick={() => setCompras(null)}>Cerrar</button>
+            </div>
           </div>
         </div>
       )}
 
       {/* Regalar días de servicio */}
       {regalando && (
-        <div className="velo" onClick={(ev) => ev.target === ev.currentTarget && setRegalando(null)}>
-          <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="dlg-dias">
+        <div className="overlay" onClick={(ev) => ev.target === ev.currentTarget && setRegalando(null)}>
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-dias">
             <h3 id="dlg-dias">Días para «{regalando.empresa.nombre}»</h3>
-            <p className="dlg-cuerpo">
+            <p className="hint">
               {suscripcion(regalando.empresa).detalle}. Los días se SUMAN a lo que ya
               tiene, así que regalar nunca le quita los que le quedaban.
             </p>
-            <div className="dlg-campos">
-              <label>
+            <div className="hours-row dos">
+              <div className="sub-field">
                 Cuántos días
                 <input
                   type="number" min="1" max="365" inputMode="numeric" value={regalando.dias}
                   onChange={(ev) => setRegalando({ ...regalando, dias: ev.target.value })}
                 />
-              </label>
-              <label>
+              </div>
+              <div className="sub-field">
                 A qué
                 <select value={regalando.que} onChange={(ev) => setRegalando({ ...regalando, que: ev.target.value })}>
-                  <option value="suscripcion">Suscripción (le da acceso pago)</option>
+                  <option value="suscripcion">Suscripción (acceso pago)</option>
                   <option value="prueba">Prueba gratuita</option>
                 </select>
-              </label>
+              </div>
             </div>
-            <div className="dlg-botones">
+            <div className="dialog-actions">
               <button className="btn" onClick={() => setRegalando(null)}>Cancelar</button>
               <button
                 className="btn primary"
@@ -922,28 +991,28 @@ export default function PlataformaPanel({ sesion }) {
 
       {/* Confirmación de borrado: teclear el esquema, sin atajos */}
       {borrando && (
-        <div className="velo" onClick={(ev) => ev.target === ev.currentTarget && setBorrando(null)}>
-          <div className="dialogo" role="dialog" aria-modal="true" aria-labelledby="dlg-t">
+        <div className="overlay" onClick={(ev) => ev.target === ev.currentTarget && setBorrando(null)}>
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-t">
             <h3 id="dlg-t">Eliminar «{borrando.empresa.nombre}»</h3>
-            <p className="dlg-cuerpo">
+            <p className="hint">
               Se borra el esquema <code>{borrando.empresa.esquema}</code> completo:
               sus <b>{nf.format(borrando.empresa.usuarios ?? 0)}</b> usuario(s),
               sus <b>{borrando.empresa.empleados == null ? '?' : nf.format(borrando.empresa.empleados)}</b> colaborador(es)
               y sus <b>{borrando.empresa.marcaciones == null ? '?' : nf.format(borrando.empresa.marcaciones)}</b> marcaciones.
             </p>
-            <p className="dlg-alerta">Esto no se puede deshacer.</p>
-            <label className="dlg-campo">
-              <span>Escribe <code>{borrando.empresa.esquema}</code> para confirmar</span>
+            <p className="banner-vencida">Esto no se puede deshacer.</p>
+            <div className="field">
+              <label htmlFor="dlg-conf">Escribe <code>{borrando.empresa.esquema}</code> para confirmar</label>
               <input
-                type="text" autoFocus autoComplete="off" spellCheck="false"
+                id="dlg-conf" type="text" autoFocus autoComplete="off" spellCheck="false"
                 value={borrando.confirmacion}
                 onChange={(ev) => setBorrando({ ...borrando, confirmacion: ev.target.value })}
               />
-            </label>
-            <div className="dlg-botones">
+            </div>
+            <div className="dialog-actions">
               <button className="btn" onClick={() => setBorrando(null)}>Cancelar</button>
               <button
-                className="btn danger"
+                className="btn primary danger"
                 disabled={borrando.confirmacion.trim() !== borrando.empresa.esquema}
                 onClick={eliminar}
               >
@@ -960,7 +1029,7 @@ export default function PlataformaPanel({ sesion }) {
 }
 
 /** Una corrida de tarea programada, en una línea. */
-function Tarea({ t }) {
+function Tarea({ t, compacta = false }) {
   const d = t.detalle ?? {};
   return (
     <div className={`tarea ${t.estado}`}>
@@ -968,32 +1037,58 @@ function Tarea({ t }) {
       <b>{t.tarea}</b>
       <span className="tarea-cuando">
         {fmtFechaHora(t.creadoEn)}
-        {t.sobre ? ` · sobre el ${fmtFecha(t.sobre)}` : ''}
+        {!compacta && t.sobre ? ` · sobre el ${fmtFecha(t.sobre)}` : ''}
       </span>
       <span className="tarea-detalle">
         {t.estado === 'ok'
-          ? `${d.enviados ?? 0} enviados${d.fallidos ? `, ${d.fallidos} fallidos` : ''}${d.sinCorreo ? `, ${d.sinCorreo} sin correo` : ''}`
+          ? `${d.enviados ?? 0} enviados${d.fallidos ? `, ${d.fallidos} fallidos` : ''}${!compacta && d.sinCorreo ? `, ${d.sinCorreo} sin correo` : ''}`
           : (d.error ?? 'sin detalle')}
       </span>
     </div>
   );
 }
 
-/* Todo el color sale de los tokens de app/globals.css: esta consola es parte
-   del mismo producto y no puede tener su propia paleta. El armazón (barra,
-   menú, riel) copia las medidas del panel de empresa (AdminPanel.jsx) para
-   que las dos pantallas se sientan como una. Los tres tonos sólidos
-   (--p-good/--p-warn/--p-crit) son los del kiosco: la misma tinta que ya
-   significa «bien / ojo / mal» en el producto. */
+/**
+ * Lista en acordeón para móvil (la misma que usa el panel de empresa en
+ * Colaboradores y Asistencia): cabecera = lo esencial; al abrir, lo demás.
+ */
+function Acordeon({ items }) {
+  const [openId, setOpenId] = useState(null);
+  return (
+    <div className="acc">
+      {items.map((it) => {
+        const open = openId === it.id;
+        return (
+          <div className={`acc-item${open ? ' open' : ''}`} key={it.id}>
+            <button className="acc-head" aria-expanded={open} onClick={() => setOpenId(open ? null : it.id)}>
+              <span className="acc-title">{it.title}</span>
+              {it.right}
+              <span className="acc-chev"><Icono name="chevronRight" size={14} /></span>
+            </button>
+            {open && (
+              <div className="acc-body">
+                {it.cuerpo ?? it.fields.map(([label, value]) => (
+                  <div className="acc-field" key={label}><b>{label}</b><span>{value}</span></div>
+                ))}
+                {it.actions && <div className="acc-actions">{it.actions}</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Todo sale de los tokens de app/globals.css y de las MISMAS reglas que el
+   panel de empresa (AdminPanel.jsx): barra, menú, tarjetas, tiles, tabla,
+   acordeón, chips, botones y diálogos copian sus medidas y colores, para que
+   las dos pantallas se sientan como una sola aplicación. */
 const CSS = `
 .plat-root {
-  --p-good: var(--k-in);
-  --p-warn: var(--k-out);
-  --p-crit: var(--k-no);
-  --p-info: var(--accent);
   --page: #dfe8f8;
   font-family: var(--f-body);
-  font-weight: 400;
+  font-weight: 300;
   color: var(--ink);
   background: var(--page);
   min-height: 100dvh; max-width: 560px; margin: 0 auto;
@@ -1001,11 +1096,8 @@ const CSS = `
   padding: 14px 12px 10px; box-sizing: border-box;
 }
 .plat-root * { box-sizing: border-box; margin: 0; }
-.plat-root b { font-weight: 700; }
-.plat-root code {
-  font-family: var(--f-data); font-size: .92em;
-  background: var(--accent-soft); padding: 1px 5px; border-radius: 4px;
-}
+.plat-root b { font-weight: 600; }
+.plat-root code { font-family: var(--f-data); font-size: .92em; background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
 
 /* ── Barra superior (la misma del panel de empresa) ───────── */
 .app-header {
@@ -1020,296 +1112,213 @@ const CSS = `
 .menu-btn:hover { background: rgba(255,255,255,.14); }
 .menu-btn:active { background: rgba(255,255,255,.22); }
 .head-marca { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; }
-.head-brand {
-  font-family: var(--f-display); font-size: 13px; font-weight: 400;
-  letter-spacing: .13em; color: rgba(255,255,255,.72); white-space: nowrap;
-}
+.head-brand { font-family: var(--f-display); font-size: 13px; font-weight: 400; letter-spacing: .13em; color: rgba(255,255,255,.72); white-space: nowrap; }
 .head-brand b { font-weight: 800; color: #fff; }
 @media (max-width: 430px) { .head-brand { display: none; } }
 @media (max-width: 360px) { .head-logo { display: none; } }
-.head-logo {
-  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px;
-  background: rgba(255,255,255,.14); color: #fff;
-  display: flex; align-items: center; justify-content: center;
-}
+.head-logo { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px; background: rgba(255,255,255,.14); color: #fff; display: flex; align-items: center; justify-content: center; }
 .head-titles { display: flex; flex-direction: column; min-width: 0; overflow: hidden; flex: 1 1 auto; }
 .head-tab { font-family: var(--f-display); font-size: 15px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .app-header .date-note { color: rgba(255,255,255,.65); font-size: 11.5px; font-family: var(--f-data); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .head-right { margin-left: auto; display: flex; align-items: center; gap: 6px; position: relative; }
-.head-ico {
-  width: 36px; height: 36px; border-radius: 50%; border: 0; background: transparent; color: #fff;
-  display: flex; align-items: center; justify-content: center; cursor: pointer;
-}
+.head-ico { width: 36px; height: 36px; border-radius: 50%; border: 0; background: transparent; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .head-ico:hover { background: rgba(255,255,255,.12); }
 .head-user { position: relative; }
-.head-user-btn {
-  display: flex; align-items: center; gap: 8px;
-  background: transparent; border: 0; color: #fff; cursor: pointer;
-  font: inherit; padding: 3px; border-radius: 999px;
-}
+.head-user-btn { display: flex; align-items: center; gap: 8px; background: transparent; border: 0; color: #fff; cursor: pointer; font: inherit; padding: 3px; border-radius: 999px; }
 .head-user-btn:hover, .head-user-btn[aria-expanded="true"] { background: rgba(255,255,255,.12); }
 .head-user-nombre { display: none; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; padding-right: 6px; }
-.sesion-avatar {
-  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
-  background: rgba(255,255,255,.18); color: #fff;
-  font-size: 11px; font-weight: 700; letter-spacing: .02em;
-  display: flex; align-items: center; justify-content: center;
-}
+.sesion-avatar { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,.18); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .02em; display: flex; align-items: center; justify-content: center; }
 img.sesion-avatar { object-fit: cover; display: block; }
 .head-user-menu {
-  position: absolute; top: calc(100% + 10px); right: 0; z-index: 40;
-  min-width: 230px; padding: 12px 14px;
-  background: var(--surface-blanca); color: var(--ink);
-  border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--elev-2);
+  position: absolute; top: calc(100% + 10px); right: 0; z-index: 40; min-width: 230px; padding: 12px 14px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--elev-1);
   display: flex; flex-direction: column; gap: 4px; font-size: 13px;
 }
 .head-user-menu b { font-weight: 600; }
 .head-user-menu > span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lock-btn {
-  border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600;
-  cursor: pointer; display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 9px; margin-top: 8px;
-}
-.lock-btn:hover { background: var(--k-no-soft); color: var(--p-crit); }
+.lock-btn { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 9px; margin-top: 8px; }
+.lock-btn:hover { background: var(--crit-soft); color: var(--crit-text); }
 
 /* ── Menú lateral: encima en móvil, columna en PC ─────────── */
 .nav-scrim { position: fixed; inset: 0; background: rgba(16,24,40,0.42); z-index: 59; }
 .tabbar {
   position: fixed; top: 0; bottom: 0; left: 0; width: 280px; z-index: 60;
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 16px 12px 12px;
-  background: var(--btn-primary-hover); border-right: 1px solid rgba(255,255,255,.12);
-  box-shadow: var(--elev-2);
+  display: flex; flex-direction: column; gap: 2px; padding: 16px 12px 12px;
+  background: var(--btn-primary-hover); border-right: 1px solid rgba(255,255,255,.12); box-shadow: var(--elev-2);
   transform: translateX(-105%); transition: transform .24s ease;
 }
 .plat-root.nav-open .tabbar { transform: translateX(0); }
-@media (prefers-reduced-motion: reduce) { .tabbar { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .tabbar { transition: none; } .acc-chev { transition: none; } }
 .tabbar > button {
   position: relative; border: 0; background: transparent; color: rgba(255,255,255,.72);
   font-family: var(--f-body); font-size: 13.5px; font-weight: 600; cursor: pointer;
-  display: flex; align-items: center; gap: 12px;
-  width: 100%; min-width: 0; text-align: left; padding: 11px 12px; border-radius: 9px;
+  display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; text-align: left; padding: 11px 12px; border-radius: 9px;
 }
 .tabbar > button .icon { display: flex; line-height: 1; flex: 0 0 auto; }
 .tabbar .lbl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabbar > button:hover { background: rgba(255,255,255,.08); }
 .tabbar > button[aria-pressed="true"] { color: #fff; background: rgba(255,255,255,.15); }
-.tabbar .badge {
-  margin-left: auto; flex: 0 0 auto; min-width: 18px; height: 18px; border-radius: 9px;
-  background: var(--p-warn); color: #fff; font-size: 10.5px; font-weight: 700;
-  display: flex; align-items: center; justify-content: center; padding: 0 5px;
-}
-.tab-grupo {
-  display: block; margin: 10px 12px 2px; padding-top: 10px;
-  border-top: 1px solid rgba(255,255,255,.12);
-  font-family: var(--f-data); font-size: 10px; font-weight: 700;
-  letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.45);
-}
+.tabbar .badge { margin-left: auto; flex: 0 0 auto; min-width: 18px; height: 18px; border-radius: 9px; background: var(--crit); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 5px; }
+.tab-grupo { display: block; margin: 10px 12px 2px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.12); font-family: var(--f-data); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.45); }
 .tab-grupo.primero { margin-top: 0; padding-top: 0; border-top: 0; }
-.side-foot {
-  display: block; margin-top: auto; padding: 10px 12px 2px; font-size: 10px; color: rgba(255,255,255,.4);
-  font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase;
-}
+.side-foot { display: block; margin-top: auto; padding: 10px 12px 2px; font-size: 10px; color: rgba(255,255,255,.4); font-family: var(--f-data); letter-spacing: .08em; text-transform: uppercase; }
 
-/* ── Contenido ────────────────────────────────────────────── */
+/* ── Contenido: tarjetas y tiles del dashboard ────────────── */
 .screen { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--elev-1); display: flex; flex-direction: column; }
-.card h2 { font-family: var(--f-display); font-size: 13.5px; font-weight: 700; letter-spacing: .02em; margin-bottom: 2px; color: var(--ink); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--elev-1); }
+.card.grow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.card h2 { font-family: var(--f-display); font-size: 13.5px; font-weight: 700; letter-spacing: .02em; margin-bottom: 2px; color: var(--ink); display: flex; align-items: baseline; gap: 8px; }
 .card .hint { font-size: 13px; color: var(--muted); margin-bottom: 10px; line-height: 1.5; }
-.card-cab { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.card-cab { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.conteo { font-family: var(--f-data); font-size: 12px; color: var(--muted); font-weight: 500; }
 .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
-.dos { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.aviso { color: var(--muted); font-size: 14px; padding: 16px 2px; }
+.aviso.crit { color: var(--crit-text); }
+.libre { color: var(--muted); font-size: 12px; font-weight: 400; font-style: normal; }
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: 0 0 auto; }
-.tiles.tres { grid-template-columns: repeat(3, 1fr); }
-.tile { background: var(--surface-blanca); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; box-shadow: var(--elev-1); min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.tile.ancha { grid-column: 1 / -1; }
-.tile .label { font-family: var(--f-display); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
-.tile .value { font-family: var(--f-data); font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--ink); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tile .value.good { color: var(--p-good); }
-.tile .value.warn { color: var(--p-warn); }
-.tile .value.crit { color: var(--p-crit); }
-.tile .value.info { color: var(--p-info); }
-.btn.enlace { align-self: flex-end; margin-top: 10px; border: 0; background: transparent; color: var(--accent); padding: 4px 6px; }
-.btn.enlace:hover { background: var(--accent-soft); }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; box-shadow: var(--elev-1); min-width: 0; }
+.tile .label { display: block; font-family: var(--f-display); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.tile .value { display: block; font-family: var(--f-data); font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--ink); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile.alerta .value { color: var(--accent); }
+.totales { font-size: 12.5px; color: var(--muted); padding: 0 2px; }
+.enlace { border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 0; }
+.enlace:hover { text-decoration: underline; }
+.dash-grid { display: grid; grid-template-columns: 1fr; gap: 10px; flex: 0 0 auto; }
+.dash-lado { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.dash-lado .card .btn.small { align-self: flex-start; margin-top: 10px; }
 
-/* Requieren atención: un punto sólido por severidad y la empresa en negrita. */
-.atencion { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.aten {
-  display: flex; align-items: center; gap: 10px;
-  padding: 9px 12px; border-radius: 10px; border: 1px solid var(--grid); background: var(--surface-blanca);
-}
-.aten-punto { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
-.aten.crit .aten-punto { background: var(--p-crit); }
-.aten.warn .aten-punto { background: var(--p-warn); }
-.aten.info .aten-punto { background: var(--p-info); }
+/* Requieren atención: chip de urgencia, empresa en negrita, «Ver» al final. */
+.atencion { display: flex; flex-direction: column; }
+.aten { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--grid); }
+.aten:first-child { border-top: 0; }
 .aten-texto { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .aten-texto b { font-size: 13.5px; }
 .aten-texto span { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
+.lista-corta { display: flex; flex-direction: column; margin-top: 6px; }
+.fila-corta { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; border-top: 1px solid var(--grid); background: transparent; font: inherit; padding: 8px 0; cursor: pointer; text-align: left; color: var(--ink); }
+.fila-corta:first-child { border-top: 0; }
+.fila-corta:hover .fila-nombre { color: var(--accent); }
+.fila-nombre { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+.fila-nota { font-family: var(--f-data); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 
-.m-label {
-  font-family: var(--f-display); font-size: 9.5px; letter-spacing: .09em;
-  text-transform: uppercase; color: var(--muted); font-weight: 700;
-}
+/* ── Chips: los del panel (suaves, con punto) ─────────────── */
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-data); font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+.chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.crit { color: var(--crit-text); background: var(--crit-soft); }
+.chip.warn { color: var(--warn-text); background: var(--warn-soft); }
+.chip.good { color: var(--good-text); background: var(--good-soft); }
+.chip.neutral { color: var(--ink-2); background: var(--accent-soft); }
+.chip.neutral::before { background: var(--accent); }
 
 /* ── Controles de la lista ────────────────────────────────── */
-.plat-controls { display: flex; flex-direction: column; gap: 10px; }
-.segmentos {
-  display: flex; background: var(--surface-blanca); border: 1px solid var(--border);
-  border-radius: var(--r-sm); padding: 3px; gap: 2px; overflow-x: auto; max-width: 100%;
-  scrollbar-width: none; align-self: flex-start;
-}
+.controles { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1 1 auto; min-width: 0; }
+.segmentos { display: inline-flex; background: var(--page); border: 1px solid var(--grid); border-radius: 8px; padding: 2px; gap: 2px; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
 .segmentos::-webkit-scrollbar { display: none; }
-.segmentos button {
-  font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink-2);
-  border: 0; background: transparent; padding: 7px 12px; border-radius: 6px; cursor: pointer;
-  white-space: nowrap; flex: 0 0 auto;
-}
-.segmentos button:hover { background: var(--accent-soft); }
-.segmentos button.activo { background: var(--accent); color: var(--accent-ink); }
-.buscar-fila { display: flex; align-items: center; gap: 12px; }
-.buscar {
-  flex: 1; min-width: 0; font: inherit; font-size: 14px; padding: 10px 12px;
-  border-radius: var(--r-sm); border: 1px solid var(--border);
-  background: var(--surface-blanca); color: var(--ink);
-}
-.conteo { font-family: var(--f-data); font-size: 12px; color: var(--muted); white-space: nowrap; }
-.aviso { color: var(--muted); font-size: 14px; padding: 16px 2px; }
-.aviso.crit { color: var(--p-crit); }
+.segmentos button { font-family: var(--f-data); font-size: 12px; font-weight: 600; color: var(--ink-2); border: 0; background: transparent; padding: 6px 11px; border-radius: 6px; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
+.segmentos button:hover { color: var(--accent); }
+.segmentos button.activo { background: var(--surface); color: var(--ink); box-shadow: var(--elev-1); }
+.buscar { flex: 1 1 200px; min-width: 0; font-family: var(--f-data); font-size: 13.5px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
 
-/* ── Chips: sólidos, para que se distingan de un vistazo ──── */
-.chip {
-  display: inline-flex; align-items: center;
-  font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
-  white-space: nowrap; letter-spacing: .02em; color: #fff; line-height: 1.3;
-}
-.chip.good { background: var(--p-good); }
-.chip.warn { background: var(--p-warn); }
-.chip.crit { background: var(--p-crit); }
-.chip.info { background: var(--p-info); }
-.chip.chico { font-size: 10px; padding: 2px 7px; align-self: flex-start; margin-top: 4px; }
+/* ── Tabla (PC) y acordeón (móvil), como en Colaboradores ─── */
+.att-tablewrap { display: none; overflow-x: auto; }
+.att-table { border-collapse: collapse; width: 100%; min-width: 880px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.att-table th { text-align: left; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+.att-table td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--grid); color: var(--ink); vertical-align: top; }
+.att-table th.num, .att-table td.num { text-align: right; }
+.att-table tbody tr:hover td { background: var(--accent-soft); }
+.att-table tbody tr.con-novedad td { background: color-mix(in srgb, var(--crit-soft) 55%, transparent); }
+.att-table .att-name { font-weight: 600; display: block; }
+.att-table td.num.att-name { display: table-cell; }
+.att-table .sub { display: block; font-size: 11.5px; color: #475467; margin-top: 2px; white-space: nowrap; }
+.att-table .sub.aviso-txt { color: var(--warn-text); font-weight: 600; white-space: normal; max-width: 220px; }
+.att-table td.al-tope { color: var(--warn-text); font-weight: 700; }
+.att-table .chip { margin-bottom: 2px; }
+.att-table code.ref, .compra code.ref { background: transparent; padding: 0; font-size: 11.5px; color: var(--muted); }
+.tl-actions { display: flex; gap: 6px; justify-content: flex-end; }
 
-/* ── Fichas de empresa ────────────────────────────────────── */
-.fichas { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
-.ficha {
-  background: var(--surface-blanca); border: 1px solid var(--border);
-  border-left: 5px solid var(--grid);            /* riel de severidad */
-  border-radius: var(--r-md); box-shadow: var(--elev-1);
-  padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 12px; min-width: 0;
-}
-.ficha.tono-good { border-left-color: var(--p-good); }
-.ficha.tono-warn { border-left-color: var(--p-warn); }
-.ficha.tono-crit { border-left-color: var(--p-crit); }
-.ficha-cab { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-.ficha-nombre { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.ficha-nombre b { font-size: 16px; letter-spacing: -.01em; line-height: 1.25; }
-.ficha-nombre small { font-size: 11.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ficha-nombre .dueno { font-family: var(--f-data); color: var(--muted); }
-
-.compra {
-  display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 10px;
-  background: var(--page); border-radius: var(--r-sm); padding: 10px 12px;
-}
-.compra > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.compra b { font-size: 15px; line-height: 1.2; color: var(--ink); }
-.compra b.sin { color: var(--muted); font-weight: 600; }
-.compra small { font-size: 11px; color: var(--ink-2); line-height: 1.4; }
-.compra .chip { align-self: flex-start; }
-
-.uso { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
-.dato { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 7px 8px; border: 1px solid var(--grid); border-radius: var(--r-sm); }
-.dato.tope { border-color: var(--p-warn); background: var(--k-out-soft); }
-.d-etq { font-family: var(--f-display); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 700; white-space: nowrap; }
-.d-val { font-family: var(--f-data); font-size: 15px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.d-val em { font-style: normal; font-weight: 600; font-size: 12px; color: var(--muted); }
-.d-val.chica { font-size: 12.5px; font-weight: 600; }
-
-.falta { font-size: 12.5px; font-weight: 600; color: var(--p-warn); padding: 7px 10px; border-radius: var(--r-sm); background: var(--k-out-soft); }
-.falta.crit { color: var(--p-crit); background: var(--k-no-soft); }
-.ficha-acciones { display: flex; gap: 8px; justify-content: flex-end; align-items: center; padding-top: 10px; border-top: 1px solid var(--grid); }
+.acc { display: flex; flex-direction: column; gap: 8px; }
+.acc-item { background: var(--surface); border: 1px solid var(--grid); border-radius: 10px; box-shadow: var(--elev-1); }
+.acc-head { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; font: inherit; font-weight: 600; font-size: 14px; padding: 12px 14px; cursor: pointer; text-align: left; color: var(--ink); border-radius: 10px; }
+.acc-head:active { background: var(--accent-soft); }
+.acc-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-note { font-family: var(--f-data); font-size: 12.5px; color: var(--ink-2); font-weight: 600; flex: 0 0 auto; }
+.acc-chev { color: var(--muted); display: flex; flex: 0 0 auto; transition: transform .18s; }
+.acc-item.open .acc-chev { transform: rotate(90deg); }
+.acc-body { border-top: 1px solid var(--grid); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 7px; }
+.acc-field { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; }
+.acc-field b { color: var(--muted); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; flex: 0 0 auto; }
+.acc-field span { color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+.acc-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.acc-tile { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 4px; border-radius: 8px; background: var(--page); text-align: center; min-width: 0; }
+.acc-tile b { font-family: var(--f-data); font-size: 14.5px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.acc-tile b.chica { font-size: 12px; font-weight: 600; }
+.acc-tile b .libre { font-weight: 500; }
+.acc-tile small { font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.acc-lineas { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.acc-linea { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); min-width: 0; flex-wrap: wrap; }
+.acc-linea > svg { flex: none; color: var(--muted); }
+.acc-linea.aviso { color: var(--warn-text); }
+.acc-linea.aviso > svg { color: var(--warn-text); }
+.acc-actions { margin-top: 4px; display: flex; flex-direction: column; gap: 6px; }
+.acc-iconos { display: flex; gap: 8px; }
+.acc-iconos .btn { flex: 1 1 0; justify-content: center; }
 
 /* ── Tareas ───────────────────────────────────────────────── */
-.tarea-lista { display: flex; flex-direction: column; gap: 6px; }
-.tarea { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; padding: 8px 10px; border: 1px solid var(--grid); border-radius: 10px; background: var(--surface-blanca); }
-.tarea b { font-weight: 650; color: var(--ink); }
-.tarea-cuando { color: var(--muted); }
+.tarea-lista { display: flex; flex-direction: column; }
+.tarea { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; padding: 8px 0; border-top: 1px solid var(--grid); }
+.tarea:first-child { border-top: 0; }
+.tarea b { font-weight: 600; color: var(--ink); }
+.tarea-cuando { color: var(--muted); font-family: var(--f-data); font-size: 12px; }
 .tarea-detalle { color: var(--ink-2); margin-left: auto; font-variant-numeric: tabular-nums; }
-.tarea.error .tarea-detalle { color: var(--p-crit); }
+.tarea.error .tarea-detalle { color: var(--crit-text); }
 
-/* ── Pagos ────────────────────────────────────────────────── */
-.pagos { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.pago { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--grid); border-radius: var(--r-sm); background: var(--surface-blanca); }
-.pago-cab { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.pago-quien { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 160px; }
-.pago-quien b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pago-monto { font-family: var(--f-data); font-size: 15px; font-variant-numeric: tabular-nums; }
-.pago small { font-size: 12px; color: var(--ink-2); line-height: 1.45; }
-.pago-pie { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.pago .ref { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* ── Botones (los del panel) ──────────────────────────────── */
+.btn { border: 1px solid var(--grid); background: var(--surface); color: var(--ink-2); font-family: var(--f-data); font-size: 13.5px; font-weight: 600; padding: 7px 14px; border-radius: 6px; cursor: pointer; box-shadow: var(--elev-1); }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn:active { box-shadow: var(--press); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.small { font-size: 12px; padding: 4px 10px; }
+.btn.small.block { display: block; width: 100%; text-align: center; }
+.btn.btn-ico { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 9px; min-width: 36px; line-height: 1; }
+.btn.danger-btn:hover { border-color: var(--crit); color: var(--crit-text); background: var(--crit-soft); }
+.btn.primary { background: var(--btn-primary); border-color: var(--btn-primary); color: var(--accent-ink); }
+.btn.primary:hover { background: var(--btn-primary-hover); border-color: var(--btn-primary-hover); color: var(--accent-ink); }
+.btn.primary.danger { background: var(--crit); border-color: var(--crit); }
+.btn.primary.danger:hover { filter: brightness(1.1); }
 
-/* ── Botones ──────────────────────────────────────────────── */
-.btn {
-  font: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px;
-  border-radius: var(--r-sm); border: 1px solid var(--border);
-  background: var(--surface-blanca); color: var(--ink); cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-}
-.btn:hover { background: var(--accent-soft); border-color: var(--accent); }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn.small { padding: 5px 10px; font-size: 12px; flex: 0 0 auto; }
-.btn.ico { width: 38px; height: 38px; padding: 0; color: var(--ink-2); }
-.btn.ico:hover { color: var(--accent); }
-.btn.ico.peligro:hover { background: var(--k-no-soft); border-color: var(--p-crit); color: var(--p-crit); }
-.btn.primary { background: var(--btn-primary); border-color: var(--btn-primary); color: #fff; }
-.btn.primary:hover { background: var(--btn-primary-hover); }
-.btn.danger { background: var(--p-crit); border-color: var(--p-crit); color: #fff; }
-.btn.danger:hover { filter: brightness(1.1); }
-.btn.danger:disabled { background: var(--k-no-soft); border-color: transparent; color: var(--p-crit); }
+/* ── Diálogos (los del panel) ─────────────────────────────── */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 70; }
+.dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--grid); border-radius: 10px; padding: 18px 20px; max-width: 440px; width: 100%; box-shadow: 0 12px 40px rgba(16,24,40,0.18); max-height: calc(100dvh - 32px); overflow: auto; }
+.dialog.ancho { max-width: 520px; }
+.dialog h3 { font-family: var(--f-display); font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 2px; }
+.dialog .hint { font-size: 13px; color: var(--muted); margin-bottom: 12px; line-height: 1.5; }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.field label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.field input, .field select { font-family: var(--f-data); font-size: 14px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); color-scheme: light; min-width: 0; }
+.hours-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.hours-row.dos { grid-template-columns: 1fr 1fr; }
+.hours-row .sub-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); min-width: 0; }
+.hours-row .sub-field input, .hours-row .sub-field select { font-family: var(--f-data); font-size: 14px; font-weight: 400; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); color-scheme: light; min-width: 0; width: 100%; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.banner-vencida { background: var(--crit-soft); color: var(--crit-text); border: 1px solid var(--crit); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.compras { display: flex; flex-direction: column; margin-bottom: 12px; }
+.compra { display: flex; flex-direction: column; gap: 2px; padding: 9px 0; border-top: 1px solid var(--grid); }
+.compra:first-child { border-top: 0; }
+.compra-cab { display: flex; align-items: center; gap: 10px; }
+.compra-cab b { font-family: var(--f-data); font-size: 14px; }
+.compra-cab .libre { margin-left: auto; }
+.compra .sub { font-size: 12px; color: var(--ink-2); }
 
-/* ── Diálogos ─────────────────────────────────────────────── */
-.velo { position: fixed; inset: 0; background: rgba(16, 24, 40, .55); display: grid; place-items: center; padding: 16px; z-index: 70; }
-.dialogo {
-  background: var(--surface-blanca); border-radius: var(--r-lg); box-shadow: var(--elev-2);
-  padding: 20px; max-width: 480px; width: 100%; max-height: calc(100dvh - 32px); overflow: auto;
-  display: flex; flex-direction: column; gap: 14px;
-}
-.dialogo.ancha { max-width: 560px; }
-.dialogo h3 { font-family: var(--f-display); font-size: 17px; font-weight: 700; line-height: 1.3; }
-.dlg-cab { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-.dlg-cab .btn.ico { width: 32px; height: 32px; flex: 0 0 auto; }
-.dlg-cuerpo { font-size: 13.5px; color: var(--ink-2); line-height: 1.55; }
-.dlg-nota { font-size: 12px; color: var(--muted); line-height: 1.5; }
-.dlg-alerta { font-size: 13px; font-weight: 600; color: var(--p-crit); background: var(--k-no-soft); border-radius: var(--r-sm); padding: 9px 12px; }
-.dlg-campos { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.dlg-campos label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: var(--ink-2); min-width: 0; }
-.dlg-campos label.ancho { grid-column: 1 / -1; }
-.dlg-campos input, .dlg-campos select {
-  font: inherit; font-size: 14px; font-weight: 400; padding: 9px 10px; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--surface-blanca); color: var(--ink); min-width: 0; width: 100%;
-}
-.dlg-campo { display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: var(--ink-2); }
-.dlg-campo input { font-family: var(--f-data); font-size: 14px; padding: 9px 12px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--page); color: var(--ink); }
-.dlg-botones { display: flex; justify-content: flex-end; gap: 8px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; font-family: var(--f-data); font-size: 13.5px; padding: 9px 18px; border-radius: 8px; z-index: 80; box-shadow: var(--elev-2); max-width: calc(100vw - 32px); text-align: center; }
+.btn:focus-visible, .tabbar button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.toast {
-  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
-  background: var(--ink); color: #fff; font-size: 13.5px;
-  padding: 10px 18px; border-radius: 999px; box-shadow: var(--elev-2); z-index: 80;
-  max-width: calc(100vw - 32px); text-align: center;
-}
-.plat-root :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-/* ── Teléfono ─────────────────────────────────────────────── */
-@media (max-width: 560px) {
-  .compra { grid-template-columns: 1fr 1fr; }
-  .compra-plan { grid-column: 1 / -1; }
-  .uso { grid-template-columns: repeat(3, 1fr); }
-  .fichas { grid-template-columns: 1fr; }
-  .ficha-acciones { justify-content: space-between; }
-  .ficha-acciones .btn.ico { flex: 1; height: 42px; }
-  .dlg-campos { grid-template-columns: 1fr; }
-  .dialogo { padding: 16px; }
-  .velo { padding: 10px; align-items: end; }
-  .tiles.tres { grid-template-columns: 1fr 1fr; }
-  .tiles.tres .tile:first-child { grid-column: 1 / -1; }
+/* ── Móvil angosto: el diálogo de ajustes apila sus campos ── */
+@media (max-width: 520px) {
+  .hours-row { grid-template-columns: 1fr; }
+  .hours-row.dos { grid-template-columns: 1fr 1fr; }
+  .card-cab { flex-direction: column; align-items: stretch; }
+  .controles { flex-direction: column; align-items: stretch; }
+  .segmentos { align-self: stretch; }
 }
 
 /* ── PC: barra arriba, menú en columna, contenido con su scroll ── */
@@ -1319,23 +1328,14 @@ img.sesion-avatar { object-fit: cover; display: block; }
     display: grid; grid-template-columns: 240px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
     gap: 0; padding: 0;
   }
-  .app-header {
-    grid-column: 1 / -1; grid-row: 1; padding: 12px 24px; border-radius: 0;
-    border-bottom: 1px solid rgba(255,255,255,.16); position: relative; z-index: 2;
-  }
+  .app-header { grid-column: 1 / -1; grid-row: 1; padding: 12px 24px; border-radius: 0; border-bottom: 1px solid rgba(255,255,255,.16); position: relative; z-index: 2; }
   .head-tab { font-size: 16px; }
   .app-header .date-note { font-size: 12.5px; }
   .head-user-nombre { display: block; }
-  .tabbar {
-    position: static; transform: none; width: auto; z-index: auto;
-    grid-column: 1; grid-row: 2;
-    align-self: stretch; height: 100%; gap: 4px;
-    padding: 18px 14px 14px; border-radius: 0; box-shadow: none;
-  }
+  .tabbar { position: static; transform: none; width: auto; z-index: auto; grid-column: 1; grid-row: 2; align-self: stretch; height: 100%; gap: 4px; padding: 18px 14px 14px; border-radius: 0; box-shadow: none; }
   .nav-scrim { display: none; }
   .tabbar > button { font-size: 12px; padding: 10px 14px; gap: 10px; }
   .side-foot { padding: 10px 6px 2px; }
-  /* riel de iconos */
   .nav-collapsed { grid-template-columns: 74px minmax(0, 1fr); }
   .nav-collapsed .tabbar { padding: 18px 8px 14px; }
   .nav-collapsed .lbl, .nav-collapsed .side-foot { display: none; }
@@ -1345,15 +1345,13 @@ img.sesion-avatar { object-fit: cover; display: block; }
   .nav-collapsed .tabbar .badge { position: absolute; top: 2px; right: 4px; margin-left: 0; }
 
   .screen { grid-column: 2; grid-row: 2; padding: 14px 20px; gap: 12px; overflow-y: auto; min-height: 0; }
-  .card { padding: 18px 22px; }
+  .card { border: 1px solid var(--grid); border-radius: 8px; padding: 18px 22px; box-shadow: var(--elev-1); }
   .card h2 { font-size: 16px; }
-  .dos { grid-template-columns: 1fr 1fr; gap: 12px; }
-  .tiles { grid-template-columns: repeat(3, 1fr); gap: 12px; }
-  .tiles.tres { grid-template-columns: repeat(3, 1fr); }
-  .tile { padding: 14px 16px; }
-  .tile .value { font-size: 28px; }
-  .tile.ancha { grid-column: span 2; }
-  .plat-controls { flex-direction: row; align-items: center; flex-wrap: wrap; }
-  .buscar-fila { flex: 1; min-width: 260px; }
+  .tiles { grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .tile { border: 1px solid var(--grid); border-radius: 8px; padding: 14px 16px; }
+  .tile .value { font-size: 30px; }
+  .dash-grid { grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 12px; align-items: start; }
+  .att-tablewrap { display: block; }
+  .acc { display: none; }
 }
 `;
