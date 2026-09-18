@@ -1482,6 +1482,22 @@ await test('sin salario: valor null, se cuenta aparte y no rompe los totales', (
   assert.equal(luis.pago, 'pendiente');
   assert.equal(totales.sinSalario, 1);
 });
+await test('cerrar congela: un tramo cerrado conserva su factor y su valor aunque la configuración cambie', async () => {
+  // Sin base: se ejercita resumirLote sobre un lote que mezcla tramos en
+  // vivo con tramos congelados (como los arma loteConCierres).
+  const congelado = tramo('111', 'HED', 2, 20000, true, 9);
+  const vivo = tramo('222', 'HED', 2, 32000, false, 10);
+  const { empleados } = resumirLote({
+    registros: [{ ...congelado, cerrado: true, cerradoEn: '2026-08-16T10:00:00Z', cerradoPor: 'api' }, vivo],
+    porEmpleado: new Map([['E111', { nombre: 'Ana' }], ['E222', { nombre: 'Luis' }]]),
+  });
+  const ana = empleados.find((e) => e.documento === '111');
+  const luis = empleados.find((e) => e.documento === '222');
+  assert.equal(ana.valor, 20000, 'lo cerrado se suma con el valor congelado');
+  assert.equal(ana.pago, 'pagado');
+  assert.equal(luis.valor, 32000, 'lo abierto va con el valor calculado hoy');
+  assert.equal(luis.pago, 'pendiente');
+});
 await test('el período se pide por mes y quincena, o por desde/hasta', async () => {
   const { rangoPedido } = await import('../lib/periodoHoras.js');
   const q = (s) => rangoPedido(new URLSearchParams(s));
@@ -1495,8 +1511,8 @@ await test('el período se pide por mes y quincena, o por desde/hasta', async ()
   assert.ok(q('mes=2026-09&quincena=3').error, 'solo hay dos quincenas');
   assert.ok(q('desde=2026-09-20&hasta=2026-09-10').error, 'desde no puede ir después de hasta');
 });
-await test('las tres rutas de /api/horas entran con la clave de API (accesoHoras)', () => {
-  for (const ruta of ['../app/api/horas/route.js', '../app/api/horas/resumen/route.js', '../app/api/horas/pagadas/route.js']) {
+await test('las rutas de /api/horas entran con la clave de API (accesoHoras)', () => {
+  for (const ruta of ['../app/api/horas/route.js', '../app/api/horas/resumen/route.js', '../app/api/horas/pagadas/route.js', '../app/api/horas/cierre/route.js']) {
     const fuente = leerCss(new URL(ruta, import.meta.url), 'utf8');
     assert.match(fuente, /accesoHoras\(req, '(ver|liquidar)'\)/, `${ruta} no pasa por accesoHoras`);
   }

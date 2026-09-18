@@ -22,7 +22,7 @@ import {
   listPeople, listArchivados, removePerson, updatePerson, expectedDailyHours,
   listarRostros, agregarRostro, quitarRostro,
   franjaEsperada, finJornadaMs, horasFranja, horasSemanaDias, resumenDias, DIAS_CORTOS, ORDEN_SEMANA,
-  getLaborConfig, saveLaborConfig, getHorasValorizadas, getEventosRango, marcarHorasPagadas,
+  getLaborConfig, saveLaborConfig, getHorasValorizadas, getEventosRango,
   getSedes, addSede, updateSede, removeSede,
   getHorarios, addHorario, updateHorario, removeHorario,
 } from '../services/panelStore.js';
@@ -446,7 +446,6 @@ const fmtTs = (iso) =>
   new Date(iso).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) + ', ' + fmt12(iso);
 
 /** Estado de pago de una fila, en palabras. */
-const ETIQUETA_PAGO = { pagado: 'Pagado', parcial: 'Parcial', pendiente: 'Pendiente', na: '—' };
 
 // Pesos colombianos, sin centavos: el peso no los usa y en un reporte de
 // nómina los decimales solo restan confianza.
@@ -1493,10 +1492,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         p.empleados.set(t.documento, {
           cedula: t.documento, name: nombrePorCedula.get(t.documento) ?? `C.C. ${t.documento}`,
           horasPorTipo: Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0])),
-          extras: 0, valor: 0, sinSalario: false, referencias: [], refsSinPagar: [],
+          extras: 0, valor: 0, sinSalario: false, referencias: [], refsSinPagar: [], cerrado: false, cerradoEn: null,
         });
       }
       const e = p.empleados.get(t.documento);
+      if (t.cerrado) { e.cerrado = true; e.cerradoEn = t.cerradoEn ?? null; }
       e.horasPorTipo[t.tipoHora] += t.horas; e.extras += t.horas;
       p.horasPorTipo[t.tipoHora] += t.horas;
       e.referencias.push(t.referenciaExterna);
@@ -1507,7 +1507,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     for (const p of [...periodos.values()].sort((a, b) => b.desde.localeCompare(a.desde))) {
       p.enCurso = p.hasta >= hoy;
       p.lista = [...p.empleados.values()]
-        .map((e) => ({ ...e, pago: e.refsSinPagar.length === 0 ? 'pagado' : e.refsSinPagar.length === e.referencias.length ? 'pendiente' : 'parcial' }))
+        .map((e) => ({ ...e, pago: e.cerrado || e.refsSinPagar.length === 0 ? 'pagado' : e.refsSinPagar.length === e.referencias.length ? 'pendiente' : 'parcial' }))
         .sort((a, b) => b.valor - a.valor || b.extras - a.extras);
       if (!meses.has(p.mes)) meses.set(p.mes, { mes: p.mes, valor: 0, sinSalario: false, periodos: [] });
       const m = meses.get(p.mes);
@@ -1548,6 +1548,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         desglose: [],          // fórmula exacta de cada tramo, para el tooltip
         referencias: [],       // tramos de esta fila, para marcarlos pagados
         refsSinPagar: [],
+        cerrado: false, cerradoEn: null, cerradoPor: null,
       });
     }
 
@@ -1565,9 +1566,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           horasPorTipo: Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0])),
           extras: 0, valor: 0, sinSalario: false, conExtras: false,
           desglose: [], referencias: [], refsSinPagar: [],
+          cerrado: false, cerradoEn: null, cerradoPor: null,
         });
       }
       const f = filas.get(t.documento);
+      // Tramo congelado por un cierre: la fila entera está cerrada.
+      if (t.cerrado) { f.cerrado = true; f.cerradoEn = t.cerradoEn ?? null; f.cerradoPor = t.cerradoPor ?? null; }
       f.horasPorTipo[t.tipoHora] = (f.horasPorTipo[t.tipoHora] ?? 0) + t.horas;
       f.extras += t.horas;
       f.conExtras = true;
@@ -1589,7 +1593,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     // pagar: ese tramo se recalcula con otra referencia y vuelve a estar
     // pendiente. Es el aviso de que algo cambió después de liquidar.
     for (const f of filas.values()) {
-      f.pago = !f.conExtras ? 'na'
+      f.pago = f.cerrado ? 'pagado' : !f.conExtras ? 'na'
         : f.refsSinPagar.length === 0 ? 'pagado'
           : f.refsSinPagar.length === f.referencias.length ? 'pendiente' : 'parcial';
     }
@@ -1604,33 +1608,49 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
    * volver, sin re-pedir todo el período: el cálculo del servidor no cambió,
    * solo la anotación de pago.
    */
-  const alternarPago = async (fila) => {
-    const pagar = fila.pago !== 'pagado'; // 'parcial' completa lo que falte
-    const refs = pagar ? fila.refsSinPagar : fila.referencias;
-    if (refs.length === 0) return;
+  // Cerrar un período es liquidarlo: lo de esa persona queda congelado tal
+  // como se pagó, y un cambio posterior en Ajustes ya no lo toca. Reabrir lo
+  // devuelve al cálculo en vivo. Sin lista de cédulas se cierra a todos los
+  // que tengan extras en el período.
+  const [cerrando, setCerrando] = useState(false);
+  const cambiarCierre = async ({ documentos = null, reabrir = false, quien = '' }) => {
+    setCerrando(true);
     try {
-      await marcarHorasPagadas(refs, pagar);
-      const afectadas = new Set(refs);
-      setRepDatos((d) => ({
-        ...d,
-        tramos: d.tramos.map((t) => (afectadas.has(t.referenciaExterna) ? { ...t, pagado: pagar } : t)),
-      }));
-      showToast(pagar ? `${fila.name}: ${refs.length} tramo(s) marcados como pagados` : `${fila.name}: marca de pago retirada`);
-    } catch (e) {
-      showToast(`No se pudo guardar: ${e.message}`);
+      const r = await fetch('/api/horas/cierre', {
+        method: reabrir ? 'DELETE' : 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ desde: repFrom, hasta: repTo, ...(documentos ? { documentos } : {}) }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.ok) { showToast(`No se pudo ${reabrir ? 'reabrir' : 'cerrar'}: ${j?.error ?? r.status}`); return; }
+      if (reabrir) showToast(quien ? `${quien}: período reabierto` : `Período reabierto (${j.reabiertos.length})`);
+      else showToast(quien ? `${quien}: período cerrado` : `Período cerrado: ${j.cerrados.length} persona(s)${j.yaCerrados.length ? `, ${j.yaCerrados.length} ya estaban` : ''}`);
+      setRepRecarga((n) => n + 1);
+    } finally { setCerrando(false); }
+  };
+  const alternarCierre = (fila) => {
+    if (fila.cerrado) {
+      if (!confirm(`¿Reabrir el período de ${fila.name}? Volverá a calcularse en vivo y perderá la marca de pagado.`)) return;
+      cambiarCierre({ documentos: [fila.cedula], reabrir: true, quien: nombreCorto(fila.name) });
+    } else {
+      cambiarCierre({ documentos: [fila.cedula], quien: nombreCorto(fila.name) });
     }
+  };
+  const cerrarTodoElPeriodo = () => {
+    const abiertos = report.filter((r) => r.conExtras && !r.cerrado).length;
+    if (abiertos === 0) return;
+    if (!confirm(`¿Cerrar el período para ${abiertos} persona(s)? Sus horas quedan liquidadas tal como están hoy; un cambio en Ajustes ya no las mueve.`)) return;
+    cambiarCierre({});
   };
 
   const totalValorizado = useMemo(() => report.reduce((s, r) => s + r.valor, 0), [report]);
 
-  /** Estado de pago explicado, para el tooltip y el acordeón. */
-  const etiquetaPago = (r) => {
-    if (r.pago === 'pagado') return `Pagado · ${r.referencias.length} tramo(s)`;
-    if (r.pago === 'parcial') {
-      return `Parcial · ${r.referencias.length - r.refsSinPagar.length} de ${r.referencias.length} tramos pagados. `
-        + 'Un tramo puede volver a pendiente si se corrigió su marcación después de pagar.';
+  /** Estado del cierre explicado, para el tooltip de cada fila. */
+  const etiquetaCierre = (r) => {
+    if (r.cerrado) {
+      const cuando = r.cerradoEn ? new Date(r.cerradoEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) : '';
+      return `Cerrado${cuando ? ` el ${cuando}` : ''}${r.cerradoPor ? ` por ${r.cerradoPor}` : ''} · cifras congeladas · tocar para reabrir`;
     }
-    return `Pendiente · ${r.referencias.length} tramo(s) sin marcar`;
+    return 'Abierto: se calcula en vivo · tocar para cerrar (liquidar y congelar)';
   };
 
   /**
@@ -3225,6 +3245,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 >
                   {repColsAsistencia ? '− Columnas de asistencia' : '＋ Columnas de asistencia'}
                 </button>
+                {permisos.liquidar && (
+                  <button
+                    className="btn btn-ico"
+                    title="Cerrar el período para todos: liquidar y congelar las cifras" aria-label="Cerrar el período completo"
+                    onClick={cerrarTodoElPeriodo}
+                    disabled={cerrando || repDatos.estado !== 'listo' || !report.some((r) => r.conExtras && !r.cerrado)}
+                  >
+                    <Icon name="lock" size={17} />
+                    <span className="solo-pc">Cerrar período</span>
+                  </button>
+                )}
                 <button
                   className={`btn btn-ico${repDatos.estado === 'cargando' ? ' girando' : ''}`}
                   title="Actualizar el reporte" aria-label="Actualizar el reporte"
@@ -3324,7 +3355,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           )}
                           {permisos.liquidar && (
                             <span className="col-pago">
-                              Pagado <Q abajo texto="Anotación de que esas horas ya se liquidaron en nómina — AsistencIA no paga. Si después se corrige una marcación ya pagada, ese tramo vuelve a quedar pendiente y la fila se muestra como parcial." />
+                              Cierre <Q abajo texto="Cerrar es liquidar: lo de esa persona queda congelado tal como se pagó, y un cambio posterior en Ajustes ya no lo mueve. Lo abierto se calcula en vivo. También se cierra desde el sistema de nómina por la API." />
                             </span>
                           )}
                         </div>
@@ -3361,19 +3392,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                             )}
                             {permisos.liquidar && (
                               <span className="col-pago">
-                                {r.conExtras ? (
-                                  <label className={`pago-check est-${r.pago}`} title={etiquetaPago(r)}>
-                                    <input
-                                      type="checkbox"
-                                      checked={r.pago === 'pagado'}
-                                      // 'parcial' se pinta indeterminado: ni pagado
-                                      // ni pendiente, y al hacer clic completa lo
-                                      // que falte en vez de desmarcar lo ya pagado.
-                                      ref={(el) => { if (el) el.indeterminate = r.pago === 'parcial'; }}
-                                      onChange={() => alternarPago(r)}
-                                    />
-                                    <span className="pago-txt">{ETIQUETA_PAGO[r.pago]}</span>
-                                  </label>
+                                {r.conExtras || r.cerrado ? (
+                                  <button
+                                    className={`btn small btn-ico rep-cierre${r.cerrado ? ' cerrado' : ''}`}
+                                    title={etiquetaCierre(r)} aria-label={r.cerrado ? 'Reabrir' : 'Cerrar'}
+                                    disabled={cerrando} onClick={() => alternarCierre(r)}
+                                  >
+                                    <Icon name="lock" size={14} />
+                                    {r.cerrado && <span className="ico-num">{r.cerradoEn ? new Date(r.cerradoEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) : ''}</span>}
+                                  </button>
                                 ) : <span className="muted-cell">—</span>}
                               </span>
                             )}
@@ -3454,12 +3481,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                   </button>
                                   {permisos.liquidar && (
                                     <button
-                                      className={`btn small btn-ico rep-pago${e.pago === 'pagado' ? ' pagado' : e.pago === 'parcial' ? ' parcial' : ''}`}
-                                      title={e.pago === 'pagado' ? 'Pagado · tocar para quitar la marca' : e.pago === 'parcial' ? 'Pagado en parte · tocar para completar' : 'Marcar como pagadas'}
-                                      aria-label={e.pago === 'pagado' ? 'Quitar marca de pagado' : 'Marcar como pagadas'}
-                                      onClick={() => alternarPago(e)}
+                                      className={`btn small btn-ico rep-cierre${e.cerrado ? ' cerrado' : ''}`}
+                                      title={etiquetaCierre({ ...e, name: e.name })} aria-label={e.cerrado ? 'Reabrir' : 'Cerrar'}
+                                      disabled={cerrando} onClick={() => alternarCierre({ cedula: e.cedula, name: e.name, cerrado: e.cerrado })}
                                     >
-                                      <Icon name="check" size={14} />
+                                      <Icon name="lock" size={14} />
                                     </button>
                                   )}
                                 </div>
@@ -6644,6 +6670,10 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .rep-emp-txt small { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .rep-emp-valor { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink); }
 .rep-emp-valor.muted { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+/* Cierre: candado gris (abierto) o marino con la fecha (cerrado). */
+.rep-cierre { color: var(--muted); }
+.rep-cierre.cerrado { background: var(--btn-primary); border-color: var(--btn-primary); color: #fff; }
+.rep-cierre.cerrado .ico-num { font-size: 11px; font-weight: 600; }
 .rep-pago { color: var(--muted); }
 .rep-pago.pagado { background: #dcf3e6; border-color: #b7e4c7; color: #1a7f4b; }
 .rep-pago.parcial { background: #fdf3d3; border-color: #eedfa8; color: #8a6100; }

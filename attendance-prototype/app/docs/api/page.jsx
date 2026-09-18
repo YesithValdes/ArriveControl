@@ -165,6 +165,7 @@ export default function DocsApiPage() {
           <span className="grupo">Endpoints</span>
           <a href="#resumen">GET /api/horas/resumen</a>
           <a href="#tramos">GET /api/horas</a>
+          <a href="#cierre">POST /api/horas/cierre</a>
           <a href="#pagadas">POST /api/horas/pagadas</a>
           <a href="#avatar">PUT /api/empleados/{'{cédula}'}/avatar</a>
           <span className="grupo">Referencia</span>
@@ -217,12 +218,12 @@ export default function DocsApiPage() {
           <div className="paso"><b>1 · Resumen</b><span>Pide <code>/api/horas/resumen</code> con el período: una fila por empleado con sus horas, su valor y sus referencias.</span></div>
           <div className="paso"><b>2 · Detalle (opcional)</b><span>Si necesita el tramo a tramo (día, hora de inicio y fin, tipo), pide <code>/api/horas</code> con el mismo período.</span></div>
           <div className="paso"><b>3 · Liquida</b><span>Paga en su nómina con esas cifras. AsistencIA no mueve dinero.</span></div>
-          <div className="paso"><b>4 · Anota el pago</b><span>Manda a <code>/api/horas/pagadas</code> las referencias que pagó. Así el panel las muestra como pagadas y nadie las liquida dos veces.</span></div>
+          <div className="paso"><b>4 · Cierra el período</b><span>Manda a <code>/api/horas/cierre</code> el período (y, si quiere, solo algunas cédulas). Lo pagado queda congelado y marcado; nadie lo liquida dos veces.</span></div>
         </div>
         <div className="nota">
-          La clave para no pagar dos veces es <code>referenciaExterna</code>: identifica un tramo concreto y es la misma cada vez que se consulta.
-          Si una marcación se corrige después de pagada, el tramo nuevo trae <b>otra</b> referencia y vuelve a salir como pendiente; el sistema
-          que paga debe deduplicar por referencia, nunca por fecha.
+          <b>Abierto y cerrado.</b> Mientras un período está abierto, AsistencIA lo calcula en vivo con la configuración actual de la
+          empresa: si cambian un porcentaje o una regla, el período cambia. Al <b>cerrarlo</b> queda congelado tal como se pagó, y ya
+          nada lo mueve. Cada fila del resumen dice <code>cerrado: true|false</code>. Lo cerrado también se puede reabrir.
         </div>
         <h3>Cómo se indica el período</h3>
         <p>Los dos GET aceptan cualquiera de estas dos formas:</p>
@@ -250,13 +251,16 @@ export default function DocsApiPage() {
             <tr><td><code>sinSalario</code></td><td className="tipo">boolean</td><td><code>true</code> cuando el valor no se pudo calcular por falta de salario.</td></tr>
             <tr><td><code>pago</code></td><td className="tipo">string</td><td>Estado de los tramos del período: <span className="estado pend">pendiente</span><span className="estado parc">parcial</span><span className="estado pag">pagado</span></td></tr>
             <tr><td><code>referencias</code></td><td className="tipo">string[]</td><td>Referencias de todos sus tramos del período.</td></tr>
-            <tr><td><code>referenciasPendientes</code></td><td className="tipo">string[]</td><td>Las que todavía no se han anotado como pagadas. Es lo que se manda a <code>/api/horas/pagadas</code> después de liquidar.</td></tr>
+            <tr><td><code>referenciasPendientes</code></td><td className="tipo">string[]</td><td>Las que todavía no se han anotado como pagadas (en una fila cerrada, ninguna).</td></tr>
+            <tr><td><code>cerrado</code></td><td className="tipo">boolean</td><td><code>true</code> si el período de esta persona está cerrado: sus cifras son las congeladas al cerrar.</td></tr>
+            <tr><td><code>cerradoEn</code> · <code>cerradoPor</code></td><td className="tipo">string | null</td><td>Cuándo se cerró y quién (<code>api</code>, o el correo de quien lo hizo en el panel).</td></tr>
           </tbody>
         </table></div>
         <h3>Totales</h3>
         <p>
-          <code>totales.valor</code> es el total a pagar del período y <code>totales.valorPendiente</code> lo que aún no se ha anotado como pagado;
-          <code>totales.horas</code> suma por tipo. Salen de las mismas filas, así que siempre cuadran con ellas.
+          <code>totales.valor</code> es el total a pagar del período y <code>totales.valorPendiente</code> lo que aún no se ha cerrado;
+          <code>totales.cerrados</code> y <code>totales.abiertos</code> cuentan personas, y <code>cerradoCompleto</code> (arriba) dice si ya
+          está todo cerrado. Salen de las mismas filas, así que siempre cuadran con ellas.
         </p>
       </section>
 
@@ -285,11 +289,33 @@ export default function DocsApiPage() {
         </table></div>
       </section>
 
+      <section id="cierre">
+        <div className="ruta"><span className="metodo post">POST</span><code>/api/horas/cierre</code></div>
+        <p>
+          <b>Cierra el período</b>: lo liquidado de cada persona queda congelado tal como está en ese momento (horas, valor y tramos) y
+          marcado como pagado. Con <code>documentos</code> se cierra solo a esas cédulas (por ejemplo, a quienes ya se les pagó);
+          sin la lista, se cierra a todos los que tengan extras en el período. Quien ya estaba cerrado no se toca.
+        </p>
+        <pre><code>{`// Cuerpo (JSON). El período como en los GET; documentos es opcional.
+{ "mes": "2026-08", "quincena": 1, "documentos": ["1004415216", "1085312779"] }
+
+// Respuesta
+{ "ok": true, "desde": "2026-08-01", "hasta": "2026-08-15",
+  "cerrados": ["1004415216", "1085312779"], "yaCerrados": [], "sinExtras": [] }`}</code></pre>
+        <ul>
+          <li><code>sinExtras</code>: cédulas que no existen en la empresa (no se cerraron). Una cédula que existe pero no tuvo extras sí se cierra, en cero.</li>
+          <li><b>Reabrir</b>: <code>DELETE /api/horas/cierre</code> con el mismo cuerpo. Borra el cierre y la marca de pagado; el período vuelve a calcularse en vivo.</li>
+          <li>Después de cerrar, <code>GET /api/horas/resumen</code> y <code>GET /api/horas</code> devuelven las cifras congeladas para esas personas (<code>cerrado: true</code>).</li>
+          <li>Lo mismo se hace desde el panel (Reportes → candado por fila o «Cerrar período»); da igual desde dónde.</li>
+        </ul>
+      </section>
+
       <section id="pagadas">
         <div className="ruta"><span className="metodo post">POST</span><code>/api/horas/pagadas</code></div>
         <p>
-          Anota tramos como pagados (o deshace la anotación). Recibe <b>referencias</b>, no fechas: así lo pagado queda amarrado al tramo exacto.
-          Hasta 5.000 referencias por petición. Encabezados: <code>X-API-Key</code> y <code>Content-Type: application/json</code>.
+          Anota tramos sueltos como pagados (o deshace la anotación), sin congelar el período. Es el detalle fino: lo normal es
+          <a href="#cierre">cerrar el período</a>. Recibe <b>referencias</b>, no fechas. Hasta 5.000 por petición.
+          Encabezados: <code>X-API-Key</code> y <code>Content-Type: application/json</code>.
         </p>
         <pre><code>{PAGADAS}</code></pre>
         <p style={{ marginTop: 10 }}>
@@ -357,7 +383,7 @@ export default function DocsApiPage() {
           <thead><tr><th>HTTP</th><th>Cuándo</th></tr></thead>
           <tbody>
             <tr><td className="tipo">401</td><td>Sin clave de API, o clave inválida (por ejemplo, regenerada).</td></tr>
-            <tr><td className="tipo">400</td><td><code>mes</code> que no es <code>YYYY-MM</code>, <code>quincena</code> distinta de 1 o 2, <code>desde</code> mayor que <code>hasta</code>, período faltante en <code>/resumen</code>, lista de referencias vacía o de más de 5.000, JSON inválido.</td></tr>
+            <tr><td className="tipo">400</td><td><code>mes</code> que no es <code>YYYY-MM</code>, <code>quincena</code> distinta de 1 o 2, <code>desde</code> mayor que <code>hasta</code>, período faltante en <code>/resumen</code> o <code>/cierre</code>, lista de referencias o de documentos vacía o demasiado larga, JSON inválido.</td></tr>
             <tr><td className="tipo">5xx</td><td>Falla del servidor. Reintentar más tarde: las lecturas no tienen efectos y el POST se puede repetir sin duplicar nada.</td></tr>
           </tbody>
         </table></div>

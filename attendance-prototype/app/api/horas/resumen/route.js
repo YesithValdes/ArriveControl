@@ -13,7 +13,7 @@
  * Entra con X-API-Key (sistema) o con sesión y permiso VER (panel).
  */
 import { NextResponse } from 'next/server'
-import { construirLote, resumirLote } from '../../../../lib/nomina.js'
+import { resumenConCierres } from '../../../../lib/cierres.js'
 import { accesoHoras, rangoPedido } from '../../../../lib/accesoHoras.js'
 
 export const runtime = 'nodejs'
@@ -29,7 +29,8 @@ export async function GET(req) {
   if (rango?.error) return NextResponse.json({ ok: false, error: rango.error }, { status: 400 })
   if (!rango) return NextResponse.json({ ok: false, error: 'Indica el período: mes=YYYY-MM (y quincena=1|2), o desde y hasta.' }, { status: 400 })
 
+  // Lo cerrado, congelado tal como se pagó; lo abierto, en vivo.
   const { desde, hasta } = rango
-  const { empleados, totales } = resumirLote(await construirLote(esquema, rango))
-  return NextResponse.json({ ok: true, desde, hasta, totales, empleados })
+  const { empleados, totales, cerradoCompleto } = await resumenConCierres(esquema, rango)
+  return NextResponse.json({ ok: true, desde, hasta, cerradoCompleto, totales, empleados })
 }

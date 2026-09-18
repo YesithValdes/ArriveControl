@@ -14,6 +14,7 @@
  */
 import { NextResponse } from 'next/server'
 import { construirLote } from '../../../lib/nomina.js'
+import { loteConCierres } from '../../../lib/cierres.js'
 import { accesoHoras, rangoPedido } from '../../../lib/accesoHoras.js'
 
 export const runtime = 'nodejs'
@@ -26,7 +27,9 @@ export async function GET(req) {
   const rango = rangoPedido(new URL(req.url).searchParams)
   if (rango?.error) return NextResponse.json({ ok: false, error: rango.error }, { status: 400 })
 
-  const { registros, porEmpleado } = await construirLote(esquema, rango)
+  // Con período: las personas CERRADAS salen con sus tramos congelados
+  // (`cerrado: true`); las abiertas, en vivo. Sin período no hay cierres.
+  const { registros, porEmpleado } = rango ? await loteConCierres(esquema, rango) : await construirLote(esquema, rango)
 
   // Los campos internos (_empleadoId, _semana) no salen de aquí; el nombre
   // sí, para que quien reciba el lote no tenga que cruzar la cédula.
