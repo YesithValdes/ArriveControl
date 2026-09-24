@@ -1555,7 +1555,50 @@ await test('la ruta del avatar acepta id interno o cédula y guarda solo JPEG no
 // ── Roles dentro de la empresa ─────────────────────────────────────────
 console.log('\n🔐 Roles');
 const { puede, listaRoles, esRolDeEmpresa, ACCIONES } = await import('../lib/roles.js');
-const { PLANES } = await import('../lib/planes.js');
+const { PLANES, cotizar, catalogoPara } = await import('../lib/planes.js');
+await test('la API (X-API-Key) es solo para quien tiene un plan pago vigente', async () => {
+  // empresas.js importa db.js, que exige la variable aunque no se conecte.
+  process.env.DATABASE_URL ??= 'postgresql://pruebas:x@localhost:5432/pruebas';
+  const { apiHabilitada } = await import('../lib/empresas.js');
+  const dia = 86400000;
+  const en = (d) => new Date(Date.now() + d * dia).toISOString();
+  assert.ok(apiHabilitada({ estado: 'activa', vence_en: en(20) }), 'pagada y al día');
+  assert.ok(!apiHabilitada({ estado: 'activa', vence_en: null, prueba_hasta: en(2) }), 'en prueba: no');
+  assert.ok(!apiHabilitada({ estado: 'activa', vence_en: en(-1) }), 'suscripción vencida: no');
+  assert.ok(!apiHabilitada({ estado: 'vencida', vence_en: en(20) }), 'marcada vencida: no');
+  // Cortesía (SmartGadgets): gratis y sin fecha, pero con todo — API, kiosco y sin avisos de vencer.
+  const { tieneAcceso, estadoDelPlan } = await import('../lib/empresas.js');
+  const cortesia = { estado: 'activa', cortesia: true, vence_en: null, prueba_hasta: null, plan_id: null };
+  assert.ok(apiHabilitada(cortesia) && tieneAcceso(cortesia), 'cortesía: API y kiosco');
+  const ep = estadoDelPlan(cortesia);
+  assert.ok(ep.cortesia && ep.pagada && ep.acceso && ep.diasRestantes === null, 'cortesía: sin días que contar');
+  assert.ok(!apiHabilitada({ ...cortesia, estado: 'cancelada' }), 'cortesía cancelada: no');
+  const mig = leerCss(new URL('../db/migrations/control/016_cortesia.sql', import.meta.url), 'utf8');
+  assert.match(mig, /set cortesia = true where esquema = 'smartgadgets'/, 'SmartGadgets nace de cortesía');
+  // Todas las rutas con clave pasan por la misma puerta, y el panel no recibe la clave sin plan.
+  for (const ruta of ['../lib/accesoHoras.js', '../app/api/empleados/[id]/avatar/route.js']) {
+    const src = leerCss(new URL(ruta, import.meta.url), 'utf8');
+    assert.match(src, /empresaDeApiKey\(/, `${ruta} usa empresaDeApiKey`);
+    assert.doesNotMatch(src, /empresaPorApiKey\(/, `${ruta} no se salta la regla`);
+  }
+  const emp = leerCss(new URL('../app/api/empresa/route.js', import.meta.url), 'utf8');
+  assert.match(emp, /apiKey: apiHabilitada\(empresa\) \? empresa\.api_key : null/);
+});
+await test('precio de entrada: cada mes vale tantos dólares como meses se compren', () => {
+  const esperado = { 1: [1, 1], 2: [2, 4], 3: [3, 9] }; // meses: [por mes, total]
+  for (const [m, [porMes, total]] of Object.entries(esperado)) {
+    for (const plan of Object.values(PLANES)) {
+      assert.deepEqual(cotizar(plan, Number(m), true), { meses: Number(m), porMes, total }, `${plan.nombre} ${m} meses`);
+    }
+  }
+  assert.equal(cotizar(PLANES.equipo, 9, true).meses, 3, 'la entrada no pasa de 3 meses');
+  assert.deepEqual(cotizar(PLANES.equipo, 2, false), { meses: 2, porMes: 29, total: 58 }, 'sin entrada: precio del plan');
+  assert.deepEqual(
+    catalogoPara({ yaPago: false, empleados: 5 }).opcionesEntrada,
+    [{ meses: 1, porMes: 1, total: 1 }, { meses: 2, porMes: 2, total: 4 }, { meses: 3, porMes: 3, total: 9 }],
+    'la pantalla recibe lo mismo que se cobra',
+  );
+});
 await test('el dueño puede todo; el administrador todo menos la cuenta y la gente; consulta solo ve', () => {
   for (const a of ACCIONES) assert.ok(puede('empresa', a), `dueño: ${a}`);
   for (const a of ['ver', 'corregir', 'empleados', 'config', 'liquidar']) assert.ok(puede('admin', a), `admin: ${a}`);

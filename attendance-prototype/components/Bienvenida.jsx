@@ -93,7 +93,7 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
             {catalogo?.conEntrada && (
               <div>
                 <dt>Al terminar</dt>
-                <dd>US${catalogo.precioEntrada} al mes durante {catalogo.maxMesesEntrada} meses</dd>
+                <dd>Desde US${catalogo.precioEntrada} al mes, de 1 a {catalogo.maxMesesEntrada} meses</dd>
               </div>
             )}
             <div>
@@ -120,15 +120,15 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
 
               {catalogo.conEntrada && (
                 <div className="bv-meses" role="group" aria-label="Meses">
-                  {Array.from({ length: catalogo.maxMesesEntrada }, (_, i) => i + 1).map((m) => (
+                  {catalogo.opcionesEntrada.map((o) => (
                     <button
-                      key={m}
-                      className={`bv-mes${meses === m ? ' on' : ''}`}
-                      onClick={() => setMeses(m)}
+                      key={o.meses}
+                      className={`bv-mes${meses === o.meses ? ' on' : ''}`}
+                      onClick={() => setMeses(o.meses)}
                       disabled={ocupado}
                     >
-                      {m} mes{m === 1 ? '' : 'es'}
-                      <em>US${catalogo.precioEntrada * m}</em>
+                      {o.meses} mes{o.meses === 1 ? '' : 'es'} · US${o.porMes} c/u
+                      <em>Total US${o.total}</em>
                     </button>
                   ))}
                 </div>
@@ -149,7 +149,9 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
                     >
                       {!p.alcanza
                         ? 'No alcanza'
-                        : `US$${catalogo.conEntrada ? catalogo.precioEntrada * meses : p.precio}`}
+                        : `US$${catalogo.conEntrada
+                          ? catalogo.opcionesEntrada.find((o) => o.meses === meses)?.total
+                          : p.precio}`}
                     </button>
                   </div>
                 ))}
@@ -159,7 +161,7 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
 
               <p className="bv-pie">
                 {catalogo.conEntrada
-                  ? `Después de los ${catalogo.maxMesesEntrada} meses se renueva al precio del plan. `
+                  ? 'Después de esos meses se renueva al precio del plan. '
                   : 'Se cobra por mes. '}
                 Se paga en dólares con tarjeta. Sin permanencia.
               </p>

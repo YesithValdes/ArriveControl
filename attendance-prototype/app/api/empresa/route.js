@@ -11,7 +11,7 @@
 import { randomBytes } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { control } from '../../../lib/db.js'
-import { olvidarEmpresas, cabeOtroEmpleado } from '../../../lib/empresas.js'
+import { olvidarEmpresas, cabeOtroEmpleado, apiHabilitada, MENSAJE_API_SIN_PLAN } from '../../../lib/empresas.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../lib/sesion'
 
 export const runtime = 'nodejs'
@@ -36,9 +36,11 @@ export async function GET() {
       estado: empresa.estado,
       empleados: actuales,
       limiteEmpleados: limite,
-      // La clave viaja completa: quien puede verla es quien la va a pegar en
-      // el sistema de nómina. Enmascararla aquí solo estorbaría.
-      apiKey: empresa.api_key,
+      // La API es de los planes pagos. Sin suscripción vigente la clave NO
+      // sale del servidor: ocultarla solo en la pantalla no impediría leerla.
+      // Con plan, viaja completa: quien la ve es quien la pega en la nómina.
+      apiDisponible: apiHabilitada(empresa),
+      apiKey: apiHabilitada(empresa) ? empresa.api_key : null,
     },
   })
 }
@@ -54,6 +56,9 @@ export async function PATCH(req) {
   // la integración de nómina que estuviera usando la anterior, y por eso el
   // panel la confirma antes de llamar aquí.
   if (c?.regenerarApiKey === true) {
+    if (!apiHabilitada(empresa)) {
+      return NextResponse.json({ ok: false, error: MENSAJE_API_SIN_PLAN }, { status: 402 })
+    }
     const nueva = randomBytes(24).toString('base64url')
     await control(`update control.empresas set api_key = $1 where id = $2`, [nueva, empresa.id])
     olvidarEmpresas()

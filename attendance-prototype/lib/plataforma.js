@@ -36,7 +36,7 @@ export async function listarEmpresas() {
             -- La SUSCRIPCIÓN. Existe desde que se montaron los pagos, pero
             -- esta consola no la miraba: se veía el plan y no si estaba
             -- vigente, que es la pregunta que uno se hace de verdad.
-            e.plan_id as "planId", e.vence_en as "venceEn",
+            e.plan_id as "planId", e.vence_en as "venceEn", e.cortesia,
             e.prueba_hasta as "pruebaHasta", e.bienvenida_en as "bienvenidaEn",
             (select count(*)::int from control."user" u where u.empresa_id = e.id and u.activo) as usuarios,
             (select count(*)::int from control.invitaciones i

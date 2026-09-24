@@ -9,9 +9,11 @@
  *
  *   1. PRUEBA de 3 días al registrarse. Sin tarjeta. Es para ver el producto
  *      por dentro con datos propios, no para operar un mes entero.
- *   2. PRECIO DE ENTRADA: US$1 por mes durante los primeros meses, una sola
- *      vez. Sirve de filtro — quien pone un dólar tiene medio de pago y
- *      voluntad real, algo que una prueba gratuita no demuestra.
+ *   2. PRECIO DE ENTRADA, una sola vez: se compran de 1 a 3 meses y cada mes
+ *      vale tantos dólares como meses se compren (1 mes a US$1, 2 meses a
+ *      US$2 c/u, 3 meses a US$3 c/u). Sirve de filtro — quien pone un dólar
+ *      tiene medio de pago y voluntad real, algo que una prueba gratuita no
+ *      demuestra.
  *   3. PRECIO NORMAL del plan que le corresponda por tamaño.
  *
  * Los precios están en DÓLARES. Bold convierte a pesos con la TRM del momento
@@ -22,8 +24,14 @@
 /** Días de prueba al registrarse, sin tarjeta. */
 export const DIAS_PRUEBA = 3
 
-/** Lo que cuesta cada mes durante la oferta de entrada. */
+/**
+ * Base del precio de entrada: cada mes cuesta PRECIO_ENTRADA × meses comprados.
+ * Con 1 → US$1 el mes; con 2 → US$2 cada mes; con 3 → US$3 cada mes.
+ */
 export const PRECIO_ENTRADA = 1
+
+/** Precio de CADA mes de la oferta de entrada, según cuántos se compren. */
+export const porMesDeEntrada = (meses) => PRECIO_ENTRADA * meses
 
 /** Hasta cuántos meses se pueden adelantar con el precio de entrada. */
 export const MAX_MESES_ENTRADA = 3
@@ -64,9 +72,9 @@ export function planSugerido(empleados) {
 /**
  * Cuánto cuesta contratar un plan por N meses.
  *
- * Con la oferta de entrada disponible, cada mes vale US$1 sin importar el
- * plan: es exactamente el gancho de «pruébalo por un dólar». Sin ella, se
- * paga el precio del plan por cada mes.
+ * Con la oferta de entrada disponible, el precio no depende del plan sino de
+ * cuántos meses se compren (ver porMesDeEntrada): 1 mes US$1, 2 meses US$4,
+ * 3 meses US$9. Sin ella, se paga el precio del plan por cada mes.
  *
  * @param {object} plan  el del catálogo
  * @param {number} meses
@@ -74,7 +82,7 @@ export function planSugerido(empleados) {
  */
 export function cotizar(plan, meses, conEntrada) {
   const m = Math.max(1, Math.min(Number(meses) || 1, conEntrada ? MAX_MESES_ENTRADA : 12))
-  const porMes = conEntrada ? PRECIO_ENTRADA : plan.precio
+  const porMes = conEntrada ? porMesDeEntrada(m) : plan.precio
   return { meses: m, porMes, total: porMes * m }
 }
 
@@ -89,6 +97,11 @@ export function catalogoPara({ yaPago, empleados = 0 }) {
     conEntrada: !yaPago,
     precioEntrada: PRECIO_ENTRADA,
     maxMesesEntrada: MAX_MESES_ENTRADA,
+    // Las opciones ya resueltas, para que ninguna pantalla repita la fórmula.
+    opcionesEntrada: Array.from({ length: MAX_MESES_ENTRADA }, (_, i) => {
+      const meses = i + 1
+      return { meses, porMes: porMesDeEntrada(meses), total: porMesDeEntrada(meses) * meses }
+    }),
     contactoDesde: CONTACTO_DESDE,
     moneda: MONEDA,
     planes: Object.entries(PLANES).map(([id, p]) => ({

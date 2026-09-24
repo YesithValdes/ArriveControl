@@ -188,7 +188,7 @@ export default function DocsApiPage() {
       <section id="acceso">
         <h2>Acceso</h2>
         <p>
-          Cada empresa tiene su <b>clave de API</b>, que el administrador ve y copia en <i>Ajustes → Mi empresa → Clave de API</i>.
+          Cada empresa con un <b>plan pago</b> tiene su <b>clave de API</b>, que el administrador ve y copia en <i>Ajustes → Mi empresa → Clave de API</i>.
           Se manda en todas las peticiones en el encabezado <code>X-API-Key</code>. No hay inicio de sesión ni token que renovar:
           la clave identifica a la empresa, y con ella solo se ven <b>sus</b> empleados y sus horas. Todo va por HTTPS.
         </p>
@@ -416,6 +416,7 @@ GET /api/resumen-diario?fecha=2026-09-17&documento=1085300123
           <thead><tr><th>HTTP</th><th>Cuándo</th></tr></thead>
           <tbody>
             <tr><td className="tipo">401</td><td>Sin clave de API, o clave inválida (por ejemplo, regenerada).</td></tr>
+            <tr><td className="tipo">402</td><td>La empresa no tiene un plan pago vigente (está en prueba o su suscripción venció). La API vuelve a responder apenas se renueva.</td></tr>
             <tr><td className="tipo">400</td><td><code>mes</code> que no es <code>YYYY-MM</code>, <code>quincena</code> distinta de 1 o 2, <code>desde</code> mayor que <code>hasta</code>, período faltante en <code>/resumen</code> o <code>/cierre</code>, lista de referencias o de documentos vacía o demasiado larga, JSON inválido.</td></tr>
             <tr><td className="tipo">5xx</td><td>Falla del servidor. Reintentar más tarde: las lecturas no tienen efectos y el POST se puede repetir sin duplicar nada.</td></tr>
           </tbody>

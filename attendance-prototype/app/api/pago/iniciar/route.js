@@ -30,6 +30,11 @@ export async function POST(req) {
   if (estado !== 'OK') {
     return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
   }
+  // Cortesía (control/016): no hay nada que cobrarle. La pantalla ya no ofrece
+  // pagar, y esto evita que un pago por error le ponga fecha de vencimiento.
+  if (empresa.cortesia) {
+    return NextResponse.json({ ok: false, error: 'Tu empresa tiene plan de cortesía: no hay nada que pagar.' }, { status: 409 })
+  }
   if (!boldActivo()) {
     return NextResponse.json(
       { ok: false, error: 'Los pagos en línea todavía no están habilitados. Escríbenos y activamos tu plan.' },

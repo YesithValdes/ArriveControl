@@ -662,6 +662,22 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   };
   const [navOpen, setNavOpen] = useState(false); // menú off-canvas abierto (solo móvil)
   const [sesionAbierta, setSesionAbierta] = useState(false); // detalle de quién entró
+  // El menú de la sesión se cierra como cualquier desplegable: con un clic
+  // fuera de él o con Escape. Sin esto quedaba abierto tapando el dashboard.
+  const menuSesionRef = useRef(null);
+  useEffect(() => {
+    if (!sesionAbierta) return;
+    const fuera = (e) => {
+      if (!menuSesionRef.current?.contains(e.target)) setSesionAbierta(false);
+    };
+    const escape = (e) => { if (e.key === 'Escape') setSesionAbierta(false); };
+    document.addEventListener('pointerdown', fuera);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', fuera);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [sesionAbierta]);
   const [sedeFilter, setSedeFilter] = useState('all'); // 'all' | nombre de sede
   const [tick, setTick] = useState(0); // fuerza relectura de localStorage
   // ¿Este navegador es además un kiosco registrado? Entonces la barra lleva
@@ -1012,6 +1028,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // el servidor; aquí solo se pinta.
   const [catalogo, setCatalogo] = useState(null);
   const [mesesPlan, setMesesPlan] = useState(1);
+  // La opción de entrada elegida, tal como la cotizó el servidor.
+  const entradaElegida = catalogo?.opcionesEntrada?.find((o) => o.meses === mesesPlan)
+    ?? { meses: 1, porMes: catalogo?.precioEntrada ?? 1, total: catalogo?.precioEntrada ?? 1 };
   // Se pide al ABRIR la pantalla, no con cada `tick`: el catálogo cambia una
   // vez al mes, y colgarlo del reloj del panel lo hacía pedirse cada diez
   // segundos indefinidamente.
@@ -2257,6 +2276,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     <div className={`admin-root${collapsed ? ' nav-collapsed' : ''}${navOpen ? ' nav-open' : ''}`}>
       <style>{CSS}</style>
 
+      {/* Los avisos van en UN contenedor: en PC ocupa su propia fila de la
+          grilla, encima del contenido. Sueltos, la grilla les inventaba una
+          fila extra bajo el menú lateral que le robaba altura a todo. */}
+      <div className="avisos">
       {/* Suscripción vencida: el backend ya bloquea las escrituras (402); esto
           explica POR QUÉ, antes de que la persona choque con el error. */}
       {sesion?.plan === 'pago' && sesion?.estadoSuscripcion !== 'activa' && (
@@ -2295,7 +2318,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         </div>
       )}
       {/* Los últimos días de una suscripción pagada, sin alarmar antes. */}
-      {sesion?.planEstado?.pagada && sesion.planEstado.diasRestantes <= 7 && (
+      {sesion?.planEstado?.pagada && sesion.planEstado.diasRestantes != null && sesion.planEstado.diasRestantes <= 7 && (
         <div className="banner-prueba urge">
           <span>
             {sesion.planEstado.diasRestantes === 1
@@ -2306,6 +2329,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           <button className="btn small" onClick={() => setTab('cfg-plan')}>Renovar</button>
         </div>
       )}
+      </div>
 
       <header className="app-header">
         {/* Las tres líneas SIEMPRE a la izquierda del todo, en cualquier
@@ -2375,7 +2399,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           {/* Sesión: avatar + nombre con menú desplegable (correo, empresa,
               cerrar sesión). Antes vivía escondido al fondo del menú lateral. */}
           {sesion && (
-            <div className="head-user">
+            <div className="head-user" ref={menuSesionRef}>
               <button
                 className="head-user-btn"
                 aria-expanded={sesionAbierta}
@@ -3867,11 +3891,19 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       ? 'Tu prueba termina hoy'
                       : `Tu prueba termina en ${sesion.planEstado.diasPrueba} días`}
                   </b>
-                  <small>Después de eso el kiosco deja de registrar marcaciones. Suscríbete para seguir.</small>
+                  <small>Después el kiosco deja de registrar marcaciones.</small>
                 </div>
               </div>
             )}
-            {sesion?.planEstado?.pagada && (
+            {sesion?.planEstado?.cortesia && (
+              <div className="plan-estado activa">
+                <div>
+                  <b>Plan de cortesía</b>
+                  <small>Sin costo y sin vencimiento: kiosco, API y sin topes de colaboradores.</small>
+                </div>
+              </div>
+            )}
+            {sesion?.planEstado?.pagada && !sesion.planEstado.cortesia && (
               <div className="plan-estado activa">
                 <div>
                   <b>Suscripción activa · plan {catalogo?.planes?.find((p) => p.id === sesion.planEstado.planId)?.nombre ?? sesion.planEstado.planId ?? ''}</b>
@@ -3892,52 +3924,55 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             )}
 
             {catalogo === null && <p className="empty">Cargando planes…</p>}
-            {catalogo?.disponible === false && (
+            {catalogo?.disponible === false && !sesion?.planEstado?.cortesia && (
               <p className="empty">Los pagos en línea todavía no están habilitados. Escríbenos y activamos tu plan.</p>
             )}
 
-            {catalogo?.disponible && (
+            {/* Con cortesía no hay nada que comprar: ofrecer pagar sería invitar a un error. */}
+            {catalogo?.disponible && !sesion?.planEstado?.cortesia && (
               <>
+                {/* Oferta de entrada: el precio de cada mes depende de cuántos
+                    se compren (1 → US$1, 2 → US$2 c/u, 3 → US$3 c/u) y no del
+                    plan. Las opciones llegan resueltas del servidor. */}
                 {catalogo.conEntrada && (
-                  <p className="hint">
-                    <b>Precio de entrada:</b> US${catalogo.precioEntrada}/mes los primeros {catalogo.maxMesesEntrada} meses, por una sola vez.
-                  </p>
-                )}
-                <p className="hint">
-                  <b>{catalogo.empleados}</b> empleado{catalogo.empleados === 1 ? '' : 's'}: elige el plan que los cubra.
-                </p>
-
-                {/* Cuántos meses adelantar. Con el precio de entrada, cada mes
-                    cuesta lo mismo sin importar el plan. */}
-                {catalogo.conEntrada && (
-                  <div className="meses-sel" role="group" aria-label="Meses">
-                    {Array.from({ length: catalogo.maxMesesEntrada }, (_, i) => i + 1).map((m) => (
-                      <button
-                        key={m}
-                        className="fchip"
-                        aria-pressed={mesesPlan === m}
-                        onClick={() => setMesesPlan(m)}
-                      >
-                        {m} mes{m === 1 ? '' : 'es'} · US${catalogo.precioEntrada * m}
-                      </button>
-                    ))}
+                  <div className="entrada">
+                    <b className="entrada-titulo">Oferta de entrada: ¿cuántos meses quieres pagar?</b>
+                    <div className="meses-sel" role="group" aria-label="Meses a pagar">
+                      {catalogo.opcionesEntrada.map((o) => (
+                        <button
+                          key={o.meses}
+                          className="fchip mes-op"
+                          aria-pressed={mesesPlan === o.meses}
+                          onClick={() => setMesesPlan(o.meses)}
+                        >
+                          <span>{o.meses} mes{o.meses === 1 ? '' : 'es'} · US${o.porMes} c/u</span>
+                          <small>Total US${o.total}</small>
+                        </button>
+                      ))}
+                    </div>
+                    <span className="entrada-resumen">
+                      Pagas <b>US${entradaElegida.total}</b> hoy
+                      {entradaElegida.meses > 1 ? ` (US$${entradaElegida.porMes} × ${entradaElegida.meses} meses)` : ''}.
+                      {' '}Desde el mes {entradaElegida.meses + 1}, el precio normal del plan.
+                    </span>
                   </div>
                 )}
 
                 <div className="planes-lista">
                   {catalogo.planes.map((p) => {
-                    const meses = catalogo.conEntrada ? mesesPlan : 1
-                    const total = catalogo.conEntrada ? catalogo.precioEntrada * meses : p.precio
+                    const meses = catalogo.conEntrada ? entradaElegida.meses : 1
+                    const total = catalogo.conEntrada ? entradaElegida.total : p.precio
                     return (
                       <div key={p.id} className={`plan-tarjeta${p.sugerido ? ' sugerido' : ''}${!p.alcanza ? ' corto' : ''}`}>
                         {p.sugerido && <span className="plan-etiqueta">Para tu tamaño</span>}
                         <h3>{p.nombre}</h3>
-                        <span className="plan-para">{p.para}</span>
                         <div className="plan-precio">
-                          {catalogo.conEntrada && <s>US${p.precio}</s>}
-                          <b>US${catalogo.conEntrada ? catalogo.precioEntrada : p.precio}</b>
+                          <b>US${catalogo.conEntrada ? entradaElegida.porMes : p.precio}</b>
                           <em>/mes</em>
                         </div>
+                        {catalogo.conEntrada && (
+                          <span className="plan-luego">Luego US${p.precio}/mes</span>
+                        )}
                         <span className="plan-tope">
                           Hasta {p.empleados} colaboradores · {p.usuarios} acceso{p.usuarios === 1 ? '' : 's'} al panel
                         </span>
@@ -3947,7 +3982,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           onClick={() => irAPagar(p.id, meses)}
                           title={!p.alcanza ? `Tienes ${catalogo.empleados} empleados y este plan cubre ${p.empleados}` : undefined}
                         >
-                          {!p.alcanza ? 'No alcanza' : pagando ? 'Abriendo…' : `Pagar US$${total}`}
+                          {!p.alcanza
+                            ? `Tienes ${catalogo.empleados} colaboradores`
+                            : pagando ? 'Abriendo…' : `Pagar US$${total}`}
                         </button>
                       </div>
                     )
@@ -3955,15 +3992,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 </div>
 
                 <p className="cfg-note" style={{ marginTop: 14 }}>
-                  {catalogo.conEntrada
-                    ? 'Luego, la renovación va al precio normal.'
-                    : 'Mensual, sin permanencia.'}
-                  {' '}Se paga en dólares con tarjeta. ¿Más de {catalogo.contactoDesde} empleados? <b>Escríbenos</b>.
+                  {catalogo.conEntrada ? '' : 'Mensual, sin permanencia. '}
+                  Pago con tarjeta, en dólares. ¿Más de {catalogo.contactoDesde} colaboradores? <b>Escríbenos</b>.
                 </p>
                 {sesion?.pagoDePrueba && (
                   <p className="cfg-note" style={{ color: 'var(--warn-text)' }}>
-                    ⚠️ Pagos en <b>modo de pruebas</b>: no se cobra dinero real, pero el plan se
-                    activa igual y habrá que revertirlo a mano.
+                    ⚠️ <b>Modo de pruebas</b>: no se cobra dinero real, pero el plan sí se activa.
                   </p>
                 )}
               </>
@@ -4056,6 +4090,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       >
                         <Icon name="file" size={16} />
                       </a>
+                      {miEmpresa.apiDisponible && (<>
                       <button
                         className="btn btn-ico" onClick={() => setApiKeyVisible((v) => !v)}
                         title={apiKeyVisible ? 'Ocultar la clave' : 'Ver la clave'} aria-label={apiKeyVisible ? 'Ocultar la clave' : 'Ver la clave'}
@@ -4074,9 +4109,19 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       <button className="btn btn-ico danger-btn" title="Regenerar la clave (la actual deja de servir)" aria-label="Regenerar la clave" onClick={regenerarApiKey}>
                         <Icon name="refresh" size={16} />
                       </button>
+                      </>)}
                     </div>
                   </div>
-                  <code className="api-key">{apiKeyVisible ? miEmpresa.apiKey : '••••••••••••••••••••••••'}</code>
+                  {/* Sin plan pago el servidor ni siquiera manda la clave: aquí
+                      se explica por qué y se lleva a donde se activa. */}
+                  {miEmpresa.apiDisponible ? (
+                    <code className="api-key">{apiKeyVisible ? miEmpresa.apiKey : '••••••••••••••••••••••••'}</code>
+                  ) : (
+                    <div className="api-bloqueada">
+                      <span>Conecta tu nómina o sistema de gestión con la API. Está incluida en los planes pagos.</span>
+                      <button className="btn small" onClick={() => setTab('cfg-plan')}>Ver planes</button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="cfg-group">
@@ -6551,6 +6596,7 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .inv-acciones { display: flex; gap: 6px; }
 
 /* Clave de API (Mi empresa) */
+.api-bloqueada { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); background: var(--accent-soft); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; }
 .api-key { display: block; font-family: var(--f-data); font-size: 13px; background: var(--surface); border: 1px solid var(--grid); border-radius: 8px; padding: 8px 10px; letter-spacing: .04em; overflow-wrap: anywhere; }
 /* Mi empresa: título del grupo con su acción (icono) en la esquina. */
 .cfg-group-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
@@ -6579,6 +6625,9 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
   border-radius: 10px; padding: 9px 14px; font-size: 13px; margin-bottom: 10px;
 }
 .banner-prueba b { color: var(--ink); }
+.avisos { display: flex; flex-direction: column; gap: 8px; }
+.avisos:empty { display: none; }
+.avisos .banner-prueba { margin-bottom: 0; }
 .banner-prueba.urge { background: var(--warn-soft); color: var(--warn-text); border-color: var(--warn-text); }
 .banner-prueba.urge b { color: inherit; }
 
@@ -6615,12 +6664,20 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
   padding: 3px 9px; border-radius: 999px;
 }
 .plan-tarjeta h3 { margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -.01em; }
-.plan-para { font-size: 12.5px; color: var(--muted); }
 .plan-precio { display: flex; align-items: baseline; gap: 6px; margin: 10px 0 2px; }
 .plan-precio s { font-size: 15px; color: var(--muted); }
 .plan-precio b { font-size: 26px; font-weight: 800; letter-spacing: -.03em; }
 .plan-precio em { font-style: normal; font-size: 13px; color: var(--muted); }
 .plan-tope { font-size: 12.5px; color: var(--ink-2); margin-bottom: 16px; }
+.plan-luego { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+/* Oferta de entrada: título, selector de meses y el resumen de lo que se paga. */
+.entrada { display: flex; flex-direction: column; gap: 10px; margin: 16px 0 4px; }
+.entrada-titulo { font-size: 14px; }
+.entrada .meses-sel { margin: 0; }
+.fchip.mes-op { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 14px; font-size: 13px; }
+.fchip.mes-op small { font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.fchip.mes-op[aria-pressed="true"] small { color: inherit; }
+.entrada-resumen { font-size: 13px; color: var(--ink-2); }
 .plan-tarjeta .btn { margin-top: auto; }
 
 /* Banner de suscripción vencida */
@@ -7021,10 +7078,13 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
     width: 100%;
     display: grid;
     grid-template-columns: 240px minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    /* barra · avisos (vacía si no hay) · contenido */
+    grid-template-rows: auto auto minmax(0, 1fr);
     gap: 0;
     padding: 0;
   }
+  /* Los avisos van SOBRE el contenido, no bajo el menú lateral. */
+  .avisos { grid-column: 2; grid-row: 2; padding: 14px 20px 0; background: var(--page); }
   /* La barra superior cruza TODO el ancho, por encima del menú lateral: es
      lo que hace que la marca no se mueva ni desaparezca al encoger el menú. */
   .app-header {
@@ -7051,7 +7111,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   /* El menú arranca DEBAJO de la barra (fila 2), no a su lado. */
   .tabbar {
     position: static; transform: none; width: auto; z-index: auto;
-    grid-column: 1; grid-row: 2;
+    grid-column: 1; grid-row: 2 / -1;
     display: flex; flex-direction: column; gap: 4px;
     align-self: stretch; height: 100%;
     padding: 18px 14px 14px;
@@ -7117,7 +7177,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
      El lienzo es gris muy suave y las piezas "flotan" en blanco (estilo 3D). */
   /* Contenido compacto: la meta es que el dashboard quepa SIN scroll general
      (el scroll queda de respaldo para pantallas bajas). */
-  .screen { grid-column: 2; grid-row: 2; padding: 14px 20px; gap: 12px; background: var(--page); overflow-y: auto; min-height: 0; }
+  .screen { grid-column: 2; grid-row: 3; padding: 14px 20px; gap: 12px; background: var(--page); overflow-y: auto; min-height: 0; }
   .admin-root { background: var(--page); }
   .card { border: 1px solid var(--grid); border-radius: 8px; padding: 18px 20px; background: var(--surface); box-shadow: var(--elev-1); }
   .tiles { gap: 14px; }

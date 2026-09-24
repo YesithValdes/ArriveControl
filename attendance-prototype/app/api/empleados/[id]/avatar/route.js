@@ -14,7 +14,7 @@
 import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../../../lib/db.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../../../lib/sesion'
-import { empresaPorApiKey } from '../../../../../lib/empresas.js'
+import { empresaDeApiKey } from '../../../../../lib/empresas.js'
 import { decodificarImagen, prepararAvatar } from '../../../../../lib/avatar.js'
 
 export const runtime = 'nodejs'
@@ -23,8 +23,8 @@ export const runtime = 'nodejs'
 async function accesoEscritura(req) {
   const clave = req.headers.get('x-api-key')
   if (clave) {
-    const empresa = await empresaPorApiKey(clave)
-    if (!empresa) return { error: NextResponse.json({ ok: false, error: 'Clave de API inválida.' }, { status: 401 }) }
+    const { empresa, status, error } = await empresaDeApiKey(clave)
+    if (!empresa) return { error: NextResponse.json({ ok: false, error }, { status }) }
     return { esquema: empresa.esquema }
   }
   const { estado, esquema } = await estadoAcceso('empleados')
@@ -36,8 +36,8 @@ async function accesoEscritura(req) {
 async function accesoLectura(req) {
   const clave = req.headers.get('x-api-key')
   if (clave) {
-    const empresa = await empresaPorApiKey(clave)
-    return empresa ? { esquema: empresa.esquema } : { error: NextResponse.json({ ok: false, error: 'Clave de API inválida.' }, { status: 401 }) }
+    const { empresa, status, error } = await empresaDeApiKey(clave)
+    return empresa ? { esquema: empresa.esquema } : { error: NextResponse.json({ ok: false, error }, { status }) }
   }
   const ctx = await empresaDeLaPeticion(req)
   if (!ctx) return { error: NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: 401 }) }

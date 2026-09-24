@@ -22,7 +22,7 @@
  * Eliminar exige teclear el nombre del esquema — la misma protección que usa
  * GitHub para borrar un repositorio.
  */
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from '../lib/auth-client';
 import { PLANES, planPorId, MONEDA } from '../lib/planes.js';
 
@@ -70,6 +70,10 @@ const enPrueba = (e) => Boolean(e.pruebaHasta) && new Date(e.pruebaHasta) > new 
  */
 function suscripcion(e) {
   const dias = (f) => Math.ceil((new Date(f).getTime() - Date.now()) / 86400000);
+  // Cortesía: gratis y sin fecha (control/016). Cuenta como al día.
+  if (e.cortesia && e.estado === 'activa') {
+    return { clave: 'paga', etiqueta: 'Cortesía', tono: 'good', dias: Infinity, detalle: 'Gratis y sin vencimiento' };
+  }
   if (e.venceEn && new Date(e.venceEn) > new Date()) {
     if (e.estado !== 'activa') {
       return { clave: 'vencida', etiqueta: e.estado === 'cancelada' ? 'Cancelada' : 'Suspendida', tono: 'crit', dias: 0, detalle: `Pagada hasta el ${fmtFecha(e.venceEn)}, pero el estado la bloquea` };
@@ -100,7 +104,7 @@ function contrato(e) {
   const cupo = e.limiteUsuarios ?? base?.usuarios ?? null;
   return {
     plan,
-    nombre: plan ? plan.nombre : (enPrueba(e) ? 'Prueba' : 'Sin plan'),
+    nombre: plan ? plan.nombre : e.cortesia ? 'Cortesía' : (enPrueba(e) ? 'Prueba' : 'Sin plan'),
     precio: plan ? `${fmtDinero(plan.precio, MONEDA)}/mes` : null,
     tope, topeAcuerdo: e.limiteEmpleados != null,
     cupo, cupoAcuerdo: e.limiteUsuarios != null,
@@ -202,6 +206,21 @@ export default function PlataformaPanel({ sesion }) {
   const [collapsed, setCollapsed] = useState(false); // riel de iconos (PC)
   const [navOpen, setNavOpen] = useState(false);     // menú encima (móvil)
   const [sesionAbierta, setSesionAbierta] = useState(false);
+  // Se cierra con un clic fuera o con Escape, como en el panel de empresa.
+  const menuSesionRef = useRef(null);
+  useEffect(() => {
+    if (!sesionAbierta) return;
+    const fuera = (e) => {
+      if (!menuSesionRef.current?.contains(e.target)) setSesionAbierta(false);
+    };
+    const escape = (e) => { if (e.key === 'Escape') setSesionAbierta(false); };
+    document.addEventListener('pointerdown', fuera);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', fuera);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [sesionAbierta]);
 
   const [empresas, setEmpresas] = useState(null); // null = cargando
   const [error, setError] = useState(null);
@@ -471,7 +490,7 @@ export default function PlataformaPanel({ sesion }) {
           <button className="head-ico" onClick={() => { cargar(); if (pagos !== null) cargarPagos(); showToast('Actualizando…'); }} title="Volver a cargar" aria-label="Volver a cargar">
             <Icono name="refresh" size={17} />
           </button>
-          <div className="head-user">
+          <div className="head-user" ref={menuSesionRef}>
             <button
               className="head-user-btn"
               aria-expanded={sesionAbierta}

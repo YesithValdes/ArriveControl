@@ -100,7 +100,7 @@ export async function resumenesDeEmpresa(esquema, fechaISO) {
 
 export async function enviarResumenesDelDia(fechaISO = hoyEnBogota()) {
   const { rows: empresas } = await control(
-    `select id, nombre, esquema, estado, vence_en, prueba_hasta from control.empresas`,
+    `select id, nombre, esquema, estado, vence_en, prueba_hasta, cortesia from control.empresas`,
   )
 
   const salida = { fecha: fechaISO, empresas: 0, enviados: 0, sinCorreo: 0, fallidos: 0, sinCorreoActivo: 0, detalle: [] }

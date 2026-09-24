@@ -21,7 +21,7 @@ import { planPorId, DIAS_PRUEBA } from './planes.js'
 const sha256 = (s) => createHash('sha256').update(s).digest('hex')
 
 /** Columnas que necesita cualquiera que resuelva una empresa. */
-const CAMPOS = `id, nombre, nit, esquema, plan, limite_empleados, limite_usuarios, estado, api_key, dominio, vence_en, prueba_hasta, plan_id, bienvenida_en`
+const CAMPOS = `id, nombre, nit, esquema, plan, limite_empleados, limite_usuarios, estado, api_key, dominio, vence_en, prueba_hasta, plan_id, bienvenida_en, cortesia`
 
 
 // Caché corta: son pocas filas, cambian casi nunca y se consultan en CADA
@@ -86,17 +86,42 @@ export async function empresaDelDispositivo(clave) {
  * ¿Tiene suscripción PAGADA vigente?
  *
  * Se compara contra la FECHA, no contra el estado: `estado = 'activa'` sin
- * `vence_en` sería una suscripción eterna creada por un error de datos.
+ * `vence_en` sería una suscripción eterna creada por un error de datos. La
+ * única suscripción sin fecha es la de CORTESÍA, y es explícita (migración
+ * control/016): gratis por acuerdo de la plataforma, como SmartGadgets.
  */
 export const suscripcionVigente = (empresa) =>
   Boolean(empresa)
   && empresa.estado === 'activa'
-  && Boolean(empresa.vence_en)
-  && new Date(empresa.vence_en).getTime() > Date.now()
+  && (empresa.cortesia === true
+    || (Boolean(empresa.vence_en) && new Date(empresa.vence_en).getTime() > Date.now()))
 
 /** ¿Sigue dentro de los días de prueba con que nace toda empresa? */
 export const enPrueba = (empresa) =>
   Boolean(empresa?.prueba_hasta) && new Date(empresa.prueba_hasta).getTime() > Date.now()
+
+/**
+ * ¿Puede usar la API (X-API-Key)? Es un beneficio de los planes PAGOS: la
+ * prueba no la incluye, y una suscripción vencida la pierde hasta renovar.
+ */
+export const apiHabilitada = (empresa) => suscripcionVigente(empresa)
+
+export const MENSAJE_API_SIN_PLAN =
+  'La API está incluida en los planes pagos. Suscríbete o renueva desde Ajustes → Plan para usarla.'
+
+/**
+ * La empresa de una clave de API, SOLO si puede usarla. Es la única puerta de
+ * entrada por clave: todas las rutas que aceptan X-API-Key pasan por aquí.
+ *
+ * @returns {Promise<{empresa: object, status: 200, error: null}
+ *                  |{empresa: null, status: 401|402, error: string}>}
+ */
+export async function empresaDeApiKey(clave) {
+  const empresa = await empresaPorApiKey(clave)
+  if (!empresa) return { empresa: null, status: 401, error: 'Clave de API inválida.' }
+  if (!apiHabilitada(empresa)) return { empresa: null, status: 402, error: MENSAJE_API_SIN_PLAN }
+  return { empresa, status: 200, error: null }
+}
 
 /**
  * ¿Puede USAR el sistema? Con la prueba corriendo o con la suscripción al día.
@@ -122,6 +147,7 @@ export const puedeEscribir = (empresa) => tieneAcceso(empresa)
 export function estadoDelPlan(empresa) {
   if (!empresa) return null
   const pagada = suscripcionVigente(empresa)
+  const cortesia = pagada && empresa.cortesia === true
   const prueba = enPrueba(empresa)
   const vence = empresa.vence_en ? new Date(empresa.vence_en) : null
   const finPrueba = empresa.prueba_hasta ? new Date(empresa.prueba_hasta) : null
@@ -133,9 +159,11 @@ export function estadoDelPlan(empresa) {
     // Puede operar, sea por prueba o por suscripción.
     acceso: pagada || prueba,
     pagada,
+    // Gratis y sin vencimiento: no hay nada que renovar ni que avisar.
+    cortesia,
     enPrueba: prueba,
     diasPrueba: prueba ? dias(finPrueba) : 0,
-    diasRestantes: pagada ? dias(vence) : 0,
+    diasRestantes: pagada && !cortesia && vence ? dias(vence) : null,
     venceEn: vence ? vence.toISOString() : null,
     pruebaHasta: finPrueba ? finPrueba.toISOString() : null,
     // La prueba se acabó y nunca pagó: es el momento de insistir.

@@ -5,12 +5,13 @@
  * Las rutas de /api/horas se consumen de dos maneras y las dos valen:
  *  a) `X-API-Key`: la clave de la empresa (Ajustes → Mi empresa), para que
  *     nómina o el sistema de gestión las lean y anoten servidor-a-servidor.
- *     Se responde 401 sin mirar la sesión: es un sistema, no una persona.
+ *     Se responde 401 (clave inválida) o 402 (sin plan pago vigente) sin mirar
+ *     la sesión: es un sistema, no una persona.
  *  b) Sesión con el permiso que pida cada ruta (`ver` para leer, `liquidar`
  *     para anotar pagos): el panel de administración.
  */
 import { NextResponse } from 'next/server'
-import { empresaPorApiKey } from './empresas.js'
+import { empresaDeApiKey } from './empresas.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje } from './sesion'
 
 /**
@@ -23,9 +24,9 @@ import { estadoAcceso, estadoAHttp, estadoAMensaje } from './sesion'
 export async function accesoHoras(req, accion) {
   const clave = req.headers.get('x-api-key')
   if (clave) {
-    const empresa = await empresaPorApiKey(clave)
+    const { empresa, status, error } = await empresaDeApiKey(clave)
     if (!empresa) {
-      return { esquema: null, quien: null, error: NextResponse.json({ ok: false, error: 'Clave de API inválida.' }, { status: 401 }) }
+      return { esquema: null, quien: null, error: NextResponse.json({ ok: false, error }, { status }) }
     }
     return { esquema: empresa.esquema, quien: 'api', error: null }
   }
