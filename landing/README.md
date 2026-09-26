@@ -1,4 +1,4 @@
-# Landing de Control Registro
+# Landing de AsistencIA
 
 Sitio de marketing. **Vive aparte de la aplicación a propósito**: se despliega como su
 propio proyecto, así que nada de lo que se haga aquí puede romper el kiosco ni el panel,

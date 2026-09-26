@@ -29,15 +29,16 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Política de tratamiento de datos — Control Registro</title>
+<title>Política de tratamiento de datos — AsistencIA</title>
 <meta name="robots" content="noindex" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --tinta: #233240; --tinta-2: #46586a; --apagado: #7b8ca0;
-    --borde: #d8e2ee; --marca: #3a5570; --acento: #6e96b8; --acento-2: #557d9e;
+    /* Paleta de la app (la misma de index.html). */
+    --tinta: #14233a; --tinta-2: #45566c; --apagado: #7a8aa0;
+    --borde: #dde6f1; --marca: #13294b; --acento: #2b6cb0; --acento-2: #2b6cb0;
     --aviso-fondo: #f3ecd9; --aviso-tinta: #7a6432;
   }
   * { box-sizing: border-box; }
@@ -49,7 +50,7 @@
   .env { max-width: 760px; margin: 0 auto; padding: 0 22px; }
   header { border-bottom: 1px solid var(--borde); padding: 18px 0; margin-bottom: 44px; }
   .logo { display: flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: .06em; font-size: 14px; color: var(--tinta); text-decoration: none; }
-  .logo span { color: var(--acento); }
+  .logo .nombre i { font-style: normal; color: var(--acento); }
   h1 { font-size: clamp(27px, 4vw, 34px); letter-spacing: -.025em; margin: 0 0 8px; }
   .fecha { color: var(--apagado); font-size: 14px; margin: 0 0 32px; }
   h2 { font-size: 19px; letter-spacing: -.015em; margin: 38px 0 10px; }
@@ -74,18 +75,16 @@
 <header>
   <div class="env">
     <a class="logo" href="index.html">
-      <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
-        <rect width="64" height="64" rx="14" fill="#3a5570"/>
-        <g transform="translate(6.4 6.4) scale(0.8)" stroke="#fff" stroke-linecap="round" fill="none">
-          <path d="M 51 17.5 A 24 24 0 1 0 51 46.5" stroke-width="7.5"/>
-          <line x1="32" y1="10" x2="32" y2="15" stroke-width="3.4"/>
-          <line x1="10" y1="32" x2="15" y2="32" stroke-width="3.4"/>
-          <line x1="32" y1="49" x2="32" y2="54" stroke-width="3.4"/>
-          <circle cx="32" cy="32" r="3" fill="#fff" stroke="none"/>
-          <line x1="32" y1="32" x2="41" y2="23" stroke-width="4.4"/>
+      <svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="0" y1="64" x2="0" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#172e4c"/><stop offset="1" stop-color="#2b6cb0"/></linearGradient></defs>
+        <rect width="64" height="64" rx="14" fill="url(#lg)"/>
+        <g transform="translate(3.2 3.2) scale(0.9)" fill="none">
+          <circle cx="32" cy="31" r="20" stroke="#fff" stroke-width="4.6"/>
+          <circle cx="25.4" cy="27" r="2.2" fill="#fff"/><circle cx="38.6" cy="27" r="2.2" fill="#fff"/>
+          <path d="M 24 37 l 6 6 l 12 -12" stroke="#9fdcca" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
         </g>
       </svg>
-      CONTROL <span>REGISTRO</span>
+      <span class="nombre">ASISTENC<i>IA</i></span>
     </a>
   </div>
 </header>
@@ -107,11 +106,11 @@
     <span class="pendiente">número</span>, con domicilio en <span class="pendiente">dirección</span>,
     correo <span class="pendiente">correo de contacto</span> y teléfono
     <span class="pendiente">teléfono</span>, es responsable del tratamiento de los datos
-    recogidos a través de Control Registro.
+    recogidos a través de AsistencIA.
   </p>
   <p>
     Cuando una empresa cliente usa el sistema para controlar la asistencia de sus trabajadores,
-    esa empresa actúa como <b>responsable</b> de los datos de su personal y Control Registro
+    esa empresa actúa como <b>responsable</b> de los datos de su personal y AsistencIA
     actúa como <b>encargado</b>, tratándolos únicamente por instrucción suya y para prestar el
     servicio.
   </p>
@@ -134,8 +133,8 @@
   <ul>
     <li>La <b>fotografía no se almacena</b> en ningún momento. Se procesa en el navegador del
       dispositivo y se descarta.</li>
-    <li>Lo que se guarda es un <b>vector de 128 números</b> derivado de esa imagen. Sirve para
-      comparar si dos rostros corresponden a la misma persona, pero <b>no permite reconstruir
+    <li>Lo que se guarda son <b>vectores numéricos</b> (uno de 128 y otro de 512 números) derivados de esa imagen. Sirven para
+      comparar si dos rostros corresponden a la misma persona, pero <b>no permiten reconstruir
       la cara</b> ni identificar a alguien fuera de este sistema.</li>
     <li>Ese vector <b>solo se descarga</b> al dispositivo de marcación de la empresa a la que
       pertenece el trabajador, y nunca se comparte con terceros.</li>

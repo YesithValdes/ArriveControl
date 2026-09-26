@@ -31,6 +31,8 @@ export const RUTAS_PANEL = {
   'cfg-sedes': 'ajustes/sedes',
   'cfg-dispositivos': 'ajustes/dispositivos',
   'cfg-reglamento': 'ajustes/reglamento',
+  // Correo y/o API del resumen de cada noche (antes, dentro del reglamento).
+  'cfg-resumen': 'ajustes/resumen-diario',
   // «valorizacion» y no «nomina»: la pantalla decide cuánto vale una hora
   // extra, no liquida nómina.
   'cfg-nomina': 'ajustes/valorizacion',

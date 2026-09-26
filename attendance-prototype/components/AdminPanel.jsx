@@ -78,6 +78,7 @@ function Icon({ name, size = 17 }) {
     copy: <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
     refresh: <><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></>,
     check: <polyline points="20 6 9 17 4 12" />,
+    mail: <><rect x="2" y="4" width="20" height="16" rx="2" /><polyline points="22 6 12 13 2 6" /></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2477,6 +2478,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <button className={`cfg-item${tab === 'cfg-nomina' ? ' on' : ''}`} onClick={() => setTab('cfg-nomina')}>
                 <span className="cfg-ico"><Icon name="clock" size={16} /></span> Valorización
               </button>
+              <button className={`cfg-item${tab === 'cfg-resumen' ? ' on' : ''}`} onClick={() => setTab('cfg-resumen')}>
+                <span className="cfg-ico"><Icon name="mail" size={16} /></span> Resumen diario
+              </button>
             </div>
             <div className="cfg-grupo">
               <h4>Herramientas</h4>
@@ -3693,6 +3697,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   <span className="tool-txt"><b>Valorización</b><small>Cuánto vale cada hora extra</small></span>
                   <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
                 </button>
+                <button className="tool" onClick={() => setTab('cfg-resumen')}>
+                  <span className="icon"><Icon name="mail" size={19} /></span>
+                  <span className="tool-txt"><b>Resumen diario</b><small>{
+                    [cfg.resumenCorreo !== false && 'Por correo', cfg.resumenApi !== false && 'Por API'].filter(Boolean).join(' · ') || 'Apagado'
+                  }</small></span>
+                  <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
+                </button>
               </div>
 
               <div className="tools-grupo">
@@ -4694,6 +4705,48 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           );
         })()}
 
+        {/* ── Resumen diario: a dónde va el día de cada colaborador ──
+            Pantalla PROPIA (antes estaba escondida dentro del Reglamento, entre
+            la gracia y los festivos, y nadie la encontraba). Correo y API son
+            independientes: se puede tener uno, los dos o ninguno. */}
+        {tab === 'cfg-resumen' && (
+          <section className="card grow">
+            <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
+            <h2>Resumen diario</h2>
+            <div className="scrollable">
+              <p className="hint">Cada noche se arma, por colaborador, lo que pasó en su día: marcaciones, horas trabajadas y novedades. Elige por dónde sale.</p>
+              <div className="cfg-group">
+                <div className="cfg-row">
+                  <label>
+                    Enviar por correo
+                    <small>A cada colaborador con correo registrado, entre las 11:00 y las 11:59 p. m.</small>
+                  </label>
+                  <div className="cfg-input">
+                    <Toggle on={cfg.resumenCorreo !== false} label="Enviar el resumen diario por correo" onClick={() => updateCfg({ resumenCorreo: cfg.resumenCorreo === false })} />
+                  </div>
+                </div>
+                <div className="cfg-row">
+                  <label>
+                    Consultar por API
+                    <small>El sistema de tu empresa pide el mismo resumen con la clave de API: <code>GET /api/resumen-diario?fecha=AAAA-MM-DD</code>. No se envía nada; él consulta.</small>
+                  </label>
+                  <div className="cfg-input">
+                    <Toggle on={cfg.resumenApi !== false} label="Permitir la consulta del resumen diario por API" onClick={() => updateCfg({ resumenApi: cfg.resumenApi === false })} />
+                  </div>
+                </div>
+              </div>
+              {/* La API es de los planes pagos: el interruptor se guarda igual,
+                  pero sin plan la consulta responde 402. Se avisa aquí. */}
+              {cfg.resumenApi !== false && sesion?.planEstado && !sesion.planEstado.pagada && (
+                <p className="cfg-note">La API está incluida en los planes pagos: mientras no tengas uno, la consulta no responde. <button className="btn small" onClick={() => setTab('cfg-plan')}>Ver planes</button></p>
+              )}
+              {cfg.resumenCorreo === false && cfg.resumenApi === false && (
+                <p className="cfg-note">Con los dos apagados, el resumen no sale por ningún lado. Las marcaciones se siguen registrando igual.</p>
+              )}
+            </div>
+          </section>
+        )}
+
         {tab === 'cfg-reglamento' && (
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
@@ -4797,32 +4850,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       id="cfg-grace" type="number" min="0" max="120" value={cfg.graceMinutes}
                       onChange={(e) => { const v = Number(e.target.value); if (v >= 0) updateCfg({ graceMinutes: v }); }}
                     /> min
-                  </div>
-                </div>
-              </div>
-
-              {/* A dónde va el resumen del día de cada colaborador: al correo,
-                  y/o a disposición del sistema de la empresa por la API (lo
-                  consulta; no se le envía nada). */}
-              <div className="cfg-group">
-                <h3 className="cfg-sub">Resumen diario</h3>
-                <p className="hint">Cada noche se arma, por colaborador, lo que pasó en su día: marcaciones, horas trabajadas y novedades.</p>
-                <div className="cfg-row">
-                  <label>
-                    Correo a cada colaborador
-                    <small>Se manda a quien tenga correo registrado, entre las 11:00 y las 11:59 p. m.</small>
-                  </label>
-                  <div className="cfg-input">
-                    <Toggle on={cfg.resumenCorreo !== false} label="Enviar el resumen diario por correo" onClick={() => updateCfg({ resumenCorreo: cfg.resumenCorreo === false })} />
-                  </div>
-                </div>
-                <div className="cfg-row">
-                  <label>
-                    Consulta por API
-                    <small>El sistema de la empresa pide el mismo resumen con la clave de API: <code>GET /api/resumen-diario?fecha=AAAA-MM-DD</code>. No se envía nada; él consulta.</small>
-                  </label>
-                  <div className="cfg-input">
-                    <Toggle on={cfg.resumenApi !== false} label="Permitir la consulta del resumen diario por API" onClick={() => updateCfg({ resumenApi: cfg.resumenApi === false })} />
                   </div>
                 </div>
               </div>

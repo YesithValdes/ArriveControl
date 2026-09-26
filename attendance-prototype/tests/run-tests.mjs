@@ -1850,6 +1850,13 @@ await test('el correo nocturno y la API salen del MISMO armado, y cada uno respe
   const panel = leerCss(new URL('../components/AdminPanel.jsx', import.meta.url), 'utf8');
   assert.match(panel, /updateCfg\(\{ resumenCorreo: /);
   assert.match(panel, /updateCfg\(\{ resumenApi: /);
+  // Con pantalla PROPIA en Ajustes (antes vivía escondida en el Reglamento).
+  const seccion = panel.slice(panel.indexOf("tab === 'cfg-resumen' && ("), panel.indexOf("tab === 'cfg-reglamento' && ("));
+  assert.match(seccion, /updateCfg\(\{ resumenCorreo: / , 'los interruptores están en su pantalla');
+  assert.match(seccion, /updateCfg\(\{ resumenApi: /);
+  assert.ok((panel.match(/setTab\('cfg-resumen'\)/g) ?? []).length >= 2, 'se llega desde el menú de PC y desde la lista del celular');
+  const rutas = leerCss(new URL('../lib/rutasPanel.js', import.meta.url), 'utf8');
+  assert.match(rutas, /'cfg-resumen': 'ajustes\/resumen-diario'/);
 });
 
 // ── Consola de plataforma (superadmin) ─────────────────────────────────
