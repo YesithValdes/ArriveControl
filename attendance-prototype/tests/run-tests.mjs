@@ -1592,6 +1592,41 @@ await test('el .wasm de onnxruntime en public/ es el MISMO de node_modules (el p
     'si se actualiza onnxruntime-web hay que copiar su .wasm a public/wasm/ort/',
   );
 });
+await test('exportar a Excel: un .xlsx válido, con números como números', async () => {
+  const { crearXlsx, letraColumna } = await import('../lib/xlsx.js');
+  const zlib = await import('node:zlib');
+  const bytes = crearXlsx([
+    ['Empleado', 'Cédula', 'HED (h)', 'Valor (COP)'],
+    ['Ana <Pérez> & Cía', '1085', 2.5, 34567],
+    ['Óscar "O"', '1086', 0, 0],
+  ], { hoja: 'Horas 2026-09-01 a 2026-09-15' });
+  // Recorre el zip a mano: cada archivo con su CRC calculado aparte (zlib).
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dec = new TextDecoder();
+  const partes = {};
+  for (let i = 0; dv.getUint32(i, true) === 0x04034b50;) {
+    const crc = dv.getUint32(i + 14, true), tam = dv.getUint32(i + 18, true), largoNombre = dv.getUint16(i + 26, true);
+    const nombre = dec.decode(bytes.subarray(i + 30, i + 30 + largoNombre));
+    const datos = bytes.subarray(i + 30 + largoNombre, i + 30 + largoNombre + tam);
+    if (typeof zlib.crc32 === 'function') assert.equal(zlib.crc32(datos) >>> 0, crc, `CRC de ${nombre}`);
+    partes[nombre] = dec.decode(datos);
+    i += 30 + largoNombre + tam;
+  }
+  for (const p of ['[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels', 'xl/styles.xml', 'xl/worksheets/sheet1.xml']) {
+    assert.ok(partes[p], `falta ${p}`);
+  }
+  const hoja = partes['xl/worksheets/sheet1.xml'];
+  assert.match(hoja, /<c r="C2" s="2"><v>2.5<\/v><\/c>/, 'decimal como número con 2 decimales');
+  assert.match(hoja, /<c r="D2"><v>34567<\/v><\/c>/, 'entero como número');
+  assert.match(hoja, /Ana &lt;Pérez&gt; &amp; Cía/, 'texto escapado');
+  assert.match(hoja, /state="frozen"/, 'encabezado fijo');
+  assert.doesNotMatch(partes['xl/workbook.xml'], /name="[^"]{32,}"/, 'nombre de hoja ≤ 31 caracteres');
+  assert.equal(letraColumna(0), 'A'); assert.equal(letraColumna(25), 'Z'); assert.equal(letraColumna(26), 'AA'); assert.equal(letraColumna(27), 'AB');
+  // Y el panel ofrece los dos formatos.
+  const panel = leerCss(new URL('../components/AdminPanel.jsx', import.meta.url), 'utf8');
+  assert.match(panel, /exportar\('xlsx'\)/);
+  assert.match(panel, /exportar\('csv'\)/);
+});
 await test('el detector ve un arreglo de dependencias que nombra algo declarado después', () => {
   // El caso real: el efecto arriba, la constante abajo.
   const roto = `export default function X() {

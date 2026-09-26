@@ -121,7 +121,7 @@
       cuenta de Google, usados para identificarla al entrar.</li>
     <li><b>De cada trabajador:</b> nombre, número de documento, correo electrónico si se
       registra, sede, horario y salario si la empresa decide cargarlo.</li>
-    <li><b>Dato biométrico:</b> un vector numérico derivado de la fotografía del rostro.</li>
+    <li><b>Dato biométrico:</b> vectores numéricos derivados de la fotografía del rostro.</li>
     <li><b>De cada marcación:</b> fecha y hora, tipo de registro (entrada o salida), sede y,
       cuando la empresa lo activa, la ubicación geográfica del dispositivo.</li>
   </ul>
@@ -136,7 +136,7 @@
     <li>Lo que se guarda son <b>vectores numéricos</b> (uno de 128 y otro de 512 números) derivados de esa imagen. Sirven para
       comparar si dos rostros corresponden a la misma persona, pero <b>no permiten reconstruir
       la cara</b> ni identificar a alguien fuera de este sistema.</li>
-    <li>Ese vector <b>solo se descarga</b> al dispositivo de marcación de la empresa a la que
+    <li>Esos vectores <b>solo se descargan</b> al dispositivo de marcación de la empresa a la que
       pertenece el trabajador, y nunca se comparte con terceros.</li>
     <li>Los datos de cada empresa viven en un <b>espacio separado</b> de la base de datos, sin
       posibilidad de que una empresa consulte los de otra.</li>
@@ -146,7 +146,7 @@
   <ul>
     <li>Registrar la entrada y la salida de los trabajadores y verificar su identidad.</li>
     <li>Calcular horas trabajadas y horas extra para efectos laborales y de nómina.</li>
-    <li>Enviar a cada trabajador el comprobante de sus propias marcaciones.</li>
+    <li>Enviar a cada trabajador, si la empresa lo activa, el resumen diario de sus propias marcaciones.</li>
     <li>Prestar soporte y mantener el servicio en funcionamiento.</li>
   </ul>
   <p>

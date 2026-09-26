@@ -1702,35 +1702,67 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     return tramos.reduce((s, t) => s + (t.valor ?? 0), 0);
   };
 
-  // Exporta TODO a CSV (separador ; — Excel en español): las cuatro categorías
-  // con horas y valor, más la asistencia completa, esté o no visible en la
-  // tabla. La tabla es para leer de un vistazo; el CSV es para trabajar.
-  const exportCSV = () => {
+  // Exporta TODO (CSV o Excel): las cuatro categorías con horas y valor, más
+  // la asistencia completa, esté o no visible en la tabla. La tabla es para
+  // leer de un vistazo; el archivo es para trabajar.
+  //
+  // Las filas se arman UNA vez con valores crudos (números como números) y
+  // cada formato los escribe a su manera: el CSV con coma decimal y «;» (Excel
+  // en español), el .xlsx con números de verdad que se pueden sumar.
+  const filasReporte = () => {
     const head = [
       'Empleado', 'Cédula', 'Sede',
       ...TIPOS_HORA.flatMap((t) => [`${t.codigo} (h)`, `${t.codigo} (COP)`]),
       'Total horas extra', 'Valor total (COP)', 'Estado de pago',
       'Días trabajados', 'Horas trabajadas', 'Entradas tardías',
     ];
-    const num = (n) => (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
+    const h2 = (n) => Math.round((n ?? 0) * 100) / 100;
     const ESTADO = { pagado: 'Pagado', parcial: 'Parcial', pendiente: 'Pendiente', na: '' };
     const lines = report.map((r) => [
       r.name, r.cedula, r.sede,
-      ...TIPOS_HORA.flatMap((t) => [num(r.horasPorTipo[t.codigo] ?? 0), valorPorTipo(r, t.codigo)]),
-      num(r.extras),
+      ...TIPOS_HORA.flatMap((t) => [h2(r.horasPorTipo[t.codigo]), valorPorTipo(r, t.codigo)]),
+      h2(r.extras),
       r.sinSalario ? 'sin salario' : r.valor,
       ESTADO[r.pago],
-      r.days, num(r.hours), r.lateCount,
+      r.days, h2(r.hours), r.lateCount,
     ]);
-    const csv = [head, ...lines]
-      .map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';'))
-      .join('\r\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }); // BOM para tildes en Excel
+    return [head, ...lines];
+  };
+  const [exportMenu, setExportMenu] = useState(false);
+  const exportMenuRef = useRef(null);
+  useEffect(() => {
+    if (!exportMenu) return;
+    const fuera = (e) => { if (!exportMenuRef.current?.contains(e.target)) setExportMenu(false); };
+    const escape = (e) => { if (e.key === 'Escape') setExportMenu(false); };
+    document.addEventListener('pointerdown', fuera);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', fuera); document.removeEventListener('keydown', escape); };
+  }, [exportMenu]);
+  const descargar = (blob, nombre) => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `reporte_${repFrom}_a_${repTo}.csv`;
+    a.download = nombre;
     a.click();
-    URL.revokeObjectURL(a.href);
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  const exportar = async (formato) => {
+    setExportMenu(false);
+    const filas = filasReporte();
+    const base = `reporte_${repFrom}_a_${repTo}`;
+    if (formato === 'xlsx') {
+      const { crearXlsx } = await import('../lib/xlsx.js');
+      descargar(
+        new Blob([crearXlsx(filas, { hoja: `Horas ${repFrom} a ${repTo}` })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+        `${base}.xlsx`,
+      );
+      showToast('Reporte de Excel descargado');
+      return;
+    }
+    const txt = (v) => (typeof v === 'number' && !Number.isInteger(v) ? v.toFixed(2).replace('.', ',') : String(v ?? ''));
+    const csv = filas
+      .map((row) => row.map((v) => `"${txt(v).replace(/"/g, '""')}"`).join(';'))
+      .join('\r\n');
+    descargar(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }), `${base}.csv`); // BOM para tildes en Excel
     showToast('Reporte CSV descargado');
   };
 
@@ -3321,14 +3353,28 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 >
                   <Icon name="refresh" size={17} />
                 </button>
-                <button
-                  className="btn primary btn-ico"
-                  title="Exportar CSV" aria-label="Exportar CSV"
-                  onClick={exportCSV} disabled={report.length === 0}
-                >
-                  <Icon name="download" size={18} />
-                  <span className="solo-pc">Exportar CSV</span>
-                </button>
+                {/* Exportar: se elige el formato en un menú corto. */}
+                <div className="export-menu" ref={exportMenuRef}>
+                  <button
+                    className="btn primary btn-ico"
+                    title="Exportar el reporte" aria-label="Exportar el reporte"
+                    aria-haspopup="menu" aria-expanded={exportMenu}
+                    onClick={() => setExportMenu((v) => !v)} disabled={report.length === 0}
+                  >
+                    <Icon name="download" size={18} />
+                    <span className="solo-pc">Exportar ▾</span>
+                  </button>
+                  {exportMenu && (
+                    <div className="export-opciones" role="menu">
+                      <button role="menuitem" onClick={() => exportar('xlsx')}>
+                        <b>Excel (.xlsx)</b><small>Números listos para sumar</small>
+                      </button>
+                      <button role="menuitem" onClick={() => exportar('csv')}>
+                        <b>CSV</b><small>Para otros sistemas o nómina</small>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             <div className="rep-periodo">
@@ -5995,6 +6041,21 @@ const CSS = `
 }
 .head-user-btn:hover, .head-user-btn[aria-expanded="true"] { background: rgba(255,255,255,.12); }
 .head-user-nombre { display: none; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; padding-right: 6px; }
+/* Menú de Exportar (Reportes): CSV o Excel. */
+.export-menu { position: relative; }
+.export-opciones {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; min-width: 220px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--elev-1);
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
+}
+.export-opciones button {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left;
+  font: inherit; font-size: 13px; color: var(--ink); background: transparent; border: 0;
+  border-radius: 8px; padding: 9px 11px; cursor: pointer;
+}
+.export-opciones button:hover, .export-opciones button:focus-visible { background: var(--accent-soft); }
+.export-opciones b { font-weight: 600; }
+.export-opciones small { color: var(--muted); font-size: 11.5px; }
 .head-user-menu {
   position: absolute; top: calc(100% + 10px); right: 0; z-index: 40;
   min-width: 230px; padding: 12px 14px;
