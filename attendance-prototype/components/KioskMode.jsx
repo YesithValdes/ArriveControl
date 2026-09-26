@@ -19,6 +19,7 @@ import { euclideanDistance, MATCH_THRESHOLD, MARGEN_MINIMO } from '../utils/face
 // Modelo v2 (ArcFace 512-D, similitud coseno): decide la identidad cuando la
 // captura viva y la persona lo tienen; v1 queda de respaldo del resto.
 import { cargarV2, descriptorV2, puntos5DeMediaPipe, similitudV2, promedioV2, V2_UMBRAL_SIM, V2_MARGEN_SIM } from '../lib/rostroV2.js';
+import { modelosDesdeApk } from '../lib/modelosApk.js';
 import {
   cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
   getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
@@ -37,6 +38,8 @@ const DETECTOR_INPUT = 416;
 const FACEAPI_MODEL_URL = '/models';
 const MEDIAPIPE_MODEL = '/models/face_landmarker.task';
 const WASM_PATH = '/wasm';
+// Marca (sessionStorage) de «estaba corriendo cuando se auto-actualizó».
+const REANUDAR_TRAS_ACTUALIZAR = 'kiosco:reanudar-tras-actualizar';
 
 // ~15 fps durante el reto: un parpadeo dura ~100-150 ms y a 8 fps caía entre
 // dos cuadros y no se veía — la gente "parpadeaba y no pasaba nada".
@@ -90,6 +93,165 @@ function averageDescriptors(descs) {
   return out.map((v) => v / descs.length);
 }
 
+// ── Precarga de modelos (a nivel de MÓDULO, no del componente) ───────────
+//
+// El kiosco espera el toque de «Iniciar kiosco»; ese tiempo se usa para dejar
+// TODO listo. La carga arranca en cuanto el navegador evalúa este módulo —
+// antes de hidratar la pantalla—, no en un efecto al montar, y existe UNA vez
+// (en desarrollo, StrictMode monta dos veces y creaba dos MediaPipe).
+//
+// Medido (build de producción, Chrome, primera visita a 20 Mbps): todo iba EN
+// FILA — el .task de MediaPipe se pedía recién con su wasm listo, y el modelo
+// de ArcFace recién con el suyo —, y los dos se repartían el enlace. Ahora:
+//   · los bytes de cada modelo bajan a la par de su runtime;
+//   · en la primera visita por la web, MediaPipe (lo que se usa primero) baja
+//     solo y ArcFace arranca cuando el .task ya llegó;
+//   · el primer cuadro de MediaPipe (≈3 s con GPU: ahí compila sus shaders)
+//     se corre ANTES del toque, sobre un lienzo gris, y no con la cámara
+//     recién abierta y la imagen congelada.
+
+// Reloj ÚNICO de MediaPipe: en modo VIDEO cada detectForVideo —el de
+// calentamiento incluido— debe llevar marca MAYOR que la anterior; con una
+// igual o menor el grafo revienta («Packet timestamp mismatch», medido).
+let mpUltimaMarca = 0;
+const mpTs = () => (mpUltimaMarca = Math.max(performance.now(), mpUltimaMarca + 1));
+
+// Marcas de tiempo desde el inicio de la página (performance.now()).
+const marca = (que) => console.log(`[Kiosco⏱] ${que} a los ${Math.round(performance.now())} ms`);
+
+// Se resuelve cuando la pantalla montó: el calentamiento bloquea el hilo
+// principal y no debe hacerlo antes de que la pantalla esté viva.
+let avisarMontado = () => {};
+const montado = typeof window === 'undefined' ? null : new Promise((ok) => { avisarMontado = ok; });
+
+/** close() de un grafo GPU sin usar tarda segundos: se suelta en tiempo ocioso. */
+const cerrarLuego = (lm) => {
+  const luego = window.requestIdleCallback || ((f) => setTimeout(f, 200));
+  luego(() => { try { lm.close(); } catch { /* ya muerto */ } });
+};
+
+/**
+ * ¿OffscreenCanvas con WebGL? Copia de la regla de @mediapipe/tasks-vision
+ * (Qo en vision_bundle): Safari lo trae desde la 16.4, pero con WebGL recién
+ * desde la 17.
+ */
+function offscreenConWebGL() {
+  if (typeof OffscreenCanvas === 'undefined') return false;
+  const ua = navigator.userAgent;
+  const esSafari = ua.includes('Safari') && !ua.includes('Chrome');
+  if (!esSafari) return true;
+  return Number(ua.match(/Version\/(\d+).*Safari/)?.[1]) >= 17;
+}
+
+/**
+ * Crea el detector (GPU, y CPU si la GPU no sirve) y corre su PRIMER cuadro.
+ *
+ * Crear y calentar van juntos, dentro del mismo intento: sin WebGL2, crear
+ * funciona y lo que revienta es el primer cuadro — el respaldo a CPU nunca
+ * saltaba y el bucle se tragaba el error en cada cuadro (kiosco ciego y sin
+ * aviso). Así, ese fallo cae a CPU o termina en «↻ Recargar».
+ */
+async function crearDeteccion(p) {
+  const vision = await p.visionProm;
+  const fileset = await vision.FilesetResolver.forVisionTasks(WASM_PATH);
+  const crear = async (delegate) => {
+    // El lienzo es propio (para escuchar la pérdida del WebGL), pero se elige
+    // con la MISMA regla de la librería: OffscreenCanvas salvo en Safari < 17,
+    // que lo tiene sin WebGL — ahí MediaPipe no arrancaba nunca (iPads que no
+    // pasan de iPadOS 16).
+    const lienzo = offscreenConWebGL() ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
+    // Los bytes del .task ya vienen bajando: se entregan como lector y la
+    // librería los lee cuando su wasm está listo. Uno nuevo por intento.
+    const lector = new ReadableStream({ async start(c) { c.enqueue(await p.bytesMp); c.close(); } }).getReader();
+    const lm = await vision.FaceLandmarker.createFromOptions(fileset, {
+      canvas: lienzo,
+      baseOptions: { modelAssetBuffer: lector, delegate },
+      outputFaceBlendshapes: true,
+      outputFacialTransformationMatrixes: true,
+      runningMode: 'VIDEO',
+      numFaces: 1,
+    });
+    marca(`MediaPipe creado (${delegate})`);
+    await montado;
+    try {
+      const gris = document.createElement('canvas');
+      gris.width = 256; gris.height = 256;
+      const g = gris.getContext('2d');
+      g.fillStyle = '#808080'; g.fillRect(0, 0, 256, 256);
+      const t = performance.now();
+      lm.detectForVideo(gris, mpTs());
+      marca(`MediaPipe ${delegate} calentado (primer cuadro ${Math.round(performance.now() - t)} ms)`);
+    } catch (e) {
+      cerrarLuego(lm);
+      throw e;
+    }
+    return { lm, lienzo, delegate };
+  };
+  let det;
+  try {
+    det = await crear('GPU');
+  } catch (eGpu) {
+    console.warn('[Kiosco] MediaPipe con GPU no sirvió; probando CPU:', eGpu?.message || eGpu);
+    det = await crear('CPU');
+  }
+  marca(`KIOSCO OPERATIVO (cámara y detección) · ${det.delegate}`);
+  return det;
+}
+
+function iniciarPrecarga() {
+  // ① MediaPipe primero: es lo que hace falta al tocar «Iniciar kiosco».
+  const visionProm = import('@mediapipe/tasks-vision');
+  visionProm.catch(() => {});
+  // Con tope (2 min): una descarga colgada termina en error y «↻ Recargar»,
+  // no en una espera eterna.
+  const tope = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(120000) : undefined;
+  const bytesMp = fetch(MEDIAPIPE_MODEL, { priority: 'high', signal: tope }).then(async (r) => {
+    if (!r.ok) throw new Error(`No se pudo bajar ${MEDIAPIPE_MODEL} (HTTP ${r.status})`);
+    return new Uint8Array(await r.arrayBuffer());
+  });
+  bytesMp.catch(() => { /* el error llega por createFromOptions */ });
+
+  // ② Identidad (ArcFace, ≈17 MB). En la primera visita por la web —sin
+  // service worker que sirva de caché y fuera de la APK, que los lee del
+  // disco— espera a que baje el .task, para no repartirse el enlace con lo
+  // que se usa primero (medido: MediaPipe listo ≈2 s antes; ArcFace ≈0,5 s
+  // después, y se necesita recién tras el parpadeo).
+  const sinCache = !navigator.serviceWorker?.controller && !modelosDesdeApk();
+  const identidad = sinCache ? bytesMp.catch(() => {}).then(() => cargarV2()) : cargarV2();
+  identidad.then(() => marca('IDENTIDAD LISTA (ArcFace v2)'), () => {});
+
+  const p = { visionProm, bytesMp, identidad };
+  p.deteccion = crearDeteccion(p);
+  p.deteccion.catch(() => { /* lo muestra el componente */ });
+  // Tras perder el contexto WebGL: otro detector con los bytes ya en memoria.
+  p.reconstruir = () => {
+    p.deteccion = crearDeteccion(p);
+    p.deteccion.catch(() => {});
+    return p.deteccion;
+  };
+  return p;
+}
+
+const precarga = typeof window === 'undefined' ? null : iniciarPrecarga();
+
+/**
+ * Primera visita: parte de lo que bajó llegó ANTES de que el service worker
+ * tomara control, así que no quedó en su caché persistente (la HTTP del
+ * WebView se desaloja al cerrar la app). Se le pide que copie a su caché lo
+ * que la página cargó de /models y /wasm; lo lee del caché HTTP, sin red.
+ * En la APK no: ahí los modelos salen del disco del propio APK.
+ */
+function respaldarModelosEnSW() {
+  if (modelosDesdeApk() || !navigator.serviceWorker) return;
+  const urls = [...new Set(performance.getEntriesByType('resource').map((e) => e.name).filter((n) => {
+    try { const u = new URL(n); return u.origin === location.origin && /^\/(models|wasm)\//.test(u.pathname); } catch { return false; }
+  }))];
+  if (urls.length === 0) return;
+  navigator.serviceWorker.ready
+    .then((reg) => reg.active?.postMessage({ tipo: 'guardar-modelos', urls }))
+    .catch(() => {});
+}
+
 export default function KioskMode() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -100,10 +262,37 @@ export default function KioskMode() {
   const peopleRef = useRef([]);
 
   // Máquina de estados: idle | challenge | result | cooldown
-  const stateRef = useRef({ phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], descsV2: [], lastCapture: 0, captures: 0 });
+  const estadoReposo = () => ({ phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], descsV2: [], lastCapture: 0, captures: 0 });
+  const stateRef = useRef(estadoReposo());
 
-  // Modelos listos: informativo (los refs son la verdad; ver modelosListos()).
-  const [, setReady] = useState(false);
+  // Arrancar y detener sin carreras. Salir de la app detiene el kiosco, y eso
+  // puede pasar A MEDIO arranque (esperando cámara o roster): cada toque y
+  // cada detención suben `arranqueRef`, y un arranque viejo que despierta ya
+  // no enciende nada. `bucleRef` identifica el ÚNICO bucle de cuadros vivo.
+  const arranqueRef = useRef(0);
+  const bucleRef = useRef(0);
+  const iniciandoRef = useRef(false);
+  const iniciandoDe = useRef(0); // qué arranque encendió el «iniciando»
+  const toqueRef = useRef(0); // cuándo se tocó «Iniciar kiosco» (para medir)
+  const runningRef = useRef(false);
+
+  // «Detección lista» como PROMESA (antes se preguntaba cada 120 ms): un toque
+  // temprano arranca en el instante en que MediaPipe queda listo.
+  const deteccionRef = useRef(null);
+  if (deteccionRef.current === null) {
+    let listo, fallo;
+    const promesa = new Promise((a, b) => { listo = a; fallo = b; });
+    promesa.catch(() => {}); // nadie la espera hasta el toque
+    deteccionRef.current = { promesa, listo, fallo };
+  }
+
+  // Modelos listos, para pintar el botón (los refs son la verdad para el
+  // bucle; ver modelosListos()). Cargan desde el montaje, mientras la pantalla
+  // espera el toque de «Iniciar kiosco»: al tocarlo ya deberían estar.
+  //   deteccion  MediaPipe (cámara, cara, parpadeo) — sin él no se arranca.
+  //   identidad  ArcFace, o face-api de respaldo — llegó (o falló) su carga.
+  const [deteccionLista, setDeteccionLista] = useState(false);
+  const [identidadLista, setIdentidadLista] = useState(false);
   const [running, setRunning] = useState(false);
   const [loadError, setLoadError] = useState(null);
   // Espejo del error de modelos para leerlo dentro de esperas async.
@@ -112,14 +301,14 @@ export default function KioskMode() {
   // la detección viven de MediaPipe), solo impide saber quién es.
   const faErrorRef = useRef(null);
   const [statusNote, setStatusNote] = useState('Espere un momento…');
-  // El kiosco ARRANCA SOLO al abrir la app: la pantalla de reposo con su botón
-  // únicamente existe después de que alguien presione «Detener».
-  const [detenido, setDetenido] = useState(false);
-  // Arranque EN CURSO (roster + cámara): en ese lapso no hay botón — antes se
-  // asomaba «Iniciar kiosco» unos segundos y parecía que había que tocarlo.
+  // El kiosco NO arranca solo: al abrir la app, y cada vez que se sale de
+  // ella, espera a que alguien presione «Iniciar kiosco». Mientras tanto los
+  // modelos cargan, así el toque encuentra todo listo. (Única excepción: la
+  // recarga por auto-actualización de un kiosco que estaba corriendo.)
+  const [detenido, setDetenido] = useState(true);
+  // Arranque EN CURSO (roster + cámara): en ese lapso no hay botón.
   const [iniciando, setIniciando] = useState(false);
-  // El arranque automático FALLÓ (sin cámara, sin roster): solo entonces el
-  // botón vuelve, como reintento manual.
+  // El arranque FALLÓ (sin cámara, sin roster): el botón pasa a reintento.
   const [arranqueFallo, setArranqueFallo] = useState(false);
 
   // Estado visual (espejo de la máquina, para render): idle | challenge | ok | no
@@ -156,7 +345,8 @@ export default function KioskMode() {
   // a la pestaña, para que un cambio en el panel llegue sin reinstalar.
   const [accesoPanel, setAccesoPanel] = useState(false);
   const leerAcceso = () => { miDispositivo().then((d) => setAccesoPanel(Boolean(d?.acceso_panel))); };
-  useEffect(() => { if (detenido) leerAcceso(); }, [detenido]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (detenido && !esPrueba) leerAcceso(); }, [detenido]);
   const [cfgError, setCfgError] = useState(null);
   const [cfgCodigo, setCfgCodigo] = useState('');
   const [activando, setActivando] = useState(false);
@@ -243,6 +433,10 @@ export default function KioskMode() {
       setDeviceKey(d.dispositivo.clave);
       if (d.dispositivo.sede_id) setSedeId(d.dispositivo.sede_id);
       setConfigurado(true);
+      // De vuelta al reposo con «Iniciar kiosco» (tras una revocación el
+      // kiosco pudo quedar con detenido=false y el botón no aparecía).
+      setDetenido(true);
+      setArranqueFallo(false);
       setCfgCodigo('');
       setStatusNote(`"${d.dispositivo.nombre}" registrado en ${d.empresa}.`);
     } catch (e) {
@@ -253,7 +447,15 @@ export default function KioskMode() {
   };
 
   // Reloj del estado de reposo
-  const [clock, setClock] = useState({ time: '', date: '' });
+  // Espacio duro (no vacío) antes del primer tic: vacío, el reloj medía 0 px
+  // en el HTML del servidor y al llenarse empujaba el botón 97 px (medido) —
+  // un toque temprano caía donde el botón ya no estaba.
+  const [clock, setClock] = useState({ time: ' ', date: ' ' });
+  // La pantalla ya responde (hidratada). El botón viene en el HTML del
+  // servidor, pero antes de hidratar un toque no hacía nada: se muestra
+  // cuando ya sirve.
+  const [hidratado, setHidratado] = useState(false);
+  useEffect(() => { setHidratado(true); }, []);
   useEffect(() => {
     const update = () => {
       const d = new Date();
@@ -267,14 +469,9 @@ export default function KioskMode() {
     return () => clearInterval(id);
   }, []);
 
-  // ── Caché persistente de los archivos pesados ─────────────────────────
-  // El service worker guarda modelos/wasm/chunks en Cache Storage (cuota de
-  // disco real): el caché HTTP del WebView los desalojaba al cerrar la app y
-  // cada arranque en frío volvía a bajar ~16 MB. Con esto solo se bajan la
-  // primera vez. No toca HTML ni APIs, así que la auto-actualización sigue.
-  useEffect(() => {
-    navigator.serviceWorker?.register?.('/sw.js').catch(() => { /* sin SW el kiosco funciona igual */ });
-  }, []);
+  // (El service worker lo registra ServiceWorkerRegister, en el layout, y solo
+  // en producción. Aquí había un segundo registro que corría también en
+  // desarrollo y chocaba con la limpieza de ese componente.)
 
   // MODO PRUEBA (/?prueba=1 o /?prueba=<token>): el mismo flujo completo de
   // reconocimiento (parpadeo, captura, decisión v2), pero al confirmar
@@ -288,13 +485,6 @@ export default function KioskMode() {
   // Modelo v2 listo (se comprueba en caliente dentro del bucle de captura).
   const v2ListoRef = useRef(false);
 
-  /**
-   * Primera inferencia en vacío, en segundo plano.
-   *
-   * Compilar los kernels cuesta unos segundos en una tablet y se paga una sola
-   * vez. Hacerlo aquí, contra un lienzo en blanco, es pagarlo mientras nadie
-   * espera; si no, lo paga la primera persona que se pare enfrente.
-   */
   /**
    * Trae face-api y sus modelos. RESPALDO: solo se llama si ArcFace no cargó.
    *
@@ -352,10 +542,14 @@ export default function KioskMode() {
   // La cámara enciende con MediaPipe listo. Los otros dos siguen cargando de
   // fondo mientras la persona se acerca, que es tiempo que antes se perdía
   // mirando una pantalla apagada.
+  //
+  // La carga la arrancó `iniciarPrecarga()` al evaluarse el módulo; aquí solo
+  // se reciben sus resultados. Los modelos son de la PÁGINA, no de este
+  // montaje: al desmontar no se cierran (el próximo montaje los reusa).
   useEffect(() => {
     let cancelled = false;
-    const t0 = performance.now();
-    const marca = (que) => console.log(`[Kiosco⏱] ${que} a los ${Math.round(performance.now() - t0)} ms`);
+    if (!precarga) return undefined;
+    avisarMontado();
 
     // La identidad la saca ArcFace (v2), alineando con los 5 puntos que
     // MediaPipe ya entrega en cada cuadro. face-api NO se carga: se medió que
@@ -363,49 +557,62 @@ export default function KioskMode() {
     // 0,97 sobre 20 medidas, ninguna bajo el umbral), así que sus 6,5 MB de
     // modelos y toda la inicialización de TensorFlow.js —lo más lento del
     // arranque en una tablet— sobraban para dar cinco coordenadas.
-    cargarV2()
-      .then(() => { v2ListoRef.current = true; marca('IDENTIDAD LISTA (ArcFace v2)'); })
+    (precarga.identidad ?? cargarV2())
+      .then(() => {
+        v2ListoRef.current = true;
+        if (!cancelled) setIdentidadLista(true);
+      })
       .catch((e) => {
         // RESPALDO: solo si ArcFace no cargó se trae face-api, que sabe
         // reconocer por su cuenta. Se paga su lentitud únicamente cuando la
         // alternativa es un kiosco que no identifica a nadie.
         console.warn('[Kiosco] ArcFace no disponible; cayendo al modelo viejo:', e?.message || e);
         cargarRespaldoFaceApi(marca).then((fa) => {
-          if (!cancelled && fa) faceapiRef.current = fa;
+          if (cancelled) return;
+          if (fa) faceapiRef.current = fa;
+          // Aun si el respaldo falló: la carga terminó y no hay más que esperar.
+          setIdentidadLista(true);
         });
       });
 
-    (async () => {
-      try {
-        const loadMp = (async () => {
-          const vision = await import('@mediapipe/tasks-vision');
-          const fileset = await vision.FilesetResolver.forVisionTasks(WASM_PATH);
-          const make = (delegate) => vision.FaceLandmarker.createFromOptions(fileset, {
-            baseOptions: { modelAssetPath: MEDIAPIPE_MODEL, delegate },
-            outputFaceBlendshapes: true,
-            outputFacialTransformationMatrixes: true,
-            runningMode: 'VIDEO',
-            numFaces: 1,
-          });
-          try { return await make('GPU'); } catch { return await make('CPU'); }
-        })();
-        const landmarker = await loadMp;
-        if (cancelled) return;
-        landmarkerRef.current = landmarker;
-        // ENCIENDE AQUÍ. Con esto ya se ve la cámara y se detectan caras y
-        // parpadeos; lo de identificar quién es llega unos segundos después,
-        // que es cuando de verdad hace falta.
-        setReady(true);
-        marca('KIOSCO OPERATIVO (cámara y detección)');
-        setStatusNote('Espere un momento…');
-      } catch (err) {
-        if (!cancelled) {
-          loadErrorRef.current = `${err?.name}: ${err?.message || err}`;
-          setLoadError(loadErrorRef.current);
-          setStatusNote('No se pudo preparar la cámara.');
-        }
+    // Detección (MediaPipe, ya creado y calentado por la precarga).
+    const usarDeteccion = (prom) => prom.then((det) => {
+      if (cancelled) return;
+      landmarkerRef.current = det.lm;
+      deteccionRef.current.listo();
+      setDeteccionLista(true);
+      // Android puede quitarle el contexto WebGL a la app en segundo plano.
+      // Sin contexto, con GPU devuelve 0 caras para siempre y con CPU repite
+      // la última cara aunque el cuadro esté vacío (medido): kiosco ciego o
+      // viendo fantasmas. Se reconstruye con los bytes que ya están en memoria.
+      det.lienzo.addEventListener?.('webglcontextlost', () => {
+        if (cancelled || landmarkerRef.current !== det.lm) return;
+        console.warn('[Kiosco] MediaPipe perdió su WebGL; se reconstruye.');
+        landmarkerRef.current = null; // el bucle salta cuadros mientras tanto
+        setDeteccionLista(false);
+        cerrarLuego(det.lm);
+        usarDeteccion(precarga.reconstruir());
+      }, { once: true });
+    }).catch((err) => {
+      if (cancelled) return;
+      loadErrorRef.current = `${err?.name}: ${err?.message || err}`;
+      setLoadError(loadErrorRef.current);
+      setStatusNote('No se pudo preparar la cámara.');
+      deteccionRef.current.fallo(new Error(loadErrorRef.current));
+      // Una reconstrucción fallida (tras perder el WebGL) con el kiosco
+      // corriendo lo dejaba ciego y sin aviso: se detiene para que aparezcan
+      // el error y «↻ Recargar».
+      if (runningRef.current || iniciandoRef.current) {
+        stopAll();
+        setArranqueFallo(true);
       }
-    })();
+    });
+    usarDeteccion(precarga.deteccion);
+
+    // Con todo cargado, que el service worker guarde lo que llegó antes que él.
+    Promise.allSettled([precarga.deteccion, precarga.identidad]).then(() => {
+      if (!cancelled) respaldarModelosEnSW();
+    });
     return () => { cancelled = true; };
   }, []);
 
@@ -555,8 +762,14 @@ export default function KioskMode() {
   };
 
   // ── Wake Lock ─────────────────────────────────────────────────────────
+  // Se pide SIN esperarlo: el primer cuadro no lo necesita.
   const acquireWakeLock = useCallback(async () => {
-    try { if ('wakeLock' in navigator) wakeLockRef.current = await navigator.wakeLock.request('screen'); } catch {}
+    try {
+      if (!('wakeLock' in navigator)) return;
+      const lock = await navigator.wakeLock.request('screen');
+      if (!runningRef.current) { lock.release().catch(() => {}); return; } // se detuvo mientras llegaba
+      wakeLockRef.current = lock;
+    } catch { /* sin wake lock, como antes */ }
   }, []);
   // Al volver del segundo plano (una LLAMADA, cambiar de app, apagar la
   // pantalla), Android le QUITA la cámara al WebView: el track queda 'ended',
@@ -570,8 +783,11 @@ export default function KioskMode() {
       videoRef.current?.play?.().catch(() => {});
       return;
     }
+    const gen = arranqueRef.current;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      // Mientras llegaba la cámara el kiosco se detuvo: no se re-engancha.
+      if (arranqueRef.current !== gen || !runningRef.current) { stream.getTracks().forEach((t) => t.stop()); return; }
       streamRef.current?.getTracks?.().forEach((t) => t.stop());
       stream.getVideoTracks()[0]?.addEventListener('ended', () => {
         if (document.visibilityState === 'visible') reanudarCamara();
@@ -579,7 +795,7 @@ export default function KioskMode() {
       streamRef.current = stream;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
-      stateRef.current = { phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], descsV2: [], lastCapture: 0, captures: 0 };
+      stateRef.current = estadoReposo();
       setResult(null);
       ponerProgreso(0);
       ponerEncuadre('ok');
@@ -590,107 +806,202 @@ export default function KioskMode() {
     }
   }, []);
 
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible' || !running) return;
-      acquireWakeLock();
-      reanudarCamara();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [running, acquireWakeLock, reanudarCamara]);
-
   const stopAll = useCallback(() => {
+    arranqueRef.current += 1; // un «Iniciar» a medio camino ya no vale
+    bucleRef.current += 1; // ningún bucle viejo vuelve a agendarse
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
     if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
     if (videoRef.current) videoRef.current.srcObject = null;
     wakeLockRef.current?.release?.().catch(() => {});
+    wakeLockRef.current = null;
+    // Un reto a medias no queda colgado: la auto-actualización exige 'idle'.
+    stateRef.current = estadoReposo();
+    runningRef.current = false;
+    // Un arranque que esperaba (p. ej. a MediaPipe) queda invalidado: si no se
+    // suelta aquí, el «iniciando» escondía el botón hasta que el modelo
+    // terminara — o para siempre si su descarga se colgaba.
+    iniciandoRef.current = false;
+    iniciandoDe.current = 0;
+    setIniciando(false);
     setRunning(false);
     setUi('idle');
     setResult(null);
   }, []);
   useEffect(() => stopAll, [stopAll]);
 
+  // Salir de la app (otra app, pantalla apagada, una llamada) DETIENE el
+  // kiosco: se suelta la cámara y al volver se pide «Iniciar kiosco». Antes
+  // se reanudaba solo; ahora cada regreso pasa por el botón. Los modelos
+  // siguen en memoria, así que el reinicio es inmediato. También corta un
+  // arranque EN CURSO: si no, terminaba de abrir la cámara con la app oculta.
+  useEffect(() => {
+    const alOcultar = () => {
+      if (document.visibilityState !== 'hidden' || !(runningRef.current || iniciandoRef.current)) return;
+      stopAll();
+      setDetenido(true);
+      setArranqueFallo(false);
+    };
+    document.addEventListener('visibilitychange', alOcultar);
+    return () => document.removeEventListener('visibilitychange', alOcultar);
+  }, [stopAll]);
+
   // ── Arranque ──────────────────────────────────────────────────────────
   /**
-   * Espera a que los modelos faciales (que cargan en paralelo desde el
-   * montaje) estén listos. Si su carga falló, revienta con ese motivo.
+   * Espera a que MediaPipe esté listo (la precarga lo trae desde que se abrió
+   * la pantalla). Si su carga falló, revienta con ese motivo. ArcFace no se
+   * espera: hace falta recién cuando alguien completa el reto de parpadeo.
    */
-  const modelosListos = async () => {
-    // Solo MediaPipe. face-api puede seguir cargando: no hace falta para ver
-    // caras ni para el reto de parpadeo, y llegará mucho antes de que alguien
-    // complete el reto — que es cuando se necesita para saber QUIÉN es.
-    while (!landmarkerRef.current) {
-      if (loadErrorRef.current) throw new Error(loadErrorRef.current);
-      await new Promise((r) => setTimeout(r, 120));
+  const modelosListos = () => deteccionRef.current.promesa;
+
+  // ── Roster precargado ─────────────────────────────────────────────────
+  // Antes se bajaba DESPUÉS del toque, en cada arranque (y ahora cada regreso
+  // a la app pasa por el botón): una ida al servidor —o un arranque en frío de
+  // la función— entre el toque y la cámara. Ahora se trae mientras la pantalla
+  // espera: al tocar se usa YA y se revalida de fondo. El servidor sigue
+  // mandando: una persona desactivada que el roster viejo todavía reconozca es
+  // rechazada al registrar la marcación.
+  const ROSTER_FRESCO_MS = 5 * 60 * 1000;
+  const rosterRef = useRef(null); // { validos, total, deCache, ts }
+  const rosterVueloRef = useRef(null); // una sola petición a la vez
+  // Solo personas con descriptor VÁLIDO: un registro corrupto en el roster no
+  // debe poder tumbar la comparación 1:N (y con ella, todo el kiosco). Cada
+  // persona se queda solo con sus rostros SANOS; quien no conserve ninguno
+  // sale del roster (no podría compararse contra nada).
+  const sanearRoster = (all) => {
+    const sano = (d) => Array.isArray(d) && d.length === 128 && d.every(Number.isFinite);
+    const validos = all
+      .map((p) => ({ ...p, descriptores: (p.descriptores ?? []).filter(sano) }))
+      .filter((p) => p.descriptores.length > 0);
+    if (validos.length < all.length) {
+      console.warn(`Kiosco: ${all.length - validos.length} registro(s) sin rostro o corruptos fueron excluidos.`);
     }
+    return validos;
   };
+  const traerRoster = () => {
+    if (rosterVueloRef.current) return rosterVueloRef.current;
+    // En modo prueba no se deja copia del roster en este navegador: es el
+    // celular de cualquiera, no un kiosco.
+    const p = cargarRoster({ guardar: !esPrueba })
+      .then(({ empleados, deCache }) => {
+        // Una copia de caché nunca pisa una fresca ya obtenida.
+        if (deCache && rosterRef.current && !rosterRef.current.deCache) return rosterRef.current;
+        const r = { validos: sanearRoster(empleados), total: empleados.length, deCache, ts: Date.now() };
+        rosterRef.current = r;
+        // El bucle lee peopleRef en cada decisión: el cambio entra en caliente.
+        if (runningRef.current && r.validos.length > 0) { peopleRef.current = r.validos; setPeopleCount(r.validos.length); }
+        return r;
+      })
+      .finally(() => { rosterVueloRef.current = null; });
+    rosterVueloRef.current = p;
+    return p;
+  };
+  const rosterViejo = () => {
+    const r = rosterRef.current;
+    return !r || r.deCache || Date.now() - r.ts >= ROSTER_FRESCO_MS;
+  };
+  /**
+   * La clave del aparato ya no vale: se detiene, se olvida la activación y se
+   * pide un código nuevo. Deja el reposo LISTO para después (detenido): si no,
+   * al reactivarlo no aparecía «Iniciar kiosco». El roster era de la
+   * instalación revocada: sale de memoria ya.
+   */
+  const revocarDispositivo = (mensaje) => {
+    stopAll();
+    olvidarActivacion();
+    setConfigurado(false);
+    setCfgError(mensaje);
+    setDetenido(true);
+    setArranqueFallo(false);
+    rosterRef.current = null;
+    rosterVueloRef.current = null;
+    peopleRef.current = [];
+    setPeopleCount(0);
+  };
+  // Revalidación de fondo: la red caída se ignora; la clave revocada, no.
+  // Solo con clave guardada (un aparato nunca activado también da 401).
+  const errorRosterDeFondo = (e) => {
+    if (!(e instanceof ClaveRechazada) || esPrueba || !getDeviceKey()) return;
+    revocarDispositivo('Este dispositivo ya no está autorizado. Pide un código nuevo en el panel y vuelve a registrarlo.');
+  };
+  useEffect(() => {
+    if (!configurado) return undefined;
+    const refrescar = (forzar) => {
+      if (document.visibilityState !== 'visible') return;
+      // Sin clave guardada (aparato aún sin activar, o activado solo por
+      // cookie) no se precarga: daría 401. Ese caso baja el roster al tocar.
+      if (!esPrueba && !getDeviceKey()) return;
+      if (forzar || rosterViejo()) traerRoster().catch(errorRosterDeFondo);
+    };
+    refrescar(false); // mientras espera el botón
+    const alVolver = () => refrescar(false); // al volver a la app
+    document.addEventListener('visibilitychange', alVolver);
+    const id = setInterval(() => refrescar(true), 10 * 60 * 1000); // también corriendo
+    return () => { document.removeEventListener('visibilitychange', alVolver); clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configurado]);
 
   const handleStart = async () => {
-    // LO PRIMERO, sin ningún `await` antes: el permiso de audio solo se
-    // concede dentro del gesto que lo pidió.
-    abrirAudio();
+    toqueRef.current = performance.now();
+    const gen = ++arranqueRef.current;
+    const vigente = () => arranqueRef.current === gen;
+    iniciandoDe.current = gen;
+    iniciandoRef.current = true;
     setIniciando(true);
     setArranqueFallo(false);
     try {
 
-    // La CÁMARA se pide de una, en PARALELO con el roster (y con los modelos,
-    // que vienen cargando desde el montaje): son las tres esperas largas del
-    // arranque y no dependen entre sí. Antes iban en fila y el primer arranque
-    // sumaba modelos + roster + cámara; ahora cuesta lo que tarde la más lenta.
+    // La CÁMARA se pide LO PRIMERO: abrirla ocurre fuera de esta página, así
+    // que corre mientras se crea el audio (≈0,4 s medidos en el primer toque).
+    // Va en PARALELO con el roster y los modelos: el arranque cuesta lo que
+    // tarde la más lenta.
     const camProm = navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
     camProm.catch(() => { /* el rechazo real se atiende más abajo */ });
     const soltarCamara = () => camProm.then((s) => s.getTracks().forEach((t) => t.stop())).catch(() => {});
+    // Sin ningún `await` antes: el permiso de audio solo se concede dentro
+    // del gesto que lo pidió.
+    abrirAudio();
 
-    // Roster desde la BASE DE DATOS (con caché local para cortes de red).
-    let all = [];
-    try {
-      // En modo prueba no se deja copia del roster en este navegador: es el
-      // celular de cualquiera, no un kiosco.
-      const { empleados, deCache } = await cargarRoster({ guardar: !esPrueba });
-      all = empleados;
-      if (deCache) setStatusNote('Sin conexión: usando la última copia.');
-    } catch (e) {
-      // La clave del aparato ya no vale (fue revocado, o la base cambió). No
-      // es un fallo pasajero: hay que reactivarlo, así que se vuelve a la
-      // pantalla de activación en vez de dejar un kiosco que no puede marcar.
-      if (e instanceof ClaveRechazada) {
-        if (esPrueba) {
-          // Sin sesión del panel no hay roster que probar; aquí no se
-          // desactiva nada — este navegador no es un kiosco.
-          setStatusNote(getPruebaToken()
-            ? 'Este enlace de prueba venció o no es válido. Genera uno nuevo en el panel: Ajustes → Probar reconocimiento.'
-            : 'Para el modo prueba, abre el enlace que genera el panel (Ajustes → Probar reconocimiento) o inicia sesión en esta misma pestaña.');
-          setArranqueFallo(true);
+    // Roster: el precargado se usa YA (y se revalida de fondo); si no lo hay,
+    // se espera — reusando la petición en vuelo si la precarga ya la lanzó.
+    let r = rosterRef.current;
+    if (r) {
+      traerRoster().catch(errorRosterDeFondo);
+    } else {
+      try {
+        r = await traerRoster();
+      } catch (e) {
+        if (!vigente()) { soltarCamara(); return; } // se detuvo mientras tanto
+        // La clave del aparato ya no vale (fue revocado, o la base cambió). No
+        // es un fallo pasajero: hay que reactivarlo, así que se vuelve a la
+        // pantalla de activación en vez de dejar un kiosco que no puede marcar.
+        if (e instanceof ClaveRechazada) {
+          if (esPrueba) {
+            // Sin sesión del panel no hay roster que probar; aquí no se
+            // desactiva nada — este navegador no es un kiosco.
+            setStatusNote(getPruebaToken()
+              ? 'Este enlace de prueba venció o no es válido. Genera uno nuevo en el panel: Ajustes → Probar reconocimiento.'
+              : 'Para el modo prueba, abre el enlace que genera el panel (Ajustes → Probar reconocimiento) o inicia sesión en esta misma pestaña.');
+            setArranqueFallo(true);
+            soltarCamara();
+            return;
+          }
           soltarCamara();
+          revocarDispositivo('Este dispositivo ya no está autorizado. Pide un código nuevo en el panel y vuelve a registrarlo.');
           return;
         }
-        olvidarActivacion();
-        setConfigurado(false);
-        setCfgError('Este dispositivo ya no está autorizado. Pide un código nuevo en el panel y vuelve a registrarlo.');
+        setStatusNote(`No se pudo cargar el roster: ${e.message}`);
+        setArranqueFallo(true);
         soltarCamara();
         return;
       }
-      setStatusNote(`No se pudo cargar el roster: ${e.message}`);
-      setArranqueFallo(true);
-      soltarCamara();
-      return;
     }
-    // Solo personas con descriptor VÁLIDO: un registro corrupto en el roster
-    // no debe poder tumbar la comparación 1:N (y con ella, todo el kiosco).
-    // Cada persona se queda solo con sus rostros SANOS; quien no conserve
-    // ninguno sale del roster (no podría compararse contra nada).
-    const sano = (d) => Array.isArray(d) && d.length === 128 && d.every(Number.isFinite);
-    const valid = all
-      .map((p) => ({ ...p, descriptores: (p.descriptores ?? []).filter(sano) }))
-      .filter((p) => p.descriptores.length > 0);
-    if (valid.length < all.length) {
-      console.warn(`Kiosco: ${all.length - valid.length} registro(s) sin rostro o corruptos fueron excluidos.`);
-    }
-    peopleRef.current = valid;
-    setPeopleCount(valid.length);
-    if (valid.length === 0) {
-      setStatusNote(all.length > 0
+    if (!vigente()) { soltarCamara(); return; }
+    if (r.deCache) setStatusNote('Sin conexión: usando la última copia.');
+    peopleRef.current = r.validos;
+    setPeopleCount(r.validos.length);
+    if (r.validos.length === 0) {
+      setStatusNote(r.total > 0
         ? 'Ningún empleado tiene rostro registrado.'
         : 'No hay empleados registrados.');
       setArranqueFallo(true);
@@ -704,32 +1015,51 @@ export default function KioskMode() {
     }).catch(() => {});
     try {
       const stream = await camProm;
+      if (!vigente()) { stream.getTracks().forEach((t) => t.stop()); return; }
       // Si el sistema mata el track SIN ocultar la app (llamada en burbuja,
       // otra app pidiendo la cámara), se recupera igual que al volver del
-      // segundo plano. Oculta, no: el visibilitychange lo hará al volver.
+      // segundo plano. Oculta, no: al volver se pide «Iniciar kiosco».
       stream.getVideoTracks()[0]?.addEventListener('ended', () => {
         if (document.visibilityState === 'visible') reanudarCamara();
       });
       streamRef.current = stream;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
-      await acquireWakeLock();
-      stateRef.current = { phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], descsV2: [], lastCapture: 0, captures: 0 };
-      // La cámara se MUESTRA ya (la persona se ve al instante); si los modelos
-      // aún terminan de cargar, el análisis empieza en cuanto estén.
+      if (!vigente()) return; // stopAll ya soltó la cámara
+      stateRef.current = estadoReposo();
+      // La cámara se MUESTRA ya (la persona se ve al instante); si MediaPipe
+      // aún termina de cargar, el análisis empieza en cuanto esté.
+      runningRef.current = true;
+      // Si la revalidación del roster llegó mientras se abría la cámara, se
+      // usa esa: traerRoster solo toca peopleRef con el kiosco ya corriendo.
+      const ultimo = rosterRef.current;
+      if (ultimo && ultimo !== r && ultimo.validos.length > 0) {
+        peopleRef.current = ultimo.validos;
+        setPeopleCount(ultimo.validos.length);
+        if (!ultimo.deCache) setStatusNote('');
+      }
       setRunning(true);
       setResult(null);
       setUi('idle');
+      acquireWakeLock(); // sin esperarlo
       await modelosListos();
+      if (!vigente()) return; // se salió mientras cargaba
       startLoop();
     } catch (err) {
+      if (!vigente()) return;
       stopAll();
       setStatusNote(`No se pudo abrir la cámara: ${err?.message || err}`);
       setArranqueFallo(true);
     }
 
     } finally {
-      setIniciando(false);
+      // Apaga el «iniciando» el arranque que lo encendió, aunque stopAll lo
+      // haya invalidado — salvo que un toque posterior ya lo haya relevado.
+      if (iniciandoDe.current === gen) {
+        iniciandoRef.current = false;
+        iniciandoDe.current = 0;
+        setIniciando(false);
+      }
     }
   };
 
@@ -738,9 +1068,13 @@ export default function KioskMode() {
   // dejaba corriendo la versión vieja para siempre. Cada 10 minutos se
   // pregunta al servidor qué versión sirve; si cambió, la página se recarga
   // sola — pero SOLO con el kiosco tranquilo (sin un reto de rostro en curso),
-  // para no cortarle la marcación a nadie. Al recargar, el auto-arranque
-  // vuelve a encender la cámara.
+  // para no cortarle la marcación a nadie. Si estaba corriendo, deja una marca
+  // para arrancar solo tras recargar: una tablet en la pared no puede quedarse
+  // esperando el botón después de cada despliegue.
   const versionRef = useRef(null);
+  // Respaldo: runningRef lo fijan handleStart/stopAll, y esto lo alinea con
+  // el estado ante cualquier otro camino.
+  useEffect(() => { runningRef.current = running; }, [running]);
   useEffect(() => {
     let recargando = false;
     const revisar = async () => {
@@ -752,6 +1086,9 @@ export default function KioskMode() {
         if (versionRef.current === null) { versionRef.current = d.version; return; }
         if (d.version !== versionRef.current && stateRef.current.phase === 'idle') {
           recargando = true;
+          if (runningRef.current) {
+            try { sessionStorage.setItem(REANUDAR_TRAS_ACTUALIZAR, '1'); } catch { /* sin storage: esperará el botón */ }
+          }
           window.location.reload();
         }
       } catch { /* sin red: se intentará en el próximo ciclo */ }
@@ -761,27 +1098,32 @@ export default function KioskMode() {
     return () => clearInterval(id);
   }, []);
 
-  // ── Auto-arranque ─────────────────────────────────────────────────────
-  // Al abrir la app (con el dispositivo ya activado y los modelos listos) el
-  // kiosco pasa DIRECTO a detectar rostros, sin pantalla de inicio. El reposo
-  // con botón solo aparece tras presionar «Detener», o si el arranque falla
-  // (sin cámara, sin roster): ahí se queda el error y el botón para reintentar.
-  const autoIniciando = useRef(false);
+  // ── Reanudar tras auto-actualización ──────────────────────────────────
+  // El ÚNICO arranque sin botón: la página se recargó sola por una versión
+  // nueva y el kiosco estaba corriendo. Cualquier otra apertura espera el toque.
+  const reanudarRef = useRef(null);
+  if (reanudarRef.current === null && typeof window !== 'undefined') {
+    try {
+      reanudarRef.current = sessionStorage.getItem(REANUDAR_TRAS_ACTUALIZAR) === '1';
+      sessionStorage.removeItem(REANUDAR_TRAS_ACTUALIZAR);
+    } catch { reanudarRef.current = false; }
+  }
   useEffect(() => {
-    // Sin esperar `ready`: el arranque corre en paralelo con los modelos y
-    // handleStart los espera internamente justo antes de analizar.
-    if (!configurado || running || detenido || autoIniciando.current) return;
-    autoIniciando.current = true;
-    Promise.resolve(handleStart()).finally(() => { autoIniciando.current = false; });
+    if (!reanudarRef.current || !configurado || running) return;
+    reanudarRef.current = false;
+    setDetenido(false);
+    handleStart();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configurado, running, detenido]);
+  }, [configurado]);
 
   // ── Bucle principal ───────────────────────────────────────────────────
   const startLoop = () => {
-    const landmarker = landmarkerRef.current;
-    // face-api NO se captura aquí: el bucle arranca antes de que termine de
-    // cargar, y guardarse el valor de este instante lo dejaría en null para
-    // siempre. Se lee del ref en el momento de la captura.
+    // Nunca dos bucles: el anterior se retira y este queda como el único vivo.
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    const miBucle = ++bucleRef.current;
+    // Ni MediaPipe ni face-api se capturan aquí: se leen de su ref en cada
+    // cuadro. face-api puede llegar después, y MediaPipe se reconstruye si el
+    // sistema le quita el contexto WebGL (mientras tanto el ref es null).
     const video = videoRef.current;
     let lastRun = 0;
     let faBusy = false;
@@ -798,7 +1140,14 @@ export default function KioskMode() {
       if (now - lastRun < interval) return;
       lastRun = now;
 
-      const res = landmarker.detectForVideo(video, now);
+      const landmarker = landmarkerRef.current;
+      if (!landmarker) return; // reconstruyéndose tras perder el WebGL
+      // mpTs(): el reloj único de MediaPipe (el calentamiento ya usó una marca).
+      const res = landmarker.detectForVideo(video, mpTs());
+      if (toqueRef.current) {
+        marca(`primer cuadro analizado, ${Math.round(performance.now() - toqueRef.current)} ms tras el toque`);
+        toqueRef.current = 0;
+      }
       const lm = res.faceLandmarks?.[0];
       const st = stateRef.current;
 
@@ -1068,8 +1417,9 @@ export default function KioskMode() {
     };
 
     const tick = () => {
+      if (bucleRef.current !== miBucle) return; // stopAll u otro bucle lo retiró
       try { step(); } catch (err) { console.error('Kiosco: error en un cuadro (el bucle continúa):', err); }
-      rafRef.current = requestAnimationFrame(tick);
+      if (bucleRef.current === miBucle) rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
   };
@@ -1119,6 +1469,12 @@ export default function KioskMode() {
     setResult({ kind: 'saving', name: person.name, time });
     setUi('ok');
     st.until = performance.now() + ESPERA_RED_MS; // margen fijo para la red
+    // Si mientras tanto el kiosco se detiene (pantalla apagada, otra app), la
+    // marcación se registra IGUAL —la persona ya fue reconocida— pero su
+    // resultado ya no toca la pantalla: pintarlo sobre el reposo dejaba la
+    // tarjeta en blanco y sin botón.
+    const gen = arranqueRef.current;
+    const vigente = () => arranqueRef.current === gen && runningRef.current;
 
     // Hasta 2,5 s de espera por la ubicación: la pantalla ya dice
     // «registrando…» y la hora oficial la pone el servidor, así que el
@@ -1128,6 +1484,19 @@ export default function KioskMode() {
       ? `[KioscoGPS] marcación de ${person.name} con ubicación ${gpsEnvio.lat.toFixed(7)}, ${gpsEnvio.lon.toFixed(7)} (±${Math.round(gpsEnvio.precision_m)} m, de hace ${Math.round((Date.now() - gpsEnvio.ts) / 1000)} s)`
       : `[KioscoGPS] marcación de ${person.name} SIN ubicación (sin permiso, sin señal, o fix de más de 2 min)`);
     registrarPaso(person.id, gpsEnvio).then((paso) => {
+      // Lo que no es pantalla va SIEMPRE, se haya detenido o no el kiosco.
+      if (paso.pendiente) setPendientes(paso.enCola);
+      // Salió sin ubicación: cuando llegue el fix (hasta 60 s), se adjunta.
+      // El servidor solo la acepta si la marcación sigue sin punto y es
+      // reciente; si no aplica, no pasa nada.
+      if (!gpsEnvio && paso.marcacion?.id && !paso.duplicado && !paso.errorConfig && !paso.pendiente && !esPrueba) {
+        const idMarcacion = paso.marcacion.id;
+        Promise.race([gpsPedidoRef.current ?? pedirGpsAhora() ?? Promise.resolve(null), new Promise((r) => setTimeout(() => r(null), 60000))])
+          .then((gps) => gps && adjuntarUbicacion(idMarcacion, gps))
+          .then((ok) => { if (ok) console.log(`[KioscoGPS] ubicación adjuntada después a la marcación de ${person.name}`); })
+          .catch(() => {});
+      }
+      if (!vigente()) return;
       const stNow = stateRef.current;
       stNow.until = performance.now() + RESULT_SHOW_MS;
 
@@ -1141,7 +1510,6 @@ export default function KioskMode() {
       if (paso.pendiente) {
         // Sin red: quedó en la cola local y se sincroniza sola.
         sonar('aviso');
-        setPendientes(paso.enCola);
         setResult({ kind: 'pending', name: person.name, time });
         setUi('ok');
         return;
@@ -1153,16 +1521,6 @@ export default function KioskMode() {
         setResult({ kind: 'dup', name: person.name, time, lastLabel, lastTime });
         setUi('ok');
         return;
-      }
-      // Salió sin ubicación: cuando llegue el fix (hasta 60 s), se adjunta.
-      // El servidor solo la acepta si la marcación sigue sin punto y es
-      // reciente; si no aplica, no pasa nada.
-      if (!gpsEnvio && paso.marcacion?.id && !esPrueba) {
-        const idMarcacion = paso.marcacion.id;
-        Promise.race([gpsPedidoRef.current ?? pedirGpsAhora() ?? Promise.resolve(null), new Promise((r) => setTimeout(() => r(null), 60000))])
-          .then((gps) => gps && adjuntarUbicacion(idMarcacion, gps))
-          .then((ok) => { if (ok) console.log(`[KioscoGPS] ubicación adjuntada después a la marcación de ${person.name}`); })
-          .catch(() => {});
       }
       // Entrada sube, salida baja: se distinguen de oído, sin mirar.
       sonar(paso.tipo === 'entrada' ? 'entrada' : 'salida');
@@ -1178,17 +1536,15 @@ export default function KioskMode() {
       });
       setUi('ok');
     }).catch((e) => {
-      const stNow = stateRef.current;
-      stNow.until = performance.now() + RESULT_SHOW_MS;
       if (e instanceof ClaveRechazada) {
         // El aparato fue revocado: parar y pedir reactivación (la cola local
-        // se conserva; son horas trabajadas).
-        stopAll();
-        olvidarActivacion();
-        setConfigurado(false);
-        setCfgError('Este dispositivo ya no está autorizado. Vuelve a registrarlo.');
+        // se conserva; son horas trabajadas). Va aunque ya estuviera detenido.
+        revocarDispositivo('Este dispositivo ya no está autorizado. Vuelve a registrarlo.');
         return;
       }
+      if (!vigente()) return;
+      const stNow = stateRef.current;
+      stNow.until = performance.now() + RESULT_SHOW_MS;
       sonar('error');
       setResult({ kind: 'no', name: person.name, time, reason: `No se pudo registrar: ${e.message}` });
       setUi('no');
@@ -1348,15 +1704,19 @@ export default function KioskMode() {
 
       {/* Estado 1 · Reposo (solo con el kiosco DETENIDO: corriendo, la base
           es la pantalla de cámara de arriba) */}
-      {(ui === 'idle' && !running) && (
+      {/* Con el kiosco detenido la cámara es invisible: el reposo se muestra
+          SIEMPRE, sea cual sea `ui` (un resultado tardío no puede taparlo). */}
+      {!running && (
         <div className="kiosk-idle" style={s.idle}>
           <div style={s.brand}>ASISTENC<span style={{ color: 'var(--accent)' }}>IA</span></div>
           <div style={s.clock}>{clock.time}</div>
           <div style={s.date}>{clock.date}</div>
           <div style={s.idleOval}>
-            <span className="ac-emoji ac-float" role="img" aria-label="esperando">⏳</span>
+            <span className="ac-emoji ac-float" role="img" aria-label="kiosco">👋</span>
           </div>
-          <div style={s.idleCta}>{running ? 'Acércate para marcar' : statusNote}</div>
+          {/* Sin estados de carga a la vista: los modelos cargan por debajo y
+              la pantalla solo ofrece el botón. Texto, únicamente si algo falló. */}
+          {(!configurado || arranqueFallo || loadError) && <div style={s.idleCta}>{statusNote}</div>}
 
           {/* Activación del dispositivo (una sola vez).
               El CÓDIGO va primero porque es el camino de la app de Android:
@@ -1396,13 +1756,19 @@ export default function KioskMode() {
             </div>
           )}
 
-          {/* El botón SOLO existe tras una pausa manual o un arranque fallido.
-              Mientras carga y arranca solo, el reposo dice «Espere un
-              momento…» sin nada que tocar. */}
-          {!running && configurado && (detenido || arranqueFallo) && !iniciando && (
-            <button style={s.startBtn} onClick={() => { setDetenido(false); handleStart(); }}>
-              {arranqueFallo && !detenido ? '↻ Reintentar' : '▶️ Iniciar kiosco'}
-            </button>
+          {/* Siempre se entra por aquí: al abrir la app y al volver a ella.
+              El botón está SIEMPRE habilitado: si se toca antes de que los
+              modelos terminen, la cámara enciende de una y el análisis empieza
+              apenas estén (handleStart los espera). Si su carga falló,
+              recargar es el único arreglo. */}
+          {hidratado && !running && configurado && (detenido || arranqueFallo) && !iniciando && (
+            loadError ? (
+              <button style={s.startBtn} onClick={() => window.location.reload()}>↻ Recargar</button>
+            ) : (
+              <button style={s.startBtn} onClick={() => { setDetenido(false); handleStart(); }}>
+                {arranqueFallo && !detenido ? '↻ Reintentar' : '▶️ Iniciar kiosco'}
+              </button>
+            )
           )}
           {/* Solo con el kiosco en pausa y solo si el administrador lo
               encendió para ESTE aparato (Ajustes → Dispositivos → Acceso al

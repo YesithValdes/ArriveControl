@@ -15,8 +15,15 @@
 
 import { V2_LENGTH } from '../utils/faceMath.js'
 
-const MODELO_URL = '/models/v2/w600k_mbf.onnx'
-const WASM_ORT = '/wasm/ort/'
+export const MODELO_URL = '/models/v2/w600k_mbf.onnx'
+// Ruta EXACTA del .wasm, no un prefijo. Con prefijo, onnxruntime descarta el
+// «pegamento» JS que ya trae su chunk y pide además ort-wasm-simd-threaded.mjs:
+// una vuelta de red EN FILA antes de poder pedir el .wasm. Con la ruta exacta
+// y 1 hilo usa el incluido (wasm-utils-import: isWasmOverridden && !isMultiThreaded).
+// El .wasm sigue saliendo de /wasm/ort/, así que la APK lo sigue interceptando.
+// OJO: el pegamento viene de node_modules y el binario de public/ — deben ser
+// la MISMA versión (lo vigila una prueba).
+export const WASM_ORT = '/wasm/ort/ort-wasm-simd-threaded.wasm'
 export const V2_LARGO = V2_LENGTH
 
 // Los umbrales viven en utils/faceMath.js (los comparte el servidor).
@@ -33,24 +40,80 @@ const PLANTILLA = [
 ]
 const LADO = 112
 
+// Modelo ONNX mínimo (y = Identity(x), 63 bytes; validado con ORT 1.29 en
+// Node y Chrome). InferenceSession.create es la ÚNICA puerta pública que
+// arranca el runtime wasm, y con una URL baja el modelo DESPUÉS de arrancarlo:
+// 13,6 MB en fila detrás del wasm. Con este modelo de juguete el runtime
+// arranca MIENTRAS ArcFace baja, y luego la sesión real se crea con los bytes.
+const MODELO_MINIMO = new Uint8Array([
+  8, 7, 58, 55, 10, 16, 10, 1, 120, 18, 1, 121, 34, 8, 73, 100, 101, 110, 116, 105, 116, 121, 18, 1, 103, 90, 15,
+  10, 1, 120, 18, 10, 10, 8, 8, 1, 18, 4, 10, 2, 8, 1, 98, 15, 10, 1, 121, 18, 10, 10, 8, 8, 1, 18, 4, 10, 2, 8, 1,
+  66, 2, 16, 13,
+])
+
 let sesionProm = null
 
-/** Carga perezosa y única del runtime + modelo (los cachea el service worker). */
+/**
+ * Bytes del modelo, con reintentos: un corte breve de red no debe mandar el
+ * kiosco al modelo viejo (KioskMode cae a face-api ante CUALQUIER fallo).
+ * Prioridad BAJA: lo que el kiosco necesita primero es MediaPipe (detección).
+ */
+async function bajarModelo() {
+  let ultimo
+  for (let intento = 1; intento <= 3; intento++) {
+    try {
+      const r = await fetch(MODELO_URL, { priority: 'low' })
+      if (!r.ok) throw new Error(`modelo v2: HTTP ${r.status}`)
+      return new Uint8Array(await r.arrayBuffer())
+    } catch (e) {
+      ultimo = e
+      if (intento < 3) await new Promise((ok) => setTimeout(ok, 700 * intento))
+    }
+  }
+  throw ultimo
+}
+
+/**
+ * Carga perezosa y única del runtime + modelo (los cachea el service worker).
+ *
+ * Tres esperas largas y ninguna depende de la otra: el chunk de onnxruntime,
+ * su .wasm (compilación en streaming) y los 13,6 MB del modelo. Van EN
+ * PARALELO; antes el modelo recién se pedía con el runtime listo.
+ */
 export function cargarV2() {
   if (!sesionProm) {
     sesionProm = (async () => {
+      const bytesProm = bajarModelo() // ① el modelo empieza a bajar YA
+      bytesProm.catch(() => {}) // sin rechazo huérfano si el import falla antes
       // La edición SOLO-WASM: la de por defecto trae WebGPU (JSEP) y pide
       // `ort-wasm-simd-threaded.jsep.mjs`, que no publicamos — en el panel
       // del celular reventaba con "no available backend found".
       const ort = await import('onnxruntime-web/wasm')
-      ort.env.wasm.wasmPaths = WASM_ORT
+      ort.env.wasm.wasmPaths = { wasm: WASM_ORT }
       // 1 hilo: los hilos exigen COOP/COEP (SharedArrayBuffer) que el sitio
       // no envía; con SIMD de un hilo el embedding tarda ~30-60 ms igual.
       ort.env.wasm.numThreads = 1
-      const sesion = await ort.InferenceSession.create(MODELO_URL, { executionProviders: ['wasm'] })
+      const opciones = { executionProviders: ['wasm'] } // el MISMO backend en las dos
+      const [, bytes] = await Promise.all([
+        // ② runtime (chunk + wasm en streaming) EN PARALELO con ①
+        ort.InferenceSession.create(MODELO_MINIMO, opciones).then((s) => s.release()),
+        bytesProm,
+      ])
+      const sesion = await ort.InferenceSession.create(bytes, opciones)
+      // ③ Primera inferencia en vacío: reservar memoria y dejar que V8
+      // optimice los kernels cuesta 1,3-2,5× una inferencia normal. Se paga
+      // aquí, con el botón esperando, y no en el parpadeo de la primera
+      // persona. Va DENTRO de la promesa: descriptorV2 espera a cargarV2, así
+      // que una captura real nunca corre a la par de este calentamiento.
+      try {
+        const vacio = new ort.Tensor('float32', new Float32Array(3 * LADO * LADO), [1, 3, LADO, LADO])
+        await sesion.run({ [sesion.inputNames[0]]: vacio })
+      } catch { /* sin calentamiento se paga en la primera captura, como antes */ }
       return { ort, sesion }
     })()
-    sesionProm.catch(() => { sesionProm = null }) // permitir reintento si falló
+    // OJO: un fallo al INICIAR el wasm queda pegado en onnxruntime hasta
+    // recargar. Reintentar solo sirve para fallos de red o de sesión.
+    sesionProm.catch(() => { sesionProm = null })
   }
   return sesionProm
 }
@@ -146,6 +209,15 @@ export function puntos5DeFaceApi(landmarks) {
   ]
 }
 
+// Una sesión de onnxruntime-web no admite dos `run` a la vez: se encolan. Solo
+// cambia el orden en el tiempo, nunca el resultado.
+let colaRun = Promise.resolve()
+const enFila = (fn) => {
+  const p = colaRun.then(fn, fn)
+  colaRun = p.catch(() => {})
+  return p
+}
+
 /**
  * Descriptor v2 (512 floats, normalizado L2) de un video/imagen ya detectado.
  * @param {HTMLVideoElement|HTMLImageElement|HTMLCanvasElement} media
@@ -171,7 +243,7 @@ export async function descriptorV2(media, puntos5) {
   }
 
   const tensor = new ort.Tensor('float32', entrada, [1, 3, LADO, LADO])
-  const salida = await sesion.run({ [sesion.inputNames[0]]: tensor })
+  const salida = await enFila(() => sesion.run({ [sesion.inputNames[0]]: tensor }))
   const crudo = salida[sesion.outputNames[0]].data
 
   // Normalizado L2: así la similitud coseno es un producto punto simple.

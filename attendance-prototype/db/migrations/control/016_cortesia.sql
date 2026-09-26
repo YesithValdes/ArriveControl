@@ -6,8 +6,10 @@
 -- columna aparte y no un `plan_id` más (el catálogo es lo que se vende).
 --
 -- SmartGadgets —la empresa dueña del producto— es la primera: su sistema de
--- gestión lee las horas por la API, y la API es de los planes pagos.
+-- gestión lee las horas por la API, y la API es de los planes pagos. En
+-- producción su esquema es `empresa_de_smartgadgets` (nació por el registro
+-- self-service, no por la migración a multiempresa): verificado en la base.
 alter table control.empresas
   add column if not exists cortesia boolean not null default false;
 
-update control.empresas set cortesia = true where esquema = 'smartgadgets';
+update control.empresas set cortesia = true where esquema = 'empresa_de_smartgadgets';

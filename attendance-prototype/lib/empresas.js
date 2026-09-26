@@ -188,7 +188,8 @@ export async function cabeOtroEmpleado(empresa) {
   // El tope sale del PLAN contratado. Un acuerdo puntual puede sobrescribirlo
   // con `limite_empleados`; durante la prueba rige el plan más pequeño, que es
   // suficiente para conocer el producto sin regalar el más grande.
-  const delPlan = planPorId(empresa.plan_id)?.empleados
+  // Cortesía: sin tope de plan (solo un acuerdo puntual lo limitaría).
+  const delPlan = empresa.cortesia === true ? null : planPorId(empresa.plan_id)?.empleados
   const limite = empresa?.limite_empleados
     ?? (delPlan !== undefined ? delPlan : (enPrueba(empresa) ? planPorId('esencial')?.empleados ?? null : null))
   if (limite == null) return { cabe: true, actuales: 0, limite: null }
@@ -209,7 +210,7 @@ export async function cabeOtroEmpleado(empresa) {
  */
 export async function cabeOtroUsuario(empresa) {
   if (!tieneAcceso(empresa)) return { cabe: false, actuales: 0, limite: 0, sinAcceso: true }
-  const delPlan = planPorId(empresa.plan_id)?.usuarios
+  const delPlan = empresa.cortesia === true ? null : planPorId(empresa.plan_id)?.usuarios
   const limite = empresa?.limite_usuarios
     ?? (delPlan !== undefined ? delPlan : (enPrueba(empresa) ? planPorId('esencial')?.usuarios ?? null : null))
   const { rows } = await control(

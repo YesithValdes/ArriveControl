@@ -1297,12 +1297,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick]);
 
-  // Mismo service worker del kiosco: cachea los modelos faciales (~26 MB con
-  // el runtime) en el navegador del panel — sin él, cada subida de foto desde
-  // un celular re-descarga todo, y en datos móviles suele fallar a mitad.
-  useEffect(() => {
-    navigator.serviceWorker?.register?.('/sw.js').catch(() => { /* sin SW funciona igual, solo más lento */ });
-  }, []);
+  // El service worker (caché de los modelos faciales, también para las fotos
+  // que se suben desde el panel) lo registra ServiceWorkerRegister en el
+  // layout, en todas las rutas. Un segundo registro aquí con '/sw.js' pisaba
+  // el '/sw.js?apk=1' de la app de Android en cada visita al panel.
 
   const data = useMemo(() => {
     const events = listJourneyEvents().sort((a, b) => a.ts.localeCompare(b.ts));

@@ -123,9 +123,13 @@ export async function miDispositivo() {
   }
 }
 
-export async function cargarRoster({ guardar = true } = {}) {
+export async function cargarRoster({ guardar = true, timeoutMs = 15000 } = {}) {
   try {
-    const r = await fetch('/api/empleados?rostros=1', { headers: headers() });
+    // Con tope de tiempo: en un Wi-Fi sin internet la petición podía quedarse
+    // colgada hasta que el navegador se rindiera. Al vencer cae a la copia.
+    const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(timeoutMs) : undefined;
+    const r = await fetch('/api/empleados?rostros=1', { headers: headers(), signal });
     let d = null;
     try { d = await r.json(); } catch { /* cuerpo vacío o no-JSON */ }
 
@@ -151,7 +155,13 @@ export async function cargarRoster({ guardar = true } = {}) {
       // Para exigir (si el flag está activo) que marque en SU sede.
       sedeId: e.sede_id || null, validarSede: e.validar_sede === true,
     }));
-    if (hasLS && guardar) localStorage.setItem(KEY_ROSTER, JSON.stringify(empleados));
+    if (hasLS && guardar) {
+      // La copia local es RESPALDO: si no cabe (cuota llena), el roster fresco
+      // se usa igual. Antes el error caía al catch de red y devolvía la copia
+      // vieja marcada «Sin conexión».
+      try { localStorage.setItem(KEY_ROSTER, JSON.stringify(empleados)); }
+      catch (err) { console.warn('[Kiosco] copia local del roster no guardada:', err?.name || err); }
+    }
     return { empleados, deCache: false };
   } catch (e) {
     if (e instanceof ClaveRechazada) throw e; // nunca se cae al caché por esto

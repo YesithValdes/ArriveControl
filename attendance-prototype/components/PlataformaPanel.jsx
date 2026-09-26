@@ -99,7 +99,8 @@ function suscripcion(e) {
  */
 function contrato(e) {
   const plan = planPorId(e.planId);
-  const base = plan ?? (enPrueba(e) ? planPorId('esencial') : null);
+  // Cortesía: sin topes de plan (como en lib/empresas.js); solo un acuerdo los fija.
+  const base = e.cortesia ? null : (plan ?? (enPrueba(e) ? planPorId('esencial') : null));
   const tope = e.limiteEmpleados ?? base?.empleados ?? null;
   const cupo = e.limiteUsuarios ?? base?.usuarios ?? null;
   return {

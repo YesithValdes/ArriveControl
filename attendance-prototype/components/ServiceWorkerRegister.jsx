@@ -11,6 +11,7 @@
  */
 
 import { useEffect } from 'react';
+import { modelosDesdeApk } from '../lib/modelosApk.js';
 
 export default function ServiceWorkerRegister() {
   useEffect(() => {
@@ -19,7 +20,15 @@ export default function ServiceWorkerRegister() {
     const isProd = process.env.NODE_ENV === 'production';
 
     if (isProd) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      // App de Android que ANUNCIA traer los modelos: salen de la APK
+      // (ModelosLocales.java). Con ?apk=1 el worker los deja pasar; si los
+      // interceptara, su fetch() iría por el ServiceWorkerClient de Capacitor
+      // a la red y la APK sobraría. Ver lib/modelosApk.js.
+      const enApk = modelosDesdeApk();
+      navigator.serviceWorker.register(enApk ? '/sw.js?apk=1' : '/sw.js').catch(() => {});
+      // Pide que el navegador no desaloje los ~40 MB de modelos bajo presión
+      // de espacio (en Chrome no pregunta nada: lo concede o no, en silencio).
+      if (!enApk) navigator.storage?.persist?.().catch(() => {});
     } else {
       // Desarrollo: limpiar cualquier SW/caché previo que esté causando 404s.
       navigator.serviceWorker.getRegistrations().then((regs) => {

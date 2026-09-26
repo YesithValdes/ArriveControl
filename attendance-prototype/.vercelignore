@@ -18,3 +18,9 @@ android/
 # scripts/empaquetar-modelos.mjs desde public/, que sí se sube
 android/app/src/main/assets/modelos/
 .next-verificacion/
+
+# Variables de entorno locales: llevan secretos (la conexión a la base, entre
+# otros) y no hacen falta — Vercel usa las que tiene configuradas el proyecto.
+# Sin esto, `.env.production` viajaba dentro del código del despliegue.
+.env
+.env.*

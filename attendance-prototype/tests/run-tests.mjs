@@ -1311,7 +1311,7 @@ const { default: vm } = await import('node:vm');
 const { readFileSync: leerArchivo } = await import('node:fs');
 
 /** Carga public/sw.js en un contexto falso y devuelve su manejador de fetch. */
-const cargarServiceWorker = () => {
+const cargarServiceWorker = ({ search = '', cachesRotos = false } = {}) => {
   let alHacerFetch = null;
   const unCache = { match: async () => null, put: async () => {} };
   const contexto = {
@@ -1319,10 +1319,13 @@ const cargarServiceWorker = () => {
       addEventListener: (tipo, fn) => { if (tipo === 'fetch') alHacerFetch = fn; },
       skipWaiting: () => {},
       clients: { claim: async () => {} },
-      location: { origin: 'https://app.test' },
+      location: { origin: 'https://app.test', search },
     },
-    caches: { open: async () => unCache, keys: async () => [], delete: async () => true },
-    fetch: async () => ({ ok: true, status: 200, clone: () => ({}) }),
+    caches: {
+      open: async () => { if (cachesRotos) throw new Error('UnknownError'); return unCache; },
+      keys: async () => [], delete: async () => true,
+    },
+    fetch: async () => ({ ok: true, status: 200, clone: () => ({}), deLaRed: true }),
     URL, console,
   };
   vm.createContext(contexto);
@@ -1383,6 +1386,105 @@ await test('lo demás va a la red, sin guardarse', () => {
   assert.equal(seGuarda('/manifest.webmanifest'), false);
   assert.equal(seGuarda('/icon-512.png'), false);
 });
+await test('en la APK (sw.js?apk=1) los modelos NO pasan por el worker: los sirve la APK', () => {
+  // Si el worker los interceptara, su fetch() iría por el ServiceWorkerClient
+  // de Capacitor a la red y los ~40 MB empaquetados no se usarían.
+  const enApk = cargarServiceWorker({ search: '?apk=1' });
+  const intercepta = (ruta) => {
+    let si = false;
+    enApk({ request: { method: 'GET', url: `https://app.test${ruta}`, mode: 'no-cors' }, respondWith: () => { si = true; } });
+    return si;
+  };
+  assert.equal(intercepta('/models/v2/w600k_mbf.onnx'), false);
+  assert.equal(intercepta('/wasm/vision_wasm_internal.wasm'), false);
+  assert.equal(intercepta('/_next/static/chunks/main-abc123.js'), true, 'los chunks sí se siguen guardando');
+});
+await test('si Cache Storage falla, el worker sirve de la red en vez de romper la carga', async () => {
+  const roto = cargarServiceWorker({ cachesRotos: true });
+  let respuesta = null;
+  roto({
+    request: { method: 'GET', url: 'https://app.test/models/face_landmarker.task', mode: 'cors' },
+    respondWith: (p) => { respuesta = p; },
+  });
+  const r = await respuesta;
+  assert.equal(r?.deLaRed, true, 'antes: net::ERR_FAILED y el kiosco sin modelos');
+});
+
+/**
+ * El worker COMPLETO (todos sus eventos) sobre una caché y una red falsas que
+ * anotan lo que se les pide. `claves`: lo que la caché ya tiene guardado.
+ */
+const montarServiceWorker = ({ search = '', claves = [], estado = 200 } = {}) => {
+  const oyentes = {};
+  const borradas = [];
+  const guardadas = [];
+  const pedidas = [];
+  const cache = {
+    match: async (u) => (claves.includes(typeof u === 'string' ? u : u.url) ? {} : null),
+    put: async (u) => { guardadas.push(typeof u === 'string' ? u : u.url); },
+    keys: async () => claves.map((url) => ({ url })),
+    delete: async (req) => { borradas.push(req.url); return true; },
+  };
+  const contexto = {
+    self: {
+      addEventListener: (tipo, fn) => { oyentes[tipo] = fn; },
+      skipWaiting: () => {},
+      clients: { claim: async () => {} },
+      location: { origin: 'https://app.test', search },
+    },
+    caches: { open: async () => cache, keys: async () => ['cr-inmutables-v1'], delete: async () => true },
+    fetch: async (url, opciones) => { pedidas.push({ url, opciones }); return { status: estado, clone: () => ({}) }; },
+    URL, console,
+  };
+  vm.createContext(contexto);
+  vm.runInContext(leerArchivo(new URL('../public/sw.js', import.meta.url), 'utf8'), contexto);
+  /** Despacha un evento y espera TODO lo que el worker encargó con waitUntil. */
+  const despachar = async (tipo, evento = {}) => {
+    const encargos = [];
+    let respuesta = null;
+    oyentes[tipo]({ ...evento, waitUntil: (p) => encargos.push(p), respondWith: (p) => { respuesta = p; } });
+    if (respuesta) await respuesta;
+    await Promise.all(encargos);
+    return encargos.length;
+  };
+  return { despachar, borradas, guardadas, pedidas };
+};
+const CLAVES = ['https://app.test/models/face_landmarker.task', 'https://app.test/wasm/vision_wasm_internal.wasm', 'https://app.test/_next/static/chunks/a.js'];
+
+await test('al activarse en la APK borra SOLO los modelos duplicados; en la web no borra nada', async () => {
+  const apk = montarServiceWorker({ search: '?apk=1', claves: CLAVES });
+  await apk.despachar('activate');
+  assert.deepEqual(apk.borradas.sort(), CLAVES.slice(0, 2).sort());
+  const web = montarServiceWorker({ claves: CLAVES });
+  await web.despachar('activate');
+  assert.deepEqual(web.borradas, [], 'en la web la caché de modelos es la que evita re-descargas');
+});
+await test('el respaldo de primera visita copia solo modelos del mismo origen, desde el caché HTTP', async () => {
+  const sw = montarServiceWorker({ claves: [CLAVES[0]] });
+  await sw.despachar('message', { data: { tipo: 'guardar-modelos', urls: [
+    'https://app.test/models/face_landmarker.task', // ya estaba: no se vuelve a pedir
+    'https://app.test/models/v2/w600k_mbf.onnx',
+    'https://app.test/wasm/ort/ort-wasm-simd-threaded.wasm',
+    'https://otro.test/models/x.task', // otro origen
+    'https://app.test/_next/static/chunks/a.js', // no es un modelo
+    'https://app.test/api/empleados', // jamás
+  ] } });
+  assert.deepEqual(sw.pedidas.map((p) => p.url), ['https://app.test/models/v2/w600k_mbf.onnx', 'https://app.test/wasm/ort/ort-wasm-simd-threaded.wasm']);
+  assert.ok(sw.pedidas.every((p) => p.opciones?.cache === 'force-cache'), 'se lee del caché HTTP, sin red');
+  assert.deepEqual(sw.guardadas, ['https://app.test/models/v2/w600k_mbf.onnx', 'https://app.test/wasm/ort/ort-wasm-simd-threaded.wasm']);
+  const apk = montarServiceWorker({ search: '?apk=1' });
+  await apk.despachar('message', { data: { tipo: 'guardar-modelos', urls: ['https://app.test/models/v2/w600k_mbf.onnx'] } });
+  assert.deepEqual(apk.pedidas, [], 'en la APK los modelos salen del disco: nada que copiar');
+});
+await test('guardar en caché va con waitUntil y solo con respuestas completas (200, no 206)', async () => {
+  const ok = montarServiceWorker();
+  const encargos = await ok.despachar('fetch', { request: { method: 'GET', url: 'https://app.test/models/v2/w600k_mbf.onnx', mode: 'cors' } });
+  assert.equal(encargos, 1, 'sin waitUntil el worker puede morir a mitad de escribir 14 MB');
+  assert.deepEqual(ok.guardadas, ['https://app.test/models/v2/w600k_mbf.onnx']);
+  const parcial = montarServiceWorker({ estado: 206 });
+  await parcial.despachar('fetch', { request: { method: 'GET', url: 'https://app.test/models/v2/w600k_mbf.onnx', mode: 'cors' } });
+  assert.deepEqual(parcial.guardadas, [], 'Cache API rechaza las 206');
+});
 await test('una pantalla nueva queda FUERA por defecto', () => {
   // La lista es de lo permitido, no de lo prohibido: si mañana alguien agrega
   // una pantalla con sesión, no entra al caché sin tocar esto a propósito.
@@ -1411,6 +1513,85 @@ for (const [archivo, componente] of COMPONENTES) {
     assert.deepEqual(usos, [], `se usa antes de declararse: ${usos.map((u) => `${u.nombre} (línea ${u.linea}, declarada en ${u.declarada})`).join('; ')}`);
   });
 }
+await test('kiosco: se entra siempre con «Iniciar kiosco» y salir de la app lo detiene', () => {
+  const k = leerCss(new URL('../components/KioskMode.jsx', import.meta.url), 'utf8');
+  assert.match(k, /const \[detenido, setDetenido\] = useState\(true\)/, 'al abrir, espera el botón');
+  assert.doesNotMatch(k, /autoIniciando/, 'ya no hay auto-arranque al abrir');
+  assert.match(k, /visibilityState !== 'hidden' \|\| !\(runningRef\.current \|\| iniciandoRef\.current\)\) return;\s*stopAll\(\);\s*setDetenido\(true\)/, 'ocultar la app detiene el kiosco, también a medio arranque');
+  assert.doesNotMatch(k, /Preparando/, 'el botón dice siempre «Iniciar kiosco», sin estados de carga');
+  // Los modelos cargan al evaluarse el módulo, no al tocar el botón.
+  const precarga = k.slice(k.indexOf('── Precarga de modelos'), k.indexOf('export default function KioskMode'));
+  assert.match(precarga, /cargarV2\(\)/);
+  assert.match(precarga, /FaceLandmarker\.createFromOptions/);
+  assert.match(precarga, /const precarga = typeof window === 'undefined' \? null : iniciarPrecarga\(\)/, 'arranca al evaluar el módulo (y no en el servidor)');
+  // La auto-actualización de un kiosco que corría no lo deja esperando el botón.
+  assert.match(k, /sessionStorage\.setItem\(REANUDAR_TRAS_ACTUALIZAR/);
+});
+await test('kiosco: los modelos bajan a la par de su runtime y MediaPipe se calienta antes del toque', () => {
+  const k = leerCss(new URL('../components/KioskMode.jsx', import.meta.url), 'utf8');
+  // El .task se pide YA y se entrega como lector (no modelAssetPath, que lo pedía en fila tras el wasm).
+  assert.match(k, /fetch\(MEDIAPIPE_MODEL, \{ priority: 'high', signal: tope \}\)/);
+  assert.match(k, /modelAssetBuffer: lector/);
+  assert.doesNotMatch(k, /modelAssetPath/, 'con modelAssetPath el .task se pide recién con el wasm listo');
+  // Calentamiento dentro del intento GPU→CPU, y TODA llamada con el reloj único.
+  assert.match(k, /lm\.detectForVideo\(gris, mpTs\(\)\)/);
+  const llamadas = [...k.matchAll(/\.detectForVideo\(([^;\n]*)\);/g)].map((m) => m[1]);
+  assert.ok(llamadas.length >= 2 && llamadas.every((a) => /, mpTs\(\)\)?$/.test(a)), `toda detectForVideo usa mpTs(): ${llamadas.join(' | ')}`);
+  // Espera por promesa, no por sondeo cada 120 ms.
+  assert.doesNotMatch(k, /setTimeout\(r, 120\)/);
+});
+await test('el service worker se registra en UN solo lugar (ServiceWorkerRegister)', async () => {
+  // Un segundo registro con otra URL ('/sw.js' vs '/sw.js?apk=1') reinstala el
+  // worker en cada visita: en la APK eso volvía a bajar ~48 MB de modelos.
+  const { readdirSync, statSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const raiz = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+  const fuera = [];
+  const recorrer = (dir) => {
+    for (const n of readdirSync(dir)) {
+      const p = join(dir, n);
+      if (statSync(p).isDirectory()) recorrer(p);
+      else if (/\.(jsx?|mjs)$/.test(n) && /serviceWorker\??\.register\s*\??\.?\s*\(/.test(leerCss(p, 'utf8')) && !p.endsWith('ServiceWorkerRegister.jsx')) fuera.push(p);
+    }
+  };
+  for (const d of ['components', 'app', 'lib', 'services']) recorrer(join(decodeURIComponent(raiz), d));
+  assert.deepEqual(fuera, [], `registran el worker por su cuenta: ${fuera.join(', ')}`);
+});
+await test('la APK solo se salta el worker si ANUNCIA traer los modelos del kiosco', async () => {
+  const { modelosDesdeApk, ARCHIVOS_DEL_KIOSCO } = await import('../lib/modelosApk.js');
+  const antes = globalThis.window;
+  try {
+    globalThis.window = {};
+    assert.equal(modelosDesdeApk(), false, 'cascarón sin anuncio (APK vieja o sin `npm run apk`)');
+    globalThis.window = { __modelosEnApk: ARCHIVOS_DEL_KIOSCO.slice(1) };
+    assert.equal(modelosDesdeApk(), false, 'le falta un archivo: el worker debe seguir guardándolos');
+    globalThis.window = { __modelosEnApk: [...ARCHIVOS_DEL_KIOSCO, '/models/otro.bin'] };
+    assert.equal(modelosDesdeApk(), true);
+  } finally {
+    globalThis.window = antes;
+  }
+  // Lo que el kiosco pide existe y está en la lista de empaquetado del APK.
+  const lista = leerCss(new URL('../scripts/empaquetar-modelos.mjs', import.meta.url), 'utf8');
+  for (const r of ARCHIVOS_DEL_KIOSCO) assert.ok(lista.includes(`'${r.slice(1)}'`), `${r} no se empaqueta`);
+});
+await test('ArcFace: el modelo baja a la par del runtime, con el pegamento incluido y calentado', () => {
+  const v2 = leerCss(new URL('../lib/rostroV2.js', import.meta.url), 'utf8');
+  const cuerpo = v2.slice(v2.indexOf('export function cargarV2'));
+  assert.ok(cuerpo.indexOf('bajarModelo()') < cuerpo.indexOf("import('onnxruntime-web/wasm')"), 'el modelo se pide ANTES de importar el runtime');
+  assert.match(cuerpo, /wasmPaths = \{ wasm: WASM_ORT \}/, 'ruta exacta: usa el pegamento del chunk');
+  assert.match(v2, /WASM_ORT = '\/wasm\/ort\/ort-wasm-simd-threaded\.wasm'/);
+  assert.match(cuerpo, /sesion\.run\(\{ \[sesion\.inputNames\[0\]\]: vacio \}\)/, 'inferencia de calentamiento');
+});
+await test('el .wasm de onnxruntime en public/ es el MISMO de node_modules (el pegamento sale del paquete)', async () => {
+  const { createHash } = await import('node:crypto');
+  const { readFileSync: leerBin } = await import('node:fs');
+  const md5 = (p) => createHash('md5').update(leerBin(new URL(p, import.meta.url))).digest('hex');
+  assert.equal(
+    md5('../public/wasm/ort/ort-wasm-simd-threaded.wasm'),
+    md5('../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm'),
+    'si se actualiza onnxruntime-web hay que copiar su .wasm a public/wasm/ort/',
+  );
+});
 await test('el detector ve un arreglo de dependencias que nombra algo declarado después', () => {
   // El caso real: el efecto arriba, la constante abajo.
   const roto = `export default function X() {
@@ -1574,7 +1755,7 @@ await test('la API (X-API-Key) es solo para quien tiene un plan pago vigente', a
   assert.ok(ep.cortesia && ep.pagada && ep.acceso && ep.diasRestantes === null, 'cortesía: sin días que contar');
   assert.ok(!apiHabilitada({ ...cortesia, estado: 'cancelada' }), 'cortesía cancelada: no');
   const mig = leerCss(new URL('../db/migrations/control/016_cortesia.sql', import.meta.url), 'utf8');
-  assert.match(mig, /set cortesia = true where esquema = 'smartgadgets'/, 'SmartGadgets nace de cortesía');
+  assert.match(mig, /set cortesia = true where esquema = 'empresa_de_smartgadgets'/, 'SmartGadgets (su esquema real en producción) nace de cortesía');
   // Todas las rutas con clave pasan por la misma puerta, y el panel no recibe la clave sin plan.
   for (const ruta of ['../lib/accesoHoras.js', '../app/api/empleados/[id]/avatar/route.js']) {
     const src = leerCss(new URL(ruta, import.meta.url), 'utf8');
