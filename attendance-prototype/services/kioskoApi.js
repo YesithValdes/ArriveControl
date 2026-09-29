@@ -21,7 +21,8 @@ const KEY_COLA = 'kiosco_cola_pendientes';
 const hasLS = typeof localStorage !== 'undefined';
 
 export const getSedeId = () => (hasLS ? localStorage.getItem(KEY_SEDE) || '' : '');
-export const setSedeId = (id) => hasLS && localStorage.setItem(KEY_SEDE, id);
+// Sin sede (null/'') se BORRA: un kiosco sin sede compara contra toda la empresa.
+export const setSedeId = (id) => hasLS && (id ? localStorage.setItem(KEY_SEDE, id) : localStorage.removeItem(KEY_SEDE));
 export const getDeviceKey = () => (hasLS ? localStorage.getItem(KEY_DEVICE) || '' : '');
 
 /**

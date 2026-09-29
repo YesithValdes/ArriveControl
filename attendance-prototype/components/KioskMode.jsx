@@ -93,6 +93,21 @@ function averageDescriptors(descs) {
   return out.map((v) => v / descs.length);
 }
 
+/**
+ * Contra quién compara ESTE kiosco: la gente de su sede y quien no tiene sede
+ * asignada. Un kiosco sin sede compara contra toda la empresa.
+ *
+ * Antes se comparaba contra todos y la sede solo se miraba después (y solo con
+ * «validar sede»). Con dos personas parecidas en sedes distintas, eso daba
+ * confusiones o rechazos por «ambiguo» que no tenían por qué pasar: ahora ni
+ * compiten. Se asume que la gente no rota entre sedes; quien sí rote debe
+ * quedar SIN sede asignada.
+ */
+export function candidatosDeLaSede(personas, sedeKiosco = getSedeId()) {
+  if (!sedeKiosco) return personas;
+  return personas.filter((p) => !p.sedeId || p.sedeId === sedeKiosco);
+}
+
 // ── Precarga de modelos (a nivel de MÓDULO, no del componente) ───────────
 //
 // El kiosco espera el toque de «Iniciar kiosco»; ese tiempo se usa para dejar
@@ -344,7 +359,15 @@ export default function KioskMode() {
   // (Ajustes → Dispositivos); se pregunta al arrancar y de nuevo al volver
   // a la pestaña, para que un cambio en el panel llegue sin reinstalar.
   const [accesoPanel, setAccesoPanel] = useState(false);
-  const leerAcceso = () => { miDispositivo().then((d) => setAccesoPanel(Boolean(d?.acceso_panel))); };
+  // También trae la SEDE del aparato: se puede cambiar desde el panel, y el
+  // kiosco compara solo contra la gente de su sede (ver candidatosDeLaSede).
+  // Antes guardaba la de la activación para siempre.
+  const leerAcceso = () => {
+    miDispositivo().then((d) => {
+      setAccesoPanel(Boolean(d?.acceso_panel));
+      if (d && 'sede_id' in d) setSedeId(d.sede_id || null);
+    });
+  };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (detenido && !esPrueba) leerAcceso(); }, [detenido]);
   const [cfgError, setCfgError] = useState(null);
@@ -374,7 +397,7 @@ export default function KioskMode() {
       // navegador pudo borrar el almacenamiento sin que nadie lo revocara).
       // Si sí, el kiosco sigue como si nada: las peticiones van con la cookie.
       miDispositivo().then((d) => {
-        if (d) { setConfigurado(true); setAccesoPanel(Boolean(d.acceso_panel)); }
+        if (d) { setConfigurado(true); setAccesoPanel(Boolean(d.acceso_panel)); if ('sede_id' in d) setSedeId(d.sede_id || null); }
         else setConfigurado(false);
       });
       return () => document.removeEventListener('visibilitychange', alVolver);
@@ -1008,6 +1031,14 @@ export default function KioskMode() {
       soltarCamara();
       return;
     }
+    // Hay gente con rostro, pero ninguna de la sede de este kiosco: decirlo
+    // tal cual, en vez de un kiosco que rechaza a todo el que se acerca.
+    if (candidatosDeLaSede(r.validos).length === 0) {
+      setStatusNote('Nadie con rostro registrado pertenece a la sede de este kiosco. Revisa la sede del aparato o la de los colaboradores en el panel.');
+      setArranqueFallo(true);
+      soltarCamara();
+      return;
+    }
     // Aprovechar el arranque para vaciar la cola offline pendiente.
     sincronizarCola().then(({ motivo }) => {
       setPendientes(pendientesEnCola());
@@ -1265,6 +1296,9 @@ export default function KioskMode() {
           // condición extra es tener al menos una captura de identidad, que
           // se toma en los cuadros previos con los ojos abiertos.
           if (st.sawOpen && st.sawClosed && (st.descsV2.length > 0 || st.descs.length > 0)) {
+            // Solo compiten las personas de la SEDE de este kiosco (y quienes no
+            // tienen sede): menos candidatos, menos parecidos que confundir.
+            const candidatos = candidatosDeLaSede(peopleRef.current);
             // ── Ranking v1 (euclidiano) ──
             // Solo existe en modo RESPALDO: en el camino normal no se calculan
             // descriptores v1, así que este ranking queda vacío y decide v2.
@@ -1275,7 +1309,7 @@ export default function KioskMode() {
             let best = { distance: Infinity, person: null };
             let segundo = { distance: Infinity, person: null };
             if (live) {
-              for (const p of peopleRef.current) {
+              for (const p of candidatos) {
                 let d = Infinity;
                 for (const desc of p.descriptores) {
                   const dd = euclideanDistance(desc, live);
@@ -1293,7 +1327,7 @@ export default function KioskMode() {
             let segundoV2 = { sim: -1, person: null };
             let conV2 = 0;
             if (liveV2) {
-              for (const p of peopleRef.current) {
+              for (const p of candidatos) {
                 const dvs = p.descriptoresV2 ?? [];
                 if (dvs.length === 0) continue;
                 conV2 += 1;
@@ -1315,8 +1349,8 @@ export default function KioskMode() {
             // avisa, porque es un empleado que el kiosco nunca reconocerá
             // hasta que lo vuelvan a registrar.
             const modoV2 = liveV2 !== null && conV2 > 0;
-            if (modoV2 && conV2 < peopleRef.current.length) {
-              console.warn(`[Kiosco] ${peopleRef.current.length - conV2} empleado(s) sin rostro v2: no pueden ser reconocidos. Vuelve a registrarlos.`);
+            if (modoV2 && conV2 < candidatos.length) {
+              console.warn(`[Kiosco] ${candidatos.length - conV2} empleado(s) sin rostro v2: no pueden ser reconocidos. Vuelve a registrarlos.`);
             }
 
             let reconocido, ambiguo, ganador, distanciaMostrada;
@@ -1365,7 +1399,7 @@ export default function KioskMode() {
             // El log CONCLUYE lleva SIEMPRE ambas mediciones: es la materia
             // prima para calibrar los umbrales v2 con datos reales.
             const logV2 = liveV2
-              ? `v2(${conV2}/${peopleRef.current.length}) 1º ${bestV2.person?.name ?? '—'} sim ${bestV2.sim >= 0 ? bestV2.sim.toFixed(3) : '—'} · 2º ${segundoV2.sim >= 0 ? `${segundoV2.person?.name} ${segundoV2.sim.toFixed(3)}` : '—'}`
+              ? `v2(${conV2}/${candidatos.length}) 1º ${bestV2.person?.name ?? '—'} sim ${bestV2.sim >= 0 ? bestV2.sim.toFixed(3) : '—'} · 2º ${segundoV2.sim >= 0 ? `${segundoV2.person?.name} ${segundoV2.sim.toFixed(3)}` : '—'}`
               : 'v2 sin captura';
             console.log(`[Kiosco⏱] CONCLUYE a los ${total} ms — modo ${modoV2 ? 'V2' : 'V1'} · primero terminó: ${primero} (ojos: ${Math.round(st.tParpadeo ?? -1)} ms, rostro: ${Math.round(st.tCaptura ?? -1)} ms${st.reintento ? ', con reintento' : ''}) · v1 1º ${best.person?.name} ${best.distance.toFixed(3)} · 2º ${segundo.person?.name ?? '—'} ${Number.isFinite(segundo.distance) ? segundo.distance.toFixed(3) : '—'} · margen ${Number.isFinite(margen) ? margen.toFixed(3) : '∞'} · ${logV2}`);
 

@@ -1592,6 +1592,22 @@ await test('el .wasm de onnxruntime en public/ es el MISMO de node_modules (el p
     'si se actualiza onnxruntime-web hay que copiar su .wasm a public/wasm/ort/',
   );
 });
+await test('kiosco: solo compiten las personas de su sede (y las que no tienen sede)', () => {
+  const k = leerCss(new URL('../components/KioskMode.jsx', import.meta.url), 'utf8');
+  // La función, evaluada tal cual está escrita en el componente.
+  const cuerpo = k.slice(k.indexOf('export function candidatosDeLaSede'), k.indexOf('// ── Precarga de modelos'));
+  const candidatosDeLaSede = new Function(`${cuerpo.replace('export function', 'function').replace('= getSedeId()', "= ''")}; return candidatosDeLaSede;`)();
+  const gente = [{ n: 'Ana', sedeId: 'N' }, { n: 'Beto', sedeId: 'C' }, { n: 'Caro', sedeId: null }];
+  assert.deepEqual(candidatosDeLaSede(gente, 'N').map((p) => p.n), ['Ana', 'Caro'], 'la de Centro no compite en Norte');
+  assert.deepEqual(candidatosDeLaSede(gente, '').map((p) => p.n), ['Ana', 'Beto', 'Caro'], 'kiosco sin sede: todos');
+  // El ranking usa los candidatos, no el roster entero.
+  const inicio = k.indexOf('const candidatos = candidatosDeLaSede(peopleRef.current)');
+  const decision = k.slice(inicio, k.indexOf('concludeResult(', inicio));
+  assert.equal((decision.match(/for \(const p of candidatos\)/g) ?? []).length, 2, 'v1 y v2 recorren solo los candidatos');
+  assert.doesNotMatch(decision, /for \(const p of peopleRef\.current\)/);
+  // La sede del aparato se relee del servidor (se puede cambiar en el panel).
+  assert.match(k, /if \(d && 'sede_id' in d\) setSedeId\(d\.sede_id \|\| null\)/);
+});
 await test('exportar a Excel: un .xlsx válido, con números como números', async () => {
   const { crearXlsx, letraColumna } = await import('../lib/xlsx.js');
   const zlib = await import('node:zlib');
