@@ -100,29 +100,50 @@ export const letraColumna = (i) => {
   return s
 }
 
-/** El XML de una hoja: encabezado en negrilla y fijo, números como números. */
-function hojaXml(filas) {
-  // Estilos: 0 normal · 1 encabezado en negrilla · 2 número con 2 decimales.
-  const celda = (v, r, c) => {
+/**
+ * Estilos con nombre para las celdas: una celda puede ser un valor suelto o
+ * `{ v, e }`, con `e` uno de estos. Los índices son los de <cellXfs>.
+ */
+const ESTILOS = { normal: 0, encabezado: 1, decimal: 2, entrada: 3, salida: 4, nombre: 5, vacio: 0 }
+
+/**
+ * El XML de una hoja: encabezado con los colores de la marca y fijo, bordes
+ * suaves, números como números.
+ * @param {{ columnasFijas?: number }} [opciones]  columnas fijas a la izquierda al hacer scroll
+ */
+function hojaXml(filas, { columnasFijas = 0 } = {}) {
+  const celda = (bruto, r, c) => {
     const ref = `${letraColumna(c)}${r + 1}`
-    if (v === null || v === undefined || v === '') return ''
+    const { v, e } = bruto !== null && typeof bruto === 'object' ? bruto : { v: bruto }
+    const vacio = v === null || v === undefined || v === ''
+    // Una celda vacía CON estilo se escribe igual: así el bloque de color
+    // del colaborador y la cuadrícula del día salen continuos.
+    if (vacio && !e) return ''
+    let estilo = r === 0 ? 1 : (e ? ESTILOS[e] ?? 0 : 0)
+    if (vacio) return `<c r="${ref}"${estilo ? ` s="${estilo}"` : ''}/>`
     if (typeof v === 'number' && Number.isFinite(v)) {
-      const estilo = r === 0 ? 1 : (Number.isInteger(v) ? 0 : 2)
+      if (r > 0 && !e && !Number.isInteger(v)) estilo = 2
       return `<c r="${ref}"${estilo ? ` s="${estilo}"` : ''}><v>${v}</v></c>`
     }
-    return `<c r="${ref}" t="inlineStr"${r === 0 ? ' s="1"' : ''}><is><t xml:space="preserve">${esc(v)}</t></is></c>`
+    return `<c r="${ref}" t="inlineStr"${estilo ? ` s="${estilo}"` : ''}><is><t xml:space="preserve">${esc(v)}</t></is></c>`
   }
+  const texto = (x) => String((x !== null && typeof x === 'object' ? x.v : x) ?? '')
   const columnas = Math.max(0, ...filas.map((f) => f.length))
   const anchos = Array.from({ length: columnas }, (_, c) => {
-    const largo = Math.max(...filas.map((f) => String(f[c] ?? '').length))
-    return Math.min(45, Math.max(8, largo + 2))
+    const largo = Math.max(...filas.map((f) => texto(f[c]).length))
+    return Math.min(45, Math.max(10, largo + 3))
   })
+  const fijas = columnasFijas > 0
+  const panel = fijas
+    ? `<pane xSplit="${columnasFijas}" ySplit="1" topLeftCell="${letraColumna(columnasFijas)}2" activePane="bottomRight" state="frozen"/>`
+    : '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-    + '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+    + `<sheetViews><sheetView workbookViewId="0" showGridLines="0">${panel}</sheetView></sheetViews>`
+    + '<sheetFormatPr defaultRowHeight="18" customHeight="1"/>'
     + (anchos.length ? `<cols>${anchos.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>` : '')
     + '<sheetData>'
-    + filas.map((f, r) => `<row r="${r + 1}">${f.map((v, c) => celda(v, r, c)).join('')}</row>`).join('')
+    + filas.map((f, r) => `<row r="${r + 1}"${r === 0 ? ' ht="26" customHeight="1"' : ''}>${f.map((v, c) => celda(v, r, c)).join('')}</row>`).join('')
     + '</sheetData></worksheet>'
 }
 
@@ -143,7 +164,8 @@ function nombresDeHoja(nombres) {
 
 /**
  * Libro de VARIAS hojas.
- * @param {Array<{ nombre: string, filas: Array<Array<string|number|null|undefined>> }>} hojas
+ * @param {Array<{ nombre: string, filas: Array<Array<any>>, columnasFijas?: number }>} hojas
+ *   cada celda es un valor o `{ v, e }` con `e` un nombre de ESTILOS
  * @returns {Uint8Array} el .xlsx
  */
 export function crearLibro(hojas) {
@@ -173,16 +195,35 @@ export function crearLibro(hojas) {
       + '</Relationships>') },
     { nombre: 'xl/styles.xml', datos: x('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-      + '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
-      + '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
-      + '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+      // Colores de la marca: marino para el encabezado; verde para entradas
+      // y naranja para salidas (los mismos del cajón de marcaciones).
+      + '<fonts count="5">'
+      + '<font><sz val="11"/><color rgb="FF14233A"/><name val="Calibri"/></font>'
+      + '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>'
+      + '<font><b/><sz val="11"/><color rgb="FF13294B"/><name val="Calibri"/></font>'
+      + '<font><sz val="11"/><color rgb="FF1B6B4F"/><name val="Calibri"/></font>'
+      + '<font><sz val="11"/><color rgb="FF9A4B12"/><name val="Calibri"/></font>'
+      + '</fonts>'
+      + '<fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+      + '<fill><patternFill patternType="solid"><fgColor rgb="FF13294B"/><bgColor indexed="64"/></patternFill></fill>'
+      + '<fill><patternFill patternType="solid"><fgColor rgb="FFE3F5EE"/><bgColor indexed="64"/></patternFill></fill>'
+      + '<fill><patternFill patternType="solid"><fgColor rgb="FFFDEBD9"/><bgColor indexed="64"/></patternFill></fill>'
+      + '<fill><patternFill patternType="solid"><fgColor rgb="FFEAF1F8"/><bgColor indexed="64"/></patternFill></fill>'
+      + '</fills>'
+      + '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>'
+      + '<border><left style="thin"><color rgb="FFD5DEEA"/></left><right style="thin"><color rgb="FFD5DEEA"/></right>'
+      + '<top style="thin"><color rgb="FFD5DEEA"/></top><bottom style="thin"><color rgb="FFD5DEEA"/></bottom><diagonal/></border></borders>'
       + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-      + '<cellXfs count="3">'
-      + '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
-      + '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
-      + '<xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
-      + '</cellXfs></styleSheet>') },
-    ...hojas.map((h, i) => ({ nombre: `xl/worksheets/sheet${i + 1}.xml`, datos: x(hojaXml(h.filas)) })),
+      // 0 normal · 1 encabezado · 2 decimal · 3 entrada · 4 salida · 5 nombre (ver ESTILOS).
+      + '<cellXfs count="6">'
+      + '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"><alignment vertical="center"/></xf>'
+      + '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
+      + '<xf numFmtId="2" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"><alignment vertical="center"/></xf>'
+      + '<xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
+      + '<xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
+      + '<xf numFmtId="0" fontId="2" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>'
+      + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>') },
+    ...hojas.map((h, i) => ({ nombre: `xl/worksheets/sheet${i + 1}.xml`, datos: x(hojaXml(h.filas, h)) })),
   ])
 }
 

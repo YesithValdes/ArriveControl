@@ -1779,9 +1779,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     for (const p of marcasPorPersona()) {
       const alto = Math.max(1, ...[...p.dias.values()].map((m) => m.length));
       for (let i = 0; i < alto; i++) {
-        filas.push([i === 0 ? p.nombre : '', ...dias.map((d) => {
+        // Con color: el bloque del colaborador en azul claro, entradas en
+        // verde y salidas en naranja; las celdas vacías conservan la cuadrícula.
+        filas.push([{ v: i === 0 ? p.nombre : '', e: 'nombre' }, ...dias.map((d) => {
           const m = p.dias.get(d)?.[i];
-          return m ? `${m.tipo} ${m.hora}` : '';
+          return m ? { v: `${m.tipo} ${m.hora}`, e: m.tipo === 'Entrada' ? 'entrada' : 'salida' } : { v: '', e: 'vacio' };
         })]);
       }
     }
@@ -1790,12 +1792,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // «Por colaborador»: la hoja de resumen y una hoja por persona con sus marcaciones.
   const hojasPorColaborador = () => [
-    { nombre: 'Resumen', filas: filasReporte() },
+    { nombre: 'Resumen', columnasFijas: 1, filas: filasReporte().map((f, i) => (i === 0 ? f : [{ v: f[0], e: 'nombre' }, ...f.slice(1)])) },
     ...marcasPorPersona().map((p) => ({
       nombre: p.nombre,
       filas: [
         ['Fecha', 'Día', 'Tipo', 'Hora', 'Sede'],
-        ...[...p.dias.entries()].flatMap(([d, marcas]) => marcas.map((m) => [d, etiquetaDia(d), m.tipo, m.hora, p.sede])),
+        ...[...p.dias.entries()].flatMap(([d, marcas]) => marcas.map((m) => {
+          const e = m.tipo === 'Entrada' ? 'entrada' : 'salida';
+          return [d, etiquetaDia(d), { v: m.tipo, e }, { v: m.hora, e }, p.sede];
+        })),
       ],
     })),
   ];
@@ -1808,7 +1813,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     if (formato === 'dias' || formato === 'colaboradores') {
       const { crearLibro } = await import('../lib/xlsx.js');
       const hojas = formato === 'dias'
-        ? [{ nombre: `Marcaciones por día`, filas: filasPorDia() }]
+        ? [{ nombre: 'Marcaciones por día', columnasFijas: 1, filas: filasPorDia() }]
         : hojasPorColaborador();
       descargar(new Blob([crearLibro(hojas)], { type: XLSX_TIPO }), `${formato === 'dias' ? 'marcaciones_por_dia' : 'reporte_por_colaborador'}_${repFrom}_a_${repTo}.xlsx`);
       showToast('Reporte de Excel descargado');
@@ -1817,7 +1822,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     if (formato === 'xlsx') {
       const { crearXlsx } = await import('../lib/xlsx.js');
       descargar(
-        new Blob([crearXlsx(filas, { hoja: `Horas ${repFrom} a ${repTo}` })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+        new Blob([crearXlsx(filas.map((f, i) => (i === 0 ? f : [{ v: f[0], e: 'nombre' }, ...f.slice(1)])), { hoja: `Horas ${repFrom} a ${repTo}` })], { type: XLSX_TIPO }),
         `${base}.xlsx`,
       );
       showToast('Reporte de Excel descargado');
