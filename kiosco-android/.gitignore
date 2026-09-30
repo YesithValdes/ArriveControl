@@ -1,0 +1,14 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+# Los modelos se copian de attendance-prototype/public/models al compilar
+# (tarea copiarModelos): versionarlos aquí sería guardarlos dos veces.
+app/src/main/assets/modelos/
+# Llave de firma: es la identidad de la app en Play Store.
+keystore.properties
+*.jks
+*.keystore
