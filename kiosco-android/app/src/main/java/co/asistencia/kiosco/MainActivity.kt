@@ -59,18 +59,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
-import kotlin.math.abs
+import java.io.IOException
 
-// Mismas reglas de decisión que la web (utils/faceMath.js).
-private const val UMBRAL = 0.45f
-private const val MARGEN = 0.08f
 
 /**
  * Kiosco AsistencIA, con el mismo diseño del kiosco web:
- *   Activación (código) → Reposo («Iniciar kiosco») → Cámara.
+ *   Activación (código) → Aviso del rostro (1ª vez) → Reposo («Iniciar kiosco») → Cámara.
  *
- * Etapa actual: reconoce pero NO marca todavía (como el «modo prueba» de la
- * web). El botón ⓘ muestra los números para la prueba de compatibilidad.
+ * El reconocimiento (parpadeo + identidad) vive en [Motor]; aquí se marca en
+ * el servidor, con cola sin red, GPS y sonidos. ⓘ tiene el «modo prueba».
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,6 +79,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(primary = Colores.Marino), typography = Tipografia) {
                 var clave by remember { mutableStateOf(almacen.clave) }
+                var aviso by remember { mutableStateOf(almacen.avisoAceptado) }
                 Surface(Modifier.fillMaxSize(), color = Colores.Fondo) {
                     if (clave == null) {
                         Activacion(onListo = { a ->
@@ -89,6 +87,8 @@ class MainActivity : ComponentActivity() {
                             almacen.sedeId = a.sedeId
                             clave = a.clave
                         })
+                    } else if (!aviso) {
+                        AvisoRostro(onAceptar = { almacen.avisoAceptado = true; aviso = true })
                     } else {
                         Kiosco(almacen, onRevocado = { almacen.olvidar(); clave = null })
                     }
@@ -165,50 +165,113 @@ private fun BotonPrincipal(texto: String, habilitado: Boolean = true, onClick: (
     ) { Text(texto, fontSize = 17.sp, fontWeight = FontWeight.Bold) }
 }
 
-// ── Kiosco: reposo + cámara ─────────────────────────────────────────────
-private enum class Encuadre { SIN_CARA, LEJOS, CERCA, GIRADO, OK }
-
-private data class Lectura(
-    val encuadre: Encuadre = Encuadre.SIN_CARA,
-    val primero: Persona? = null, val simPrimero: Float = -1f,
-    val segundo: Persona? = null, val simSegundo: Float = -1f,
-    val ms: Long = 0,
-) {
-    val margen get() = if (simSegundo >= 0) simPrimero - simSegundo else 1f
-    val acepta get() = encuadre == Encuadre.OK && simPrimero >= UMBRAL && margen >= MARGEN
-    val evaluada get() = encuadre == Encuadre.OK && simPrimero >= 0
+// ── Aviso del uso del rostro (primera vez; lo exige Play Store) ─────────
+@Composable
+private fun AvisoRostro(onAceptar: () -> Unit) {
+    Box(Modifier.fillMaxSize().safeDrawingPadding().padding(22.dp), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.fillMaxWidth().shadow(18.dp, RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp))
+                .background(Color.White).padding(26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            LogoApp(56.dp)
+            Spacer(Modifier.height(14.dp))
+            Text("Uso del rostro", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = Colores.Tinta)
+            Spacer(Modifier.height(12.dp))
+            listOf(
+                "Este kiosco usa la cámara para reconocer el rostro de los colaboradores y registrar su asistencia.",
+                "No se guardan fotos ni video: cada imagen se convierte en números en el aparato y se descarta.",
+                "Para marcar se verifica que haya una persona real (parpadeo).",
+                "Si la empresa lo exige, se registra la ubicación del aparato en cada marcación.",
+            ).forEach {
+                Text("•  $it", fontSize = 14.sp, color = Colores.Tinta, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            Text("Más información en la política de tratamiento de datos de AsistencIA.", fontSize = 12.sp, color = Colores.Apagado, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(18.dp))
+            BotonPrincipal("Entendido, continuar", onClick = onAceptar)
+        }
+    }
 }
+
+// ── Kiosco: reposo + cámara ─────────────────────────────────────────────
+private const val ROSTER_CADA_MS = 10 * 60_000L
+private const val COLA_CADA_MS = 60_000L
 
 @Composable
 private fun Kiosco(almacen: Almacen, onRevocado: () -> Unit) {
     val ctx = LocalContext.current
     val dueño = LocalLifecycleOwner.current
-    var permiso by remember { mutableStateOf(ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
-    val pedirPermiso = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permiso = it }
+    val api = remember { Api { almacen.clave } }
+    val cola = remember { Cola(ctx) }
+    val ubicacion = remember { Ubicacion(ctx) }
     var corriendo by remember { mutableStateOf(false) }
     var detector by remember { mutableStateOf<Detector?>(null) }
     var rostro by remember { mutableStateOf<Rostro?>(null) }
     var gente by remember { mutableStateOf<List<Persona>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var info by remember { mutableStateOf("") }
+    var pendientes by remember { mutableIntStateOf(cola.pendientes()) }
+    val revocar by rememberUpdatedState(onRevocado)
+
+    fun hayCamara() = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    val pedirPermisos = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
+        // La cámara es imprescindible; la ubicación, opcional (el servidor decide si la exige).
+        if (r[Manifest.permission.CAMERA] == true || hayCamara()) corriendo = true
+        else error = "Sin permiso de cámara no se puede reconocer a nadie."
+    }
+
+    /** Roster: de la red si se puede (y se guarda), si no la última copia. */
+    suspend fun cargarRoster() {
+        val crudo = try {
+            api.rosterCrudo().also { almacen.rosterCrudo = it }
+        } catch (e: ClaveRechazada) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("Kiosco", "roster sin red; se usa la copia", e)
+            almacen.rosterCrudo ?: throw IllegalStateException("Sin conexión y sin copia del roster. Conéctate a internet una vez.")
+        }
+        val todos = withContext(Dispatchers.Default) { Api.personasDe(crudo) }
+        val sede = almacen.sedeId
+        // Mismo filtro que la web: su sede + quienes no tienen sede.
+        gente = todos.filter { it.rostrosV2.isNotEmpty() && (sede == null || it.sedeId == null || it.sedeId == sede) }
+        error = if (gente.isEmpty()) "Nadie con rostro registrado pertenece a la sede de este kiosco." else null
+        info = "compiten ${gente.size} de ${todos.size}"
+    }
 
     // Precarga: modelos y roster mientras la pantalla espera el toque (como la web).
     LaunchedEffect(Unit) {
-        val api = Api { almacen.clave }
-        runCatching {
-            // La sede se relee: se puede cambiar desde el panel.
-            api.yo()?.let { d -> almacen.sedeId = d.optString("sede_id").ifBlank { null }?.takeIf { it != "null" } }
+        try {
+            // La sede se relee: se puede cambiar desde el panel. Sin red, se queda la guardada.
+            try {
+                api.yo()?.let { d -> almacen.sedeId = d.optString("sede_id").ifBlank { null }?.takeIf { it != "null" } }
+            } catch (e: IOException) { Log.w("Kiosco", "yo() sin red", e) }
             val t0 = System.currentTimeMillis()
             val (d, r) = withContext(Dispatchers.Default) { Detector.crear(ctx) to Rostro(ctx) }
-            val t1 = System.currentTimeMillis()
-            val todos = api.roster()
-            val sede = almacen.sedeId
-            // Mismo filtro que la web: su sede + quienes no tienen sede.
-            gente = todos.filter { it.rostrosV2.isNotEmpty() && (sede == null || it.sedeId == null || it.sedeId == sede) }
             detector = d; rostro = r
-            info = "Modelos en ${t1 - t0} ms · MediaPipe ${d.delegado} · compiten ${gente.size} de ${todos.size}"
-            if (gente.isEmpty()) error = "Nadie con rostro registrado pertenece a la sede de este kiosco."
-        }.onFailure { e -> if (e is ClaveRechazada) onRevocado() else error = e.message ?: "No se pudo preparar el kiosco." }
+            val modelos = "Modelos en ${System.currentTimeMillis() - t0} ms · MediaPipe ${d.delegado}"
+            cargarRoster()
+            info = "$modelos · $info"
+            while (true) {
+                delay(ROSTER_CADA_MS)
+                runCatching { cargarRoster(); info = "$modelos · $info" }.onFailure { if (it is ClaveRechazada) throw it }
+            }
+        } catch (e: ClaveRechazada) {
+            revocar()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            error = e.message ?: "No se pudo preparar el kiosco."
+        }
+    }
+
+    // Cola sin red: se reenvía al abrir y cada minuto.
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching { api.sincronizar(cola) }.onSuccess { m -> m?.let { Log.i("Kiosco", "cola: $it") } }
+            pendientes = cola.pendientes()
+            delay(COLA_CADA_MS)
+        }
     }
 
     // Salir de la app detiene el kiosco (como la web): al volver, «Iniciar kiosco».
@@ -220,21 +283,29 @@ private fun Kiosco(almacen: Almacen, onRevocado: () -> Unit) {
     DisposableEffect(Unit) { onDispose { detector?.close(); rostro?.close() } }
 
     val d = detector; val r = rostro
-    if (corriendo && permiso && d != null && r != null) {
-        PantallaCamara(dueño, d, r, gente, info, onDetener = { corriendo = false })
+    if (corriendo && hayCamara() && d != null && r != null) {
+        PantallaCamara(
+            dueño, d, r, almacen, api, cola, ubicacion,
+            gente = { gente }, info = info, pendientes = pendientes,
+            alCambiarCola = { pendientes = cola.pendientes() },
+            onRevocado = revocar,
+            onDetener = { corriendo = false },
+        )
     } else {
         Reposo(
             error = error,
+            listo = d != null && r != null,
             onIniciar = {
-                if (!permiso) pedirPermiso.launch(Manifest.permission.CAMERA)
-                corriendo = true
+                val faltan = listOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
+                    .filter { ContextCompat.checkSelfPermission(ctx, it) != PackageManager.PERMISSION_GRANTED }
+                if (faltan.isEmpty()) corriendo = true else pedirPermisos.launch(faltan.toTypedArray())
             },
         )
     }
 }
 
 @Composable
-private fun Reposo(error: String?, onIniciar: () -> Unit) {
+private fun Reposo(error: String?, listo: Boolean, onIniciar: () -> Unit) {
     var ahora by remember { mutableStateOf(Date()) }
     LaunchedEffect(Unit) { while (true) { ahora = Date(); delay(1000) } }
     val es = Locale.forLanguageTag("es-CO")
@@ -255,20 +326,81 @@ private fun Reposo(error: String?, onIniciar: () -> Unit) {
         ) { Text("👋", fontSize = 58.sp, modifier = Modifier.graphicsLayer { translationY = dy }) }
         Spacer(Modifier.weight(1f))
         error?.let { Text(it, color = Colores.Rojo, fontSize = 14.sp, textAlign = TextAlign.Center); Spacer(Modifier.height(14.dp)) }
-        BotonPrincipal("▶  Iniciar kiosco", onClick = onIniciar)
+        // Sin «Preparando…»: el botón solo se activa cuando los modelos ya cargaron.
+        BotonPrincipal("▶  Iniciar kiosco", habilitado = listo, onClick = onIniciar)
         Spacer(Modifier.height(16.dp))
         Text("🔐 No se guardan fotos", fontSize = 12.sp, color = Colores.Apagado)
     }
 }
 
+private val horaLocal get() = SimpleDateFormat("h:mm a", Locale.forLanguageTag("es-CO"))
+private fun horaDe(iso: String): String = Iso.leer(iso)?.let { horaLocal.format(it) } ?: ""
+private fun duracion(seg: Long): String = "${seg / 3600} h ${(seg % 3600) / 60} min"
+
 @Composable
 private fun PantallaCamara(
-    dueño: androidx.lifecycle.LifecycleOwner, d: Detector, r: Rostro, gente: List<Persona>, info: String, onDetener: () -> Unit,
+    dueño: androidx.lifecycle.LifecycleOwner, d: Detector, r: Rostro,
+    almacen: Almacen, api: Api, cola: Cola, ubicacion: Ubicacion,
+    gente: () -> List<Persona>, info: String, pendientes: Int,
+    alCambiarCola: () -> Unit, onRevocado: () -> Unit, onDetener: () -> Unit,
 ) {
-    var lectura by remember { mutableStateOf(Lectura()) }
+    val alcance = rememberCoroutineScope()
+    var vista by remember { mutableStateOf(Vista()) }
     var detalle by remember { mutableStateOf(false) }
+    var prueba by remember { mutableStateOf(almacen.modoPrueba) }
+    var ultimaDecision by remember { mutableStateOf("") }
     var ahora by remember { mutableStateOf(Date()) }
     LaunchedEffect(Unit) { while (true) { ahora = Date(); delay(1000) } }
+    val gente by rememberUpdatedState(gente)
+
+    val motor = remember {
+        lateinit var m: Motor
+        m = Motor(
+            detector = d, rostro = r,
+            candidatos = { gente() },
+            sedeKiosco = { almacen.sedeId },
+            alIniciarReto = { alcance.launch { ubicacion.pedir() } },
+            alConcluir = { ok, persona, motivo, met, sim ->
+                ultimaDecision = "1º ${persona?.nombre ?: "—"} ${met.v2Mejor?.let { "%.3f".format(it) } ?: "—"} · 2º ${met.v2Segundo?.let { "%.3f".format(it) } ?: "—"}"
+                alcance.launch {
+                    val sede = almacen.sedeId
+                    val pruebaAhora = almacen.modoPrueba
+                    if (!pruebaAhora) launch { api.intento(persona?.id, ok, sim >= 0, sede, met.v2Mejor, met.v2Segundo) }
+                    if (!ok) { Sonidos.sonar("error"); return@launch }
+                    val p = persona!!
+                    if (pruebaAhora) { m.mostrar(Resultado.Prueba(p.nombre, sim)); Sonidos.sonar("aviso"); return@launch }
+                    val gps = ubicacion.fresca()
+                    val res = try {
+                        when (val paso = api.marcar(p.id, sede, gps, cola)) {
+                            is Paso.Registrado -> {
+                                // La ubicación llegó tarde: se adjunta después (mejor esfuerzo).
+                                if (gps == null && paso.id != null && ubicacion.hayPermiso()) launch {
+                                    ubicacion.pedir(8_000)?.let { api.adjuntarUbicacion(paso.id, it) }
+                                }
+                                Resultado.Marcado(p.nombre, paso.tipo != "salida", horaDe(paso.tsIso), paso.trabajadoHoySeg)
+                            }
+                            is Paso.Duplicado -> Resultado.YaRegistrada(p.nombre, paso.tipoUltima, horaDe(paso.tsUltimaIso))
+                            is Paso.EnCola -> Resultado.Pendiente(p.nombre)
+                            is Paso.Error -> Resultado.Rechazo(paso.mensaje, p.nombre)
+                        }
+                    } catch (e: ClaveRechazada) {
+                        onRevocado(); return@launch
+                    } catch (e: Exception) {
+                        Resultado.Rechazo(e.message ?: "No se pudo registrar.", p.nombre)
+                    }
+                    alCambiarCola()
+                    m.mostrar(res)
+                    Sonidos.sonar(when (res) {
+                        is Resultado.Marcado -> if (res.entrada) "entrada" else "salida"
+                        is Resultado.Rechazo -> "error"
+                        else -> "aviso"
+                    })
+                }
+            },
+            publicar = { vista = it },
+        )
+        m
+    }
 
     Column(Modifier.fillMaxSize().background(Color.White).safeDrawingPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         // Cabecera: marca y «Detener», como la web.
@@ -283,25 +415,31 @@ private fun PantallaCamara(
         }
         Spacer(Modifier.height(12.dp))
 
-        // El cuadro de la cámara, con TODOS los mensajes dentro.
-        val colorBorde = when {
-            lectura.acepta -> Colores.Menta
-            lectura.evaluada -> Colores.Rojo
-            else -> Color.Transparent
+        val res = vista.resultado
+        val tono: Color? = when (res) {
+            null -> null
+            is Resultado.Registrando -> Colores.Azul
+            is Resultado.Marcado -> if (res.entrada) Colores.Menta else Colores.Azul
+            is Resultado.Rechazo -> Colores.Rojo
+            else -> Colores.Azul
         }
         Box(
             Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color(0xFF2A3B52))
-                .border(3.dp, colorBorde, RoundedCornerShape(24.dp)),
+                .border(3.dp, tono ?: Color.Transparent, RoundedCornerShape(24.dp)),
         ) {
-            Camara(dueño) { bmp -> lectura = analizar(d, r, gente, bmp, lectura) }
-            GuiaYEsquinas(ok = lectura.encuadre == Encuadre.OK)
+            Camara(dueño) { bmp -> motor.cuadro(bmp, System.currentTimeMillis()) }
+            GuiaYEsquinas(ok = vista.fase == Fase.RETO && vista.encuadre == Encuadre.OK)
 
-            // Velo del veredicto + icono.
-            val veloAlfa by animateFloatAsState(if (lectura.evaluada) 1f else 0f, tween(250), label = "velo")
-            if (veloAlfa > 0f) {
-                Box(Modifier.matchParentSize().graphicsLayer { alpha = veloAlfa }.background((if (lectura.acepta) Colores.Menta else Colores.Rojo).copy(alpha = .38f)), contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(86.dp).clip(CircleShape).background(if (lectura.acepta) Colores.Menta else Colores.Rojo), contentAlignment = Alignment.Center) {
-                        Text(if (lectura.acepta) "✓" else "✕", color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Bold, fontFamily = Sora)
+            // Velo del resultado + icono.
+            val veloAlfa by animateFloatAsState(if (tono != null) 1f else 0f, tween(250), label = "velo")
+            if (veloAlfa > 0f && tono != null) {
+                Box(Modifier.matchParentSize().graphicsLayer { alpha = veloAlfa }.background(tono.copy(alpha = .38f)), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(86.dp).clip(CircleShape).background(tono), contentAlignment = Alignment.Center) {
+                        if (res is Resultado.Registrando) CircularProgressIndicator(color = Color.White, strokeWidth = 4.dp, modifier = Modifier.size(44.dp))
+                        else Text(
+                            when (res) { is Resultado.Rechazo -> "✕"; is Resultado.Pendiente -> "⏱"; is Resultado.YaRegistrada -> "i"; else -> "✓" },
+                            color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Bold, fontFamily = Sora,
+                        )
                     }
                 }
             }
@@ -309,12 +447,11 @@ private fun PantallaCamara(
             // Arriba: instrucción y reloj.
             Box(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0x99000000), Color.Transparent))).padding(12.dp)) {
                 Pildora(
-                    when (lectura.encuadre) {
-                        Encuadre.SIN_CARA -> "AsistencIA"
-                        Encuadre.LEJOS -> "Acércate un poco"
-                        Encuadre.CERCA -> "Aléjate un poco"
-                        Encuadre.GIRADO -> "Mira de frente"
-                        Encuadre.OK -> "Mira de frente"
+                    when {
+                        vista.fase != Fase.RETO -> "AsistencIA"
+                        vista.encuadre == Encuadre.LEJOS -> "Acércate un poco"
+                        vista.encuadre == Encuadre.CERCA -> "Aléjate un poco"
+                        else -> "Parpadea 👁"
                     },
                     Modifier.align(Alignment.CenterStart),
                 )
@@ -322,74 +459,66 @@ private fun PantallaCamara(
             }
 
             // Centro: invitación cuando no hay nadie.
-            if (lectura.encuadre == Encuadre.SIN_CARA) {
+            if (vista.fase == Fase.REPOSO) {
                 Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Acércate para marcar", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, fontFamily = Sora)
                     Text("tu asistencia", color = Color.White.copy(alpha = .85f), fontSize = 17.sp, fontFamily = Sora)
                 }
             }
 
-            // Abajo: el veredicto (etiqueta de color, nombre, detalle).
-            if (lectura.evaluada) {
+            // Abajo: avance del reto, o el resultado.
+            if (vista.fase == Fase.RETO) {
+                val avance by animateFloatAsState(vista.progreso / 100f, tween(200), label = "avance")
+                LinearProgressIndicator(
+                    progress = { avance }, color = Colores.Menta, trackColor = Color.White.copy(alpha = .25f),
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(22.dp).height(6.dp).clip(RoundedCornerShape(50)),
+                )
+            }
+            if (res != null && tono != null) {
+                val (etiqueta, titulo, sub) = when (res) {
+                    is Resultado.Registrando -> Triple("Reconocido", res.nombre, "Registrando…")
+                    is Resultado.Marcado -> if (res.entrada) Triple("ENTRADA", "¡Hola, ${res.nombre}!", "Entrada registrada · ${res.hora}")
+                        else Triple("SALIDA", "¡Hasta luego, ${res.nombre}!", "Salida registrada · ${res.hora}" + (res.trabajadoSeg?.let { " · hoy ${duracion(it)}" } ?: ""))
+                    is Resultado.YaRegistrada -> Triple("Ya registrada", res.nombre, "Tu ${res.tipo.ifBlank { "marcación" }} de las ${res.hora} ya quedó registrada")
+                    is Resultado.Pendiente -> Triple("Sin conexión", res.nombre, "Se enviará sola al volver la red")
+                    is Resultado.Prueba -> Triple("Modo prueba", "Sí, es ${res.nombre}", "No se registró ninguna marcación")
+                    is Resultado.Rechazo -> Triple("✕ No registrado", res.nombre ?: "Intenta de nuevo", res.motivo)
+                }
                 Column(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                         .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))).padding(18.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Etiqueta(if (lectura.acepta) "Reconocido" else "✕ No reconocido", if (lectura.acepta) Colores.Azul else Colores.Rojo)
+                    Etiqueta(etiqueta, tono)
                     Spacer(Modifier.height(6.dp))
-                    Text(
-                        if (lectura.acepta) "Sí, es ${lectura.primero?.nombre}" else "Intenta de nuevo",
-                        color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, fontFamily = Sora,
-                    )
-                    Text(
-                        if (lectura.acepta) "Modo prueba: no se registró ninguna marcación" else "Mírate de frente, con buena luz",
-                        color = Color.White.copy(alpha = .85f), fontSize = 13.sp, fontFamily = Sora,
-                    )
+                    Text(titulo, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, fontFamily = Sora)
+                    Text(sub, color = Color.White.copy(alpha = .85f), fontSize = 13.sp, textAlign = TextAlign.Center, fontFamily = Sora)
                 }
             }
         }
 
-        // Pie: privacidad y el botón de detalles para la prueba de compatibilidad.
+        // Pie: privacidad, pendientes y el panel ⓘ.
         Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("🔐 No se guardan fotos", fontSize = 12.sp, color = Colores.Apagado, modifier = Modifier.weight(1f))
+            Text(
+                if (pendientes > 0) "⏱ $pendientes por enviar" else "🔐 No se guardan fotos",
+                fontSize = 12.sp, color = Colores.Apagado, modifier = Modifier.weight(1f),
+            )
+            if (prueba) Etiqueta("PRUEBA", Colores.Apagado)
             TextButton(onClick = { detalle = !detalle }) { Text(if (detalle) "Ocultar ⓘ" else "ⓘ", color = Colores.Apagado) }
         }
         if (detalle) {
-            val l = lectura
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Modo prueba (no registra marcaciones)", fontSize = 13.sp, color = Colores.Tinta, modifier = Modifier.weight(1f))
+                Switch(checked = prueba, onCheckedChange = { prueba = it; almacen.modoPrueba = it })
+            }
             Text(
-                "1º ${l.primero?.nombre ?: "—"} ${"%.3f".format(l.simPrimero)} · 2º ${l.segundo?.nombre ?: "—"} ${"%.3f".format(l.simSegundo)}\n" +
-                    "margen ${"%.3f".format(l.margen)} (mín. $MARGEN) · umbral $UMBRAL · descriptor ${l.ms} ms\n$info",
+                "$ultimaDecision\numbral $UMBRAL · margen $MARGEN · $info",
                 fontSize = 11.sp, color = Colores.Apagado,
             )
         }
     }
 }
 
-/** Una lectura: MediaPipe → encuadre → (si está bien) ArcFace y ranking. */
-private fun analizar(d: Detector, r: Rostro, gente: List<Persona>, bmp: Bitmap, antes: Lectura): Lectura {
-    val cuadro = d.analizar(bmp)
-    val lm = cuadro.landmarks ?: return Lectura()
-    // Ancho de la cara (mejilla a mejilla, 234 ↔ 454) respecto al cuadro.
-    val ancho = abs(lm[454].x() - lm[234].x())
-    val encuadre = when {
-        ancho < 0.22f -> Encuadre.LEJOS
-        ancho > 0.80f -> Encuadre.CERCA
-        abs(cuadro.yaw) >= 12f -> Encuadre.GIRADO // solo de frente, como la web
-        else -> Encuadre.OK
-    }
-    if (encuadre != Encuadre.OK) return Lectura(encuadre)
-    val t = System.currentTimeMillis()
-    val vivo = r.descriptor(bmp, Rostro.puntos5(lm, bmp.width, bmp.height))
-    // Por persona gana su rostro MÁS parecido (nunca el promedio).
-    val ranking = gente.map { p -> p to p.rostrosV2.maxOf { Rostro.similitud(it, vivo) } }.sortedByDescending { it.second }
-    return Lectura(
-        encuadre = Encuadre.OK,
-        primero = ranking.getOrNull(0)?.first, simPrimero = ranking.getOrNull(0)?.second ?: -1f,
-        segundo = ranking.getOrNull(1)?.first, simSegundo = ranking.getOrNull(1)?.second ?: -1f,
-        ms = System.currentTimeMillis() - t,
-    )
-}
 
 @Composable
 private fun Pildora(texto: String, modifier: Modifier = Modifier) {
@@ -459,7 +588,7 @@ private fun Camara(dueño: androidx.lifecycle.LifecycleOwner, alAnalizar: (Bitma
             analisis.setAnalyzer(hilo) { img ->
                 try {
                     val ahora = System.currentTimeMillis()
-                    if (ahora - ultimo[0] >= 150) {
+                    if (ahora - ultimo[0] >= 60) {
                         ultimo[0] = ahora
                         val crudo = img.toBitmap()
                         // Derecha y SIN espejo: igual que el video crudo del navegador.
