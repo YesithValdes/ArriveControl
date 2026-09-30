@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Logo AsistencIA (public/icon.svg): rostro cuya mandíbula es un chulo. -->
+    <group android:scaleX="1.2" android:scaleY="1.2" android:translateX="15.6" android:translateY="16.8">
+        <path android:strokeColor="#FFFFFF" android:strokeWidth="4.6"
+            android:pathData="M32,11 a20,20 0 1,1 0,40 a20,20 0 1,1 0,-40 z" />
+        <path android:fillColor="#FFFFFF" android:pathData="M25.4,24.8 a2.2,2.2 0 1,1 0,4.4 a2.2,2.2 0 1,1 0,-4.4 z" />
+        <path android:fillColor="#FFFFFF" android:pathData="M38.6,24.8 a2.2,2.2 0 1,1 0,4.4 a2.2,2.2 0 1,1 0,-4.4 z" />
+        <path android:strokeColor="#9FDCCA" android:strokeWidth="4.4" android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M24,37 l6,6 l12,-12" />
+    </group>
+</vector>
