@@ -1745,10 +1745,75 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
+  // Marcaciones del rango agrupadas por persona (orden alfabético) y, dentro,
+  // por día de Colombia. Hora y día salen en hora de Colombia (UTC−5).
+  const marcasPorPersona = () => {
+    const horaCol = (iso) => {
+      const [h, m] = new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(11, 16).split(':');
+      return `${Number(h)}:${m}`;
+    };
+    const personas = new Map();
+    for (const e of [...repDatos.eventos].sort((a, b) => a.ts.localeCompare(b.ts))) {
+      if (!personas.has(e.personId)) personas.set(e.personId, { nombre: e.personName, sede: e.sede || '', dias: new Map() });
+      const p = personas.get(e.personId);
+      const d = dayKey(e.ts);
+      if (!p.dias.has(d)) p.dias.set(d, []);
+      p.dias.get(d).push({ tipo: e.type === 'in' ? 'Entrada' : 'Salida', hora: horaCol(e.ts) });
+    }
+    return [...personas.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  };
+  // Los días del período, incluso los que nadie marcó (la tabla no salta fechas).
+  const diasDelPeriodo = () => {
+    const dias = [];
+    for (let t = Date.parse(`${repFrom}T12:00:00Z`); t <= Date.parse(`${repTo}T12:00:00Z`); t += 86400000) dias.push(new Date(t).toISOString().slice(0, 10));
+    return dias;
+  };
+  const etiquetaDia = (d) => new Date(`${d}T12:00:00Z`)
+    .toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).replace(/\./g, '');
+
+  // «Por día»: una columna por día; cada colaborador ocupa tantas filas como
+  // marcaciones tuvo en su día más movido, una marcación por celda hacia abajo.
+  const filasPorDia = () => {
+    const dias = diasDelPeriodo();
+    const filas = [['Colaborador', ...dias.map(etiquetaDia)]];
+    for (const p of marcasPorPersona()) {
+      const alto = Math.max(1, ...[...p.dias.values()].map((m) => m.length));
+      for (let i = 0; i < alto; i++) {
+        filas.push([i === 0 ? p.nombre : '', ...dias.map((d) => {
+          const m = p.dias.get(d)?.[i];
+          return m ? `${m.tipo} ${m.hora}` : '';
+        })]);
+      }
+    }
+    return filas;
+  };
+
+  // «Por colaborador»: la hoja de resumen y una hoja por persona con sus marcaciones.
+  const hojasPorColaborador = () => [
+    { nombre: 'Resumen', filas: filasReporte() },
+    ...marcasPorPersona().map((p) => ({
+      nombre: p.nombre,
+      filas: [
+        ['Fecha', 'Día', 'Tipo', 'Hora', 'Sede'],
+        ...[...p.dias.entries()].flatMap(([d, marcas]) => marcas.map((m) => [d, etiquetaDia(d), m.tipo, m.hora, p.sede])),
+      ],
+    })),
+  ];
+
   const exportar = async (formato) => {
     setExportMenu(false);
     const filas = filasReporte();
     const base = `reporte_${repFrom}_a_${repTo}`;
+    const XLSX_TIPO = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    if (formato === 'dias' || formato === 'colaboradores') {
+      const { crearLibro } = await import('../lib/xlsx.js');
+      const hojas = formato === 'dias'
+        ? [{ nombre: `Marcaciones por día`, filas: filasPorDia() }]
+        : hojasPorColaborador();
+      descargar(new Blob([crearLibro(hojas)], { type: XLSX_TIPO }), `${formato === 'dias' ? 'marcaciones_por_dia' : 'reporte_por_colaborador'}_${repFrom}_a_${repTo}.xlsx`);
+      showToast('Reporte de Excel descargado');
+      return;
+    }
     if (formato === 'xlsx') {
       const { crearXlsx } = await import('../lib/xlsx.js');
       descargar(
@@ -3368,6 +3433,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <div className="export-opciones" role="menu">
                       <button role="menuitem" onClick={() => exportar('xlsx')}>
                         <b>Excel (.xlsx)</b><small>Números listos para sumar</small>
+                      </button>
+                      <button role="menuitem" onClick={() => exportar('dias')} disabled={repDatos.eventos.length === 0}>
+                        <b>Excel por día</b><small>Cada día en una columna, con sus marcaciones</small>
+                      </button>
+                      <button role="menuitem" onClick={() => exportar('colaboradores')} disabled={repDatos.eventos.length === 0}>
+                        <b>Excel por colaborador</b><small>Una hoja por persona</small>
                       </button>
                       <button role="menuitem" onClick={() => exportar('csv')}>
                         <b>CSV</b><small>Para otros sistemas o nómina</small>

@@ -1,5 +1,5 @@
 /**
- * lib/xlsx.js — Un libro de Excel (.xlsx) de UNA hoja, sin dependencias.
+ * lib/xlsx.js — Libros de Excel (.xlsx) de una o varias hojas, sin dependencias.
  *
  * Un .xlsx es un zip con unos pocos XML (Office Open XML). Para una tabla
  * plana —el reporte de horas— basta con eso, y así no se carga una librería
@@ -100,13 +100,8 @@ export const letraColumna = (i) => {
   return s
 }
 
-/**
- * @param {Array<Array<string|number|null|undefined>>} filas  la primera es el encabezado
- * @param {{ hoja?: string }} [opciones]
- * @returns {Uint8Array} el .xlsx
- */
-export function crearXlsx(filas, { hoja = 'Reporte' } = {}) {
-  const enc = new TextEncoder()
+/** El XML de una hoja: encabezado en negrilla y fijo, números como números. */
+function hojaXml(filas) {
   // Estilos: 0 normal · 1 encabezado en negrilla · 2 número con 2 decimales.
   const celda = (v, r, c) => {
     const ref = `${letraColumna(c)}${r + 1}`
@@ -117,27 +112,51 @@ export function crearXlsx(filas, { hoja = 'Reporte' } = {}) {
     }
     return `<c r="${ref}" t="inlineStr"${r === 0 ? ' s="1"' : ''}><is><t xml:space="preserve">${esc(v)}</t></is></c>`
   }
-  const anchos = (filas[0] ?? []).map((_, c) => {
+  const columnas = Math.max(0, ...filas.map((f) => f.length))
+  const anchos = Array.from({ length: columnas }, (_, c) => {
     const largo = Math.max(...filas.map((f) => String(f[c] ?? '').length))
     return Math.min(45, Math.max(8, largo + 2))
   })
-  const hojaXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
     + '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
     + (anchos.length ? `<cols>${anchos.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>` : '')
     + '<sheetData>'
     + filas.map((f, r) => `<row r="${r + 1}">${f.map((v, c) => celda(v, r, c)).join('')}</row>`).join('')
     + '</sheetData></worksheet>'
-  const nombreHoja = esc(String(hoja).replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || 'Hoja1')
+}
 
+/**
+ * Nombres de hoja válidos para Excel: sin \ / ? * [ ] :, máximo 31
+ * caracteres y SIN repetirse (dos «Ana María» serían un libro dañado).
+ */
+function nombresDeHoja(nombres) {
+  const usados = new Set()
+  return nombres.map((n, i) => {
+    const base = String(n ?? '').replace(/[\/?*[\]:]/g, ' ').trim().slice(0, 31) || `Hoja${i + 1}`
+    let nombre = base
+    for (let k = 2; usados.has(nombre.toLowerCase()); k++) nombre = `${base.slice(0, 31 - String(k).length - 1)} ${k}`
+    usados.add(nombre.toLowerCase())
+    return nombre
+  })
+}
+
+/**
+ * Libro de VARIAS hojas.
+ * @param {Array<{ nombre: string, filas: Array<Array<string|number|null|undefined>> }>} hojas
+ * @returns {Uint8Array} el .xlsx
+ */
+export function crearLibro(hojas) {
+  const enc = new TextEncoder()
   const x = (s) => enc.encode(s)
+  const nombres = nombresDeHoja(hojas.map((h) => h.nombre))
   return zipAlmacenado([
     { nombre: '[Content_Types].xml', datos: x('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
       + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
       + '<Default Extension="xml" ContentType="application/xml"/>'
       + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-      + '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+      + hojas.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')
       + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
       + '</Types>') },
     { nombre: '_rels/.rels', datos: x('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -146,11 +165,11 @@ export function crearXlsx(filas, { hoja = 'Reporte' } = {}) {
       + '</Relationships>') },
     { nombre: 'xl/workbook.xml', datos: x('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-      + `<sheets><sheet name="${nombreHoja}" sheetId="1" r:id="rId1"/></sheets></workbook>`) },
+      + `<sheets>${nombres.map((n, i) => `<sheet name="${esc(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>`) },
     { nombre: 'xl/_rels/workbook.xml.rels', datos: x('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-      + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
-      + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+      + hojas.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')
+      + `<Relationship Id="rId${hojas.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`
       + '</Relationships>') },
     { nombre: 'xl/styles.xml', datos: x('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
@@ -163,6 +182,16 @@ export function crearXlsx(filas, { hoja = 'Reporte' } = {}) {
       + '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
       + '<xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
       + '</cellXfs></styleSheet>') },
-    { nombre: 'xl/worksheets/sheet1.xml', datos: x(hojaXml) },
+    ...hojas.map((h, i) => ({ nombre: `xl/worksheets/sheet${i + 1}.xml`, datos: x(hojaXml(h.filas)) })),
   ])
+}
+
+/**
+ * Libro de UNA hoja.
+ * @param {Array<Array<string|number|null|undefined>>} filas  la primera es el encabezado
+ * @param {{ hoja?: string }} [opciones]
+ * @returns {Uint8Array} el .xlsx
+ */
+export function crearXlsx(filas, { hoja = 'Reporte' } = {}) {
+  return crearLibro([{ nombre: hoja, filas }])
 }

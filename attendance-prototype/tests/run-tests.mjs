@@ -1642,6 +1642,23 @@ await test('exportar a Excel: un .xlsx válido, con números como números', asy
   const panel = leerCss(new URL('../components/AdminPanel.jsx', import.meta.url), 'utf8');
   assert.match(panel, /exportar\('xlsx'\)/);
   assert.match(panel, /exportar\('csv'\)/);
+  assert.match(panel, /exportar\('dias'\)/);
+  assert.match(panel, /exportar\('colaboradores'\)/);
+});
+await test('Excel de varias hojas: una por colaborador, nombres válidos y sin repetir', async () => {
+  const { crearLibro } = await import('../lib/xlsx.js');
+  const bytes = crearLibro([
+    { nombre: 'Resumen', filas: [['A'], [1]] },
+    { nombre: 'Ana María', filas: [['Fecha'], ['2026-09-01']] },
+    { nombre: 'Ana María', filas: [['Fecha'], ['2026-09-02']] },
+    { nombre: 'Nombre larguísimo de una persona: con [raros]', filas: [['x']] },
+  ]);
+  const txt = new TextDecoder().decode(bytes);
+  for (let i = 1; i <= 4; i++) assert.ok(txt.includes(`xl/worksheets/sheet${i}.xml`), `falta la hoja ${i}`);
+  const nombres = [...txt.matchAll(/<sheet name="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(nombres.slice(0, 3), ['Resumen', 'Ana María', 'Ana María 2']);
+  assert.ok(nombres[3].length <= 31 && !/[[\]:]/.test(nombres[3]), 'nombre saneado');
+  assert.match(txt, /Id="rId5"[^>]*styles/, 'los estilos van después de las hojas');
 });
 await test('el detector ve un arreglo de dependencias que nombra algo declarado después', () => {
   // El caso real: el efecto arriba, la constante abajo.
