@@ -18,6 +18,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.material3.Text
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.ExperimentalTextApi
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -26,6 +32,30 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+/** Montserrat: la letra de la marca en toda la app (como la web). */
+@OptIn(ExperimentalTextApi::class)
+val Montserrat = FontFamily(listOf(300, 400, 500, 600, 700, 800).map { w ->
+    Font(R.font.montserrat, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
+})
+
+/** Sora: la letra de los mensajes DENTRO del cuadro de la cámara (como la web). */
+@OptIn(ExperimentalTextApi::class)
+val Sora = FontFamily(listOf(400, 600, 700, 800).map { w ->
+    Font(R.font.sora, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
+})
+
+/** Todos los estilos de Material con Montserrat. */
+val Tipografia: Typography = Typography().let { t ->
+    fun TextStyle.m() = copy(fontFamily = Montserrat)
+    Typography(
+        displayLarge = t.displayLarge.m(), displayMedium = t.displayMedium.m(), displaySmall = t.displaySmall.m(),
+        headlineLarge = t.headlineLarge.m(), headlineMedium = t.headlineMedium.m(), headlineSmall = t.headlineSmall.m(),
+        titleLarge = t.titleLarge.m(), titleMedium = t.titleMedium.m(), titleSmall = t.titleSmall.m(),
+        bodyLarge = t.bodyLarge.m(), bodyMedium = t.bodyMedium.m(), bodySmall = t.bodySmall.m(),
+        labelLarge = t.labelLarge.m(), labelMedium = t.labelMedium.m(), labelSmall = t.labelSmall.m(),
+    )
+}
 
 /** Paleta de la app (la misma del kiosco web, el panel y la landing). */
 object Colores {
@@ -71,7 +101,7 @@ fun NombreApp(tam: TextUnit = 20.sp, color: Color = Colores.Tinta) {
             append("ASISTENC")
             withStyle(SpanStyle(color = Colores.Azul)) { append("IA") }
         },
-        color = color, fontSize = tam, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp,
+        color = color, fontSize = tam, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp, fontFamily = Montserrat,
     )
 }
 

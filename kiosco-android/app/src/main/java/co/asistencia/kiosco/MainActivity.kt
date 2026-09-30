@@ -9,6 +9,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -74,9 +75,12 @@ private const val MARGEN = 0.08f
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // La app ocupa toda la pantalla; cada vista reserva el espacio de las
+        // barras del sistema con safeDrawingPadding().
+        enableEdgeToEdge()
         val almacen = Almacen(this)
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(primary = Colores.Marino)) {
+            MaterialTheme(colorScheme = lightColorScheme(primary = Colores.Marino), typography = Tipografia) {
                 var clave by remember { mutableStateOf(almacen.clave) }
                 Surface(Modifier.fillMaxSize(), color = Colores.Fondo) {
                     if (clave == null) {
@@ -101,7 +105,7 @@ private fun Activacion(onListo: (Activacion) -> Unit) {
     var codigo by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var ocupado by remember { mutableStateOf(false) }
-    Box(Modifier.fillMaxSize().padding(22.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.fillMaxSize().safeDrawingPadding().padding(22.dp), contentAlignment = Alignment.Center) {
         Column(
             Modifier.fillMaxWidth().shadow(18.dp, RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp))
                 .background(Color.White).padding(26.dp),
@@ -237,7 +241,7 @@ private fun Reposo(error: String?, onIniciar: () -> Unit) {
     val flota = rememberInfiniteTransition(label = "flota")
     val dy by flota.animateFloat(0f, -10f, infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "dy")
     Column(
-        Modifier.fillMaxSize().background(Color.White).padding(horizontal = 28.dp, vertical = 36.dp),
+        Modifier.fillMaxSize().background(Color.White).safeDrawingPadding().padding(horizontal = 28.dp, vertical = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         MarcaFila()
@@ -266,12 +270,16 @@ private fun PantallaCamara(
     var ahora by remember { mutableStateOf(Date()) }
     LaunchedEffect(Unit) { while (true) { ahora = Date(); delay(1000) } }
 
-    Column(Modifier.fillMaxSize().background(Color.White).padding(horizontal = 16.dp, vertical = 14.dp)) {
+    Column(Modifier.fillMaxSize().background(Color.White).safeDrawingPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         // Cabecera: marca y «Detener», como la web.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             MarcaFila(36.dp, 18.sp)
             Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = onDetener, shape = RoundedCornerShape(12.dp)) { Text("⏹ Detener", color = Colores.Tinta) }
+            OutlinedButton(onClick = onDetener, shape = RoundedCornerShape(12.dp)) {
+                Box(Modifier.size(11.dp).clip(RoundedCornerShape(2.dp)).background(Colores.Tinta))
+                Spacer(Modifier.width(8.dp))
+                Text("Detener", color = Colores.Tinta, fontWeight = FontWeight.SemiBold)
+            }
         }
         Spacer(Modifier.height(12.dp))
 
@@ -293,7 +301,7 @@ private fun PantallaCamara(
             if (veloAlfa > 0f) {
                 Box(Modifier.matchParentSize().graphicsLayer { alpha = veloAlfa }.background((if (lectura.acepta) Colores.Menta else Colores.Rojo).copy(alpha = .38f)), contentAlignment = Alignment.Center) {
                     Box(Modifier.size(86.dp).clip(CircleShape).background(if (lectura.acepta) Colores.Menta else Colores.Rojo), contentAlignment = Alignment.Center) {
-                        Text(if (lectura.acepta) "✓" else "✕", color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Bold)
+                        Text(if (lectura.acepta) "✓" else "✕", color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Bold, fontFamily = Sora)
                     }
                 }
             }
@@ -316,8 +324,8 @@ private fun PantallaCamara(
             // Centro: invitación cuando no hay nadie.
             if (lectura.encuadre == Encuadre.SIN_CARA) {
                 Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Acércate para marcar", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
-                    Text("tu asistencia", color = Color.White.copy(alpha = .85f), fontSize = 17.sp)
+                    Text("Acércate para marcar", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, fontFamily = Sora)
+                    Text("tu asistencia", color = Color.White.copy(alpha = .85f), fontSize = 17.sp, fontFamily = Sora)
                 }
             }
 
@@ -332,11 +340,11 @@ private fun PantallaCamara(
                     Spacer(Modifier.height(6.dp))
                     Text(
                         if (lectura.acepta) "Sí, es ${lectura.primero?.nombre}" else "Intenta de nuevo",
-                        color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center,
+                        color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, fontFamily = Sora,
                     )
                     Text(
                         if (lectura.acepta) "Modo prueba: no se registró ninguna marcación" else "Mírate de frente, con buena luz",
-                        color = Color.White.copy(alpha = .85f), fontSize = 13.sp,
+                        color = Color.White.copy(alpha = .85f), fontSize = 13.sp, fontFamily = Sora,
                     )
                 }
             }
@@ -386,7 +394,7 @@ private fun analizar(d: Detector, r: Rostro, gente: List<Persona>, bmp: Bitmap, 
 @Composable
 private fun Pildora(texto: String, modifier: Modifier = Modifier) {
     Text(
-        texto, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+        texto, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = Sora,
         modifier = modifier.clip(RoundedCornerShape(50)).background(Color(0x9E0A1424)).padding(horizontal = 14.dp, vertical = 7.dp),
     )
 }
@@ -394,7 +402,7 @@ private fun Pildora(texto: String, modifier: Modifier = Modifier) {
 @Composable
 private fun Etiqueta(texto: String, color: Color) {
     Text(
-        texto, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp,
+        texto, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp, fontFamily = Sora,
         modifier = Modifier.clip(RoundedCornerShape(50)).background(color).padding(horizontal = 14.dp, vertical = 5.dp),
     )
 }
