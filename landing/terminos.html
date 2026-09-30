@@ -1,0 +1,230 @@
+<!doctype html>
+<!-- BORRADOR de los términos y condiciones: revisar con abogado y completar los campos «pendiente». -->
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Términos y condiciones — AsistencIA</title>
+<meta name="robots" content="noindex" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* Paleta de la app (la misma de index.html). */
+    --tinta: #14233a; --tinta-2: #45566c; --apagado: #7a8aa0;
+    --borde: #dde6f1; --marca: #13294b; --acento: #2b6cb0; --acento-2: #2b6cb0;
+    --aviso-fondo: #f3ecd9; --aviso-tinta: #7a6432;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #fff; color: var(--tinta);
+    font-family: Montserrat, "Segoe UI", system-ui, sans-serif;
+    font-size: 16px; line-height: 1.7;
+  }
+  .env { max-width: 760px; margin: 0 auto; padding: 0 22px; }
+  header { border-bottom: 1px solid var(--borde); padding: 18px 0; margin-bottom: 44px; }
+  .logo { display: flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: .06em; font-size: 14px; color: var(--tinta); text-decoration: none; }
+  .logo .nombre i { font-style: normal; color: var(--acento); }
+  h1 { font-size: clamp(27px, 4vw, 34px); letter-spacing: -.025em; margin: 0 0 8px; }
+  .fecha { color: var(--apagado); font-size: 14px; margin: 0 0 32px; }
+  h2 { font-size: 19px; letter-spacing: -.015em; margin: 38px 0 10px; }
+  p, li { color: var(--tinta-2); }
+  ul { padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  b, strong { color: var(--tinta); }
+  a { color: var(--acento-2); }
+  .aviso {
+    background: var(--aviso-fondo); color: var(--aviso-tinta);
+    border-radius: 12px; padding: 16px 20px; font-size: 14.5px; line-height: 1.6; margin-bottom: 36px;
+  }
+  .pendiente {
+    background: #eaf1f8; border: 1px dashed var(--acento); border-radius: 6px;
+    padding: 1px 7px; font-size: 14px; color: var(--acento-2); font-weight: 700;
+  }
+  footer { border-top: 1px solid var(--borde); margin-top: 56px; padding: 26px 0 60px; font-size: 14px; color: var(--apagado); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="env">
+    <a class="logo" href="index.html">
+      <svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="0" y1="64" x2="0" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#172e4c"/><stop offset="1" stop-color="#2b6cb0"/></linearGradient></defs>
+        <rect width="64" height="64" rx="14" fill="url(#lg)"/>
+        <g transform="translate(3.2 3.2) scale(0.9)" fill="none">
+          <circle cx="32" cy="31" r="20" stroke="#fff" stroke-width="4.6"/>
+          <circle cx="25.4" cy="27" r="2.2" fill="#fff"/><circle cx="38.6" cy="27" r="2.2" fill="#fff"/>
+          <path d="M 24 37 l 6 6 l 12 -12" stroke="#9fdcca" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </g>
+      </svg>
+      <span class="nombre">ASISTENC<i>IA</i></span>
+    </a>
+  </div>
+</header>
+
+<main class="env">
+  <h1>Términos y condiciones del servicio</h1>
+  <p class="fecha">Última actualización: 30 de septiembre de 2026</p>
+
+  <div class="aviso">
+    <b>Borrador para revisión jurídica.</b> Este documento describe el servicio tal como funciona
+    hoy, pero debe ser revisado por un abogado antes de publicarse. Los campos resaltados deben
+    completarse con los datos de la empresa.
+  </div>
+
+  <h2>1. Quién presta el servicio</h2>
+  <p>
+    AsistencIA es un servicio de <span class="pendiente">Razón social</span>, identificada con NIT
+    <span class="pendiente">número</span>, con domicilio en <span class="pendiente">dirección</span>
+    (en adelante, «AsistencIA» o «nosotros»). Puedes escribirnos a
+    <span class="pendiente">correo de contacto</span> o llamar al <span class="pendiente">teléfono</span>.
+  </p>
+  <p>
+    Estos términos regulan el uso del panel web, del kiosco web y de la aplicación AsistencIA para
+    Android (juntos, «el servicio»). Al crear una cuenta, activar un dispositivo o usar el
+    servicio, la empresa que lo contrata («el cliente») acepta estos términos. Quien acepta en nombre
+    de una empresa declara que tiene facultad para obligarla.
+  </p>
+
+  <h2>2. Qué hace el servicio</h2>
+  <ul>
+    <li>Registra la entrada y la salida de los trabajadores del cliente mediante reconocimiento
+      facial con verificación de persona real (parpadeo), desde celulares, tabletas o computadores
+      que el cliente activa como kioscos.</li>
+    <li>Calcula horas trabajadas, recargos y horas extra según las reglas configuradas y la
+      legislación laboral colombiana vigente, y permite exportar reportes.</li>
+    <li>Opcionalmente, registra la ubicación del dispositivo en cada marcación, envía resúmenes
+      diarios por correo y entrega los datos por API a otros sistemas del cliente.</li>
+  </ul>
+  <p>
+    Los cálculos son una <b>herramienta de apoyo</b>. La liquidación de nómina, prestaciones y
+    horas extra, y el cumplimiento de las obligaciones laborales, siguen siendo responsabilidad del
+    cliente, que debe revisar los reportes antes de usarlos.
+  </p>
+
+  <h2>3. Cuenta y dispositivos</h2>
+  <ul>
+    <li>El acceso al panel se hace con una cuenta de Google. El cliente responde por las personas a
+      las que da acceso y por lo que hagan con él.</li>
+    <li>Cada kiosco se activa con un código de un solo uso generado en el panel y recibe una
+      credencial propia. El cliente puede revocarla en cualquier momento; al hacerlo, el
+      dispositivo deja de funcionar hasta volver a activarse.</li>
+    <li>El cliente debe avisarnos sin demora si sospecha que una cuenta o un dispositivo fue
+      usado sin autorización.</li>
+  </ul>
+
+  <h2>4. Obligaciones del cliente sobre los datos de sus trabajadores</h2>
+  <p>
+    Frente a los datos de sus trabajadores, el cliente es el <b>responsable del tratamiento</b> y
+    AsistencIA actúa como <b>encargado</b>, según la Ley 1581 de 2012 y la
+    <a href="politica-datos.html">política de tratamiento de datos</a>. En consecuencia, el cliente
+    se obliga a:
+  </p>
+  <ul>
+    <li>Obtener y conservar la <b>autorización previa, expresa e informada</b> de cada trabajador
+      antes de registrar su rostro, informándole que se trata de un dato sensible y que no está
+      obligado a entregarlo.</li>
+    <li>Ofrecer un <b>medio alternativo</b> de registro de asistencia a quien no autorice el uso de
+      su rostro.</li>
+    <li>Informar a sus trabajadores cuando active el registro de ubicación.</li>
+    <li>Atender las solicitudes de sus trabajadores sobre sus datos (consulta, corrección,
+      supresión) y trasladarnos las que requieran nuestra intervención.</li>
+    <li>Registrar solo a personas con las que tenga una relación laboral o de prestación de
+      servicios, y no usar el servicio para vigilar a personas fuera de ese contexto.</li>
+  </ul>
+
+  <h2>5. Uso aceptable</h2>
+  <p>El cliente no puede:</p>
+  <ul>
+    <li>Intentar engañar al reconocimiento (fotos, videos, máscaras) o marcar por otra persona, ni
+      permitir que sus trabajadores lo hagan.</li>
+    <li>Intentar acceder a datos de otras empresas, a partes del sistema que no le corresponden, o
+      eludir los límites de su plan.</li>
+    <li>Copiar, descompilar o revender el servicio, o usarlo para construir uno competidor.</li>
+    <li>Usar el servicio para fines ilícitos o contrarios a los derechos de los trabajadores.</li>
+  </ul>
+  <p>El incumplimiento de esta sección permite suspender el servicio de inmediato.</p>
+
+  <h2>6. Planes, prueba y pagos</h2>
+  <ul>
+    <li><b>Prueba gratis:</b> cada empresa nueva tiene 3 días de prueba sin tarjeta. Al terminar,
+      el panel y los kioscos dejan de registrar hasta que se elija un plan.</li>
+    <li><b>Precio de entrada:</b> una sola vez por empresa, se pueden comprar de 1 a 3 meses a un
+      precio especial por mes (US$1 el mes si se compra uno; US$2 cada mes si se compran dos;
+      US$3 cada mes si se compran tres).</li>
+    <li><b>Planes:</b> después se paga el plan que corresponda al número de trabajadores
+      (Esencial, Equipo o Empresa), al precio publicado en el sitio en el momento de la compra.
+      Cada plan tiene un tope de trabajadores activos y de usuarios del panel.</li>
+    <li>Los precios están en dólares y se cobran en pesos colombianos a la tasa de cambio del
+      procesador de pagos. El servicio se paga por adelantado y <b>no se renueva solo</b>: al
+      vencer, el cliente decide si compra otro período.</li>
+    <li>Salvo lo que disponga la ley, los períodos pagados no son reembolsables. Si el servicio
+      falla por causa nuestra de forma prolongada, compensaremos con tiempo de servicio adicional.</li>
+    <li>Podemos cambiar los precios para períodos futuros avisando con al menos 30 días; los ya
+      pagados no cambian.</li>
+  </ul>
+
+  <h2>7. Disponibilidad y funcionamiento sin conexión</h2>
+  <p>
+    Procuramos que el servicio esté disponible siempre, pero puede interrumpirse por
+    mantenimiento, fallas de proveedores de infraestructura o de internet. La aplicación de
+    Android guarda en el dispositivo las marcaciones hechas sin conexión y las envía cuando vuelve
+    la red; si el dispositivo se borra, se daña o se desinstala la aplicación antes de ese envío,
+    esas marcaciones pueden perderse.
+  </p>
+  <p>
+    El reconocimiento facial es probabilístico: puede no reconocer a una persona (por luz,
+    ángulo, cambios de apariencia) y, en casos excepcionales, confundir a dos personas muy
+    parecidas. El sistema aplica umbrales de seguridad para reducir ese riesgo, y el cliente puede
+    corregir marcaciones desde el panel.
+  </p>
+
+  <h2>8. Propiedad</h2>
+  <p>
+    El software, la marca AsistencIA y sus diseños son nuestros. Los datos que el cliente carga
+    (trabajadores, marcaciones, configuración) son del cliente: los tratamos solo para prestarle
+    el servicio y puede exportarlos en cualquier momento desde el panel.
+  </p>
+
+  <h2>9. Responsabilidad</h2>
+  <p>
+    En la medida que la ley lo permita, nuestra responsabilidad total frente al cliente por
+    cualquier reclamación relacionada con el servicio se limita al valor pagado por el cliente en
+    los 3 meses anteriores al hecho que la origina. No respondemos por daños indirectos, lucro
+    cesante ni por decisiones laborales o de nómina tomadas sin revisar los reportes. Nada de lo
+    anterior limita los derechos que la ley de protección al consumidor o de datos personales
+    reconozca y que no puedan renunciarse.
+  </p>
+
+  <h2>10. Terminación</h2>
+  <ul>
+    <li>El cliente puede dejar de usar el servicio cuando quiera; basta no renovar.</li>
+    <li>Podemos suspender o terminar el servicio por incumplimiento de estos términos, con aviso
+      previo salvo que el incumplimiento sea grave.</li>
+    <li>Al terminar, el cliente tiene 30 días para exportar su información. Después, los datos
+      biométricos se eliminan y el resto se conserva solo el tiempo que exija la ley.</li>
+  </ul>
+
+  <h2>11. Cambios a estos términos</h2>
+  <p>
+    Podemos actualizar estos términos. Los cambios sustanciales se avisarán al correo registrado
+    con al menos 15 días de antelación; seguir usando el servicio después de esa fecha implica
+    aceptarlos.
+  </p>
+
+  <h2>12. Ley aplicable</h2>
+  <p>
+    Estos términos se rigen por las leyes de la República de Colombia. Las diferencias se
+    intentarán resolver primero de forma directa; si no es posible, se someterán a los jueces
+    competentes de <span class="pendiente">ciudad</span>.
+  </p>
+</main>
+
+<footer class="env">
+  <a href="index.html">← Volver al inicio</a> · <a href="politica-datos.html">Tratamiento de datos</a>
+</footer>
+
+</body>
+</html>

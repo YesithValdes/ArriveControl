@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -166,6 +167,9 @@ private fun BotonPrincipal(texto: String, habilitado: Boolean = true, onClick: (
 }
 
 // ── Aviso del uso del rostro (primera vez; lo exige Play Store) ─────────
+/** La landing, donde viven la política de datos y los términos. */
+private const val SITIO = "https://controlregistro.vercel.app"
+
 @Composable
 private fun AvisoRostro(onAceptar: () -> Unit) {
     Box(Modifier.fillMaxSize().safeDrawingPadding().padding(22.dp), contentAlignment = Alignment.Center) {
@@ -187,7 +191,11 @@ private fun AvisoRostro(onAceptar: () -> Unit) {
                 Text("•  $it", fontSize = 14.sp, color = Colores.Tinta, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
             }
             Spacer(Modifier.height(8.dp))
-            Text("Más información en la política de tratamiento de datos de AsistencIA.", fontSize = 12.sp, color = Colores.Apagado, textAlign = TextAlign.Center)
+            val web = LocalUriHandler.current
+            Row(horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = { web.openUri("$SITIO/politica-datos.html") }) { Text("Tratamiento de datos", fontSize = 13.sp, color = Colores.Azul) }
+                TextButton(onClick = { web.openUri("$SITIO/terminos.html") }) { Text("Términos", fontSize = 13.sp, color = Colores.Azul) }
+            }
             Spacer(Modifier.height(18.dp))
             BotonPrincipal("Entendido, continuar", onClick = onAceptar)
         }
