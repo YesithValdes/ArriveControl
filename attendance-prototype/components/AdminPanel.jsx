@@ -2078,6 +2078,26 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     }
   };
 
+  const [eliminandoPersona, setEliminandoPersona] = useState(null);
+  const eliminandoPersonaRef = useRef(false);
+  const eliminarColaborador = async (persona) => {
+    if (!permisos.empleados || eliminandoPersonaRef.current) return;
+    if (!confirm(`¿Eliminar a ${persona.name} de los colaboradores activos? No podrá marcar asistencia. Su historial se conserva y podrás reactivarlo desde Archivados.`)) return;
+    eliminandoPersonaRef.current = true;
+    setEliminandoPersona(persona.id);
+    try {
+      await removePerson(persona.id);
+      setEditEmp((actual) => actual?.id === persona.id ? null : actual);
+      refresh();
+      showToast(`${persona.name} eliminado de la lista activa (queda en Archivados)`);
+    } catch (e) {
+      showToast(`No se pudo eliminar: ${e.message}`);
+    } finally {
+      eliminandoPersonaRef.current = false;
+      setEliminandoPersona(null);
+    }
+  };
+
   const removeEv = async (e) => {
     if (confirm(`¿Eliminar la ${e.type === 'in' ? 'entrada' : 'salida'} de las ${fmt12(e.ts)}?`)) {
       try {
@@ -3181,6 +3201,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                             <th title="Con sede: si está activo, solo puede marcar dentro de su sede">Limitar</th>
                             <th title="Sin sede: si está activo, se registra el GPS de cada marcación">Validar</th>
                             <th>Última marcación</th>
+                            <th>Acciones</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -3188,7 +3209,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                             <tr className="static"><td colSpan={7} className="empty">Sin resultados{empSearch ? ` para «${empSearch}»` : ''}.</td></tr>
                           )}
                           {empPagina.map((p) => (
-                            <tr key={p.id} onClick={() => openEdit(p)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && openEdit(p)}>
+                            <tr key={p.id} onClick={() => openEdit(p)} tabIndex={0} onKeyDown={(e) => e.target === e.currentTarget && e.key === 'Enter' && openEdit(p)}>
                               <td>
                                 {/* Nombre y apellido; el completo, en el title. */}
                                 <span className="emp-cell" title={p.name}>
@@ -3217,6 +3238,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                 />
                               </td>
                               <td className="att-sede">{fmtUltima(ultimaMarca.get(p.id))}</td>
+                              <td>
+                                {permisos.empleados && <button
+                                  type="button" className="btn small btn-ico danger-btn"
+                                  title={`Eliminar a ${p.name}`} aria-label={`Eliminar a ${p.name}`}
+                                  disabled={eliminandoPersona !== null}
+                                  onClick={(e) => { e.stopPropagation(); eliminarColaborador(p); }}
+                                ><Icon name="trash" size={16} /></button>}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -3253,7 +3282,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                             </div>
                           </>
                         ),
-                        actions: <button className="btn primary block" onClick={() => openEdit(p)}>Editar</button>,
+                        actions: <>
+                          <button className="btn primary block" onClick={() => openEdit(p)}>Editar</button>
+                          {permisos.empleados && <button
+                            type="button" className="btn btn-ico danger-btn"
+                            title={`Eliminar a ${p.name}`} aria-label={`Eliminar a ${p.name}`}
+                            disabled={eliminandoPersona !== null}
+                            onClick={() => eliminarColaborador(p)}
+                          ><Icon name="trash" size={16} /><span>Eliminar</span></button>}
+                        </>,
                       }))}
                     />
                     {empPages > 1 && (
@@ -5920,21 +5957,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 Guardar cambios
               </button>
               <button
-                className="btn ficha-eliminar"
-                onClick={async () => {
-                  if (confirm(`¿Desactivar a ${editEmp.name}? No podrá marcar asistencia, pero sus datos y su historial se conservan y podrás reactivarlo desde «Archivados». Deja de ocupar cupo del plan.`)) {
-                    try {
-                      await removePerson(editEmp.id);
-                      setEditEmp(null);
-                      refresh();
-                      showToast(`${editEmp.name} desactivado (queda en Archivados)`);
-                    } catch (e) {
-                      showToast(`No se pudo desactivar: ${e.message}`);
-                    }
-                  }
-                }}
+                className="btn ficha-eliminar btn-ico"
+                disabled={eliminandoPersona !== null}
+                onClick={() => eliminarColaborador(editEmp)}
               >
-                Desactivar
+                <Icon name="trash" size={16} /> Eliminar
               </button>
             </div>
           </aside>
