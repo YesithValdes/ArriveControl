@@ -13,7 +13,7 @@ export const runtime = 'nodejs'
 export async function POST(req) {
   // La empresa sale de la clave del dispositivo: un intento pertenece al
   // cliente cuyo kiosco lo produjo, y sin saber cuál no hay dónde guardarlo.
-  const ctx = await empresaDeLaPeticion(req)
+  const ctx = await empresaDeLaPeticion(req, 'corregir')
   if (!ctx) return NextResponse.json({ ok: false, error: 'Dispositivo no reconocido.' }, { status: 401 })
 
   let c

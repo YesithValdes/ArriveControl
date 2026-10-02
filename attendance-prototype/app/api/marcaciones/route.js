@@ -30,7 +30,7 @@ export async function POST(req) {
   // De qué empresa es esta marcación. Sale de la clave del dispositivo, o de
   // la sesión cuando marca el administrador desde su celular. Sin empresa no
   // hay dónde escribirla: ya no existe una única tabla de marcaciones.
-  const ctx = await empresaDeLaPeticion(req)
+  const ctx = await empresaDeLaPeticion(req, 'corregir')
   if (!ctx) {
     return NextResponse.json(
       { ok: false, error: 'DISPOSITIVO_NO_ACTIVADO', detalle: 'Este dispositivo no está activado. Actívalo desde la pantalla del kiosco con una sesión de administrador.' },

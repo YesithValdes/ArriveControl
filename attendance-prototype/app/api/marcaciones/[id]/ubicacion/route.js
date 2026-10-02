@@ -29,7 +29,7 @@ export const runtime = 'nodejs'
 const VENTANA_MIN = 15
 
 export async function POST(req, { params }) {
-  const ctx = await empresaDeLaPeticion(req)
+  const ctx = await empresaDeLaPeticion(req, 'corregir')
   if (!ctx) return NextResponse.json({ ok: false, error: 'No autorizado.' }, { status: 401 })
 
   const { id } = await params

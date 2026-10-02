@@ -1645,6 +1645,15 @@ await test('exportar a Excel: un .xlsx válido, con números como números', asy
   assert.match(panel, /exportar\('dias'\)/);
   assert.match(panel, /exportar\('colaboradores'\)/);
 });
+await test('el rol consulta no marca ni baja rostros por la API (solo un kiosco o quien tenga permiso)', () => {
+  const leer = (p) => leerCss(new URL(`../${p}`, import.meta.url), 'utf8');
+  assert.match(leer('app/api/marcaciones/route.js'), /empresaDeLaPeticion\(req, 'corregir'\)/);
+  assert.match(leer('app/api/intentos/route.js'), /empresaDeLaPeticion\(req, 'corregir'\)/);
+  assert.match(leer('app/api/marcaciones/[id]/ubicacion/route.js'), /empresaDeLaPeticion\(req, 'corregir'\)/);
+  assert.match(leer('app/api/empleados/route.js'), /empresaDeLaPeticion\(req, 'empleados'\)/);
+  assert.match(leer('app/api/dispositivos/vincular/route.js'), /GET[\s\S]{0,200}estadoAcceso\('config'\)/);
+  assert.match(leer('app/api/prueba-reconocimiento/route.js'), /estadoAcceso\('empleados'\)/);
+});
 await test('Excel de varias hojas: una por colaborador, nombres válidos y sin repetir', async () => {
   const { crearLibro } = await import('../lib/xlsx.js');
   const bytes = crearLibro([

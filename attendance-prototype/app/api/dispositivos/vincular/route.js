@@ -13,7 +13,7 @@ import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../../lib/sesio
 export const runtime = 'nodejs'
 
 export async function GET() {
-  const { estado, empresa } = await estadoAcceso('ver')
+  const { estado, empresa } = await estadoAcceso('config')
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const pendientes = await vinculacionesPendientes(empresa)

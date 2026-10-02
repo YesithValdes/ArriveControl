@@ -33,7 +33,8 @@ async function contextoDelRoster(req) {
     if (!empresa || !tieneAcceso(empresa)) return null
     return { empresa, esquema: empresa.esquema, dispositivo: null }
   }
-  return empresaDeLaPeticion(req)
+  // Por sesión, los rostros solo para quien gestiona colaboradores (no `consulta`).
+  return empresaDeLaPeticion(req, 'empleados')
 }
 
 export async function GET(req) {

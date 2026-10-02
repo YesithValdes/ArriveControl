@@ -118,14 +118,20 @@ export function claveDeAparato(req) {
   return m ? decodeURIComponent(m[1]) : null
 }
 
-export async function empresaDeLaPeticion(req) {
+/**
+ * `accion` es el permiso que se exige cuando entra por SESIÓN (sin clave de
+ * aparato). Las rutas que ESCRIBEN como kiosco (marcar, intentos, ubicación)
+ * piden 'corregir' y la que entrega rostros pide 'empleados': así el rol
+ * `consulta` solo consulta, no marca ni baja biometría.
+ */
+export async function empresaDeLaPeticion(req, accion = 'ver') {
   const clave = claveDeAparato(req)
   if (clave) {
     const r = await empresaDelDispositivo(clave)
     if (r) return { empresa: r.empresa, esquema: r.empresa.esquema, dispositivo: r.dispositivo }
     return null // clave enviada pero inválida: no se cae a la sesión en silencio
   }
-  const { estado, empresa } = await estadoAcceso('ver')
+  const { estado, empresa } = await estadoAcceso(accion)
   if (estado !== 'OK') return null
   return { empresa, esquema: empresa.esquema, dispositivo: null }
 }
