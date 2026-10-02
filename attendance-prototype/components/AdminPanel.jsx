@@ -2243,12 +2243,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     });
   }, [roster, empSearch, empFiltros]);
 
-  // En el dashboard la tarjeta comparte pantalla (5 filas); en la sección
-  // Asistencia va sola y a lo alto, así que caben más (9).
-  const tamPagina = tab === 'asistencia' ? 9 : PAGE_SIZE;
-  const pageCount = Math.max(1, Math.ceil(attRows.length / tamPagina));
+  // En el dashboard van TODAS las personas que marcaron ese día, sin
+  // paginación. En la sección Asistencia (con ausentes y filtros) se pagina
+  // de a 9.
+  const enDashboard = tab === 'dashboard';
+  const filasTabla = enDashboard ? attRows.filter((r) => r.firstIn || r.lastOut) : attRows;
+  const tamPagina = enDashboard ? Math.max(1, filasTabla.length) : tab === 'asistencia' ? 9 : PAGE_SIZE;
+  const pageCount = Math.max(1, Math.ceil(filasTabla.length / tamPagina));
   const safePage = Math.min(page, pageCount - 1);
-  const pageRows = attRows.slice(safePage * tamPagina, (safePage + 1) * tamPagina);
+  const pageRows = filasTabla.slice(safePage * tamPagina, (safePage + 1) * tamPagina);
+  // «Ausentes» no existe en el dashboard: si venía puesto, vuelve a «Todos».
+  useEffect(() => { if (enDashboard && statusFilter === 'absent') setStatusFilter('all'); }, [enDashboard, statusFilter]);
   // Desliza las filas a su nueva posición cuando el orden cambia (FLIP).
   useFlip(attFlipRef, [pageRows]);
 
@@ -2631,7 +2636,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <section className="card asistencia-card">
                 <h2>
                   {esHoy ? 'Asistencia de hoy' : `Asistencia — ${new Date(`${diaAsistencia}T12:00:00-05:00`).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}`}
-                  {' '}<span className="muted-count">{attRows.length}</span>
+                  {' '}<span className="muted-count">{filasTabla.length}</span>
                 </h2>
                 {/* En el celular: tres filas limpias (buscar · día · filtro
                     segmentado a todo el ancho). En PC, todo en una línea. */}
@@ -2650,7 +2655,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <button className="btn dia-flecha" title="Día siguiente" disabled={esHoy} onClick={() => cambiarDia(1)}>›</button>
                   </div>
                   <div className="fchips" role="group" aria-label="Filtrar por estado">
-                    {[['all', 'Todos'], ['present', esHoy ? 'Trabajando' : 'Asistieron'], ['absent', 'Ausentes']].map(([id, lbl]) => (
+                    {/* En el dashboard solo salen quienes marcaron: sin «Ausentes». */}
+                    {[['all', 'Todos'], ['present', esHoy ? 'Trabajando' : 'Asistieron'], ...(enDashboard ? [] : [['absent', 'Ausentes']])].map(([id, lbl]) => (
                       <button
                         key={id} className="fchip" aria-pressed={statusFilter === id}
                         onClick={() => { setStatusFilter(id); setPage(0); }}
@@ -2661,10 +2667,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </div>
                 </div>
                 <div className="scrollable">
-                  {attRows.length === 0 && (
-                    <p className="empty">Sin resultados{search ? ` para «${search}»` : ''}.</p>
+                  {filasTabla.length === 0 && (
+                    <p className="empty">
+                      {search ? `Sin resultados para «${search}».` : enDashboard ? (esHoy ? 'Nadie ha marcado asistencia hoy.' : 'Nadie marcó asistencia ese día.') : 'Sin resultados.'}
+                    </p>
                   )}
-                  {attRows.length > 0 && (() => {
+                  {filasTabla.length > 0 && (() => {
                     // Última marcación en corto; el punto de al lado del nombre
                     // ya dice el estado (verde marcó hoy, rojo ausente).
                     // La hora de la ÚLTIMA marcación, entrada o salida.
