@@ -68,7 +68,7 @@ export async function PATCH(req, { params }) {
     if (k in (c ?? {})) {
       let v = c[k]
       if (k === 'cedula' && v != null) v = String(v).replace(/\D/g, '') || null
-      if (k === 'nombre') { v = String(v).trim(); if (!v) return NextResponse.json({ ok: false, error: 'El nombre no puede quedar vacío.' }, { status: 400 }) }
+      if (k === 'nombre') { v = String(v).trim().toLocaleUpperCase('es-CO'); if (!v) return NextResponse.json({ ok: false, error: 'El nombre no puede quedar vacío.' }, { status: 400 }) }
       if (k === 'correo') {
         v = String(v ?? '').trim().toLowerCase() || null
         if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {

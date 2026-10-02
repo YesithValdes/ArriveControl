@@ -116,7 +116,8 @@ export async function POST(req) {
   let c
   try { c = await req.json() } catch { return NextResponse.json({ ok: false, error: 'JSON inválido.' }, { status: 400 }) }
 
-  const nombre = String(c?.nombre ?? '').trim()
+  // En MAYÚSCULAS en todas partes (migración empresa/019).
+  const nombre = String(c?.nombre ?? '').trim().toLocaleUpperCase('es-CO')
   const cedula = String(c?.cedula ?? '').replace(/\D/g, '')
   if (!nombre) return NextResponse.json({ ok: false, error: 'El nombre es obligatorio.' }, { status: 400 })
   // La cédula identifica a la persona en los reportes de horas: sin ella no hay
