@@ -579,12 +579,15 @@ const iniciales = (texto) =>
  * Un nombre y un apellido, para las listas donde el nombre completo estorba.
  * En Colombia la cédula trae «Nombre1 Nombre2 Apellido1 Apellido2», así que
  * con cuatro palabras se toman la primera y la TERCERA («Yeraldin Camuez»);
- * con tres, las dos primeras («Edwin Espinoza»). Se capitaliza porque los
- * nombres llegan como los tecleó quien registró, a veces en minúscula.
+ * con tres, las dos primeras («EDWIN ESPINOZA»). Siempre en MAYÚSCULAS,
+ * como se guardan los nombres (migración empresa/019).
  */
-const nombreCorto = (texto) => {
+const nombreCorto = (texto, { mayusculas = true } = {}) => {
   const p = String(texto ?? '').trim().split(/\s+/).filter(Boolean);
-  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  // `mayusculas: false` para usuarios del panel (no son colaboradores).
+  const cap = mayusculas
+    ? (s) => s.toLocaleUpperCase('es-CO')
+    : (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
   if (p.length === 0) return '';
   if (p.length <= 2) return p.map(cap).join(' ');
   return [p[0], p[p.length >= 4 ? 2 : 1]].map(cap).join(' ');
@@ -3746,7 +3749,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             }
           };
           // Quien hizo el ajuste: su nombre; el correo solo si no hay nombre.
-          const quienAjusto = (c) => nombreCorto(c.admin_nombre ?? '') || (c.admin_email ?? 'admin').split('@')[0];
+          const quienAjusto = (c) => nombreCorto(c.admin_nombre ?? '', { mayusculas: false }) || (c.admin_email ?? 'admin').split('@')[0];
           const filtrados = listCorrecciones().filter((c) => {
             const dia = dayKey(c.ts);
             if (histFiltro.desde && dia < histFiltro.desde) return false;
