@@ -7754,4 +7754,27 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .side-sede .sede-select:hover { background-color: rgba(255,255,255,.18); }
 .side-sede .sede-select option { background: var(--surface); color: var(--ink); }
 .side-foot { color: rgba(255,255,255,.4); }
+
+/* ── PC: cada tarjeta cabe COMPLETA en la pantalla (se ve su borde de abajo)
+   y lo que no quepa se desliza DENTRO de ella, no la página entera. Solo con
+   alto suficiente; en pantallas bajas y en el celular, la página hace scroll
+   como siempre. Va al final para ganarle a los max-height fijos de arriba. */
+@media (min-width: 900px) and (min-height: 600px) {
+  .screen:has(> .dash-grid) { overflow: hidden; }
+  .dash-grid { flex: 1 1 auto; min-height: 0; }
+  .dash-grid:not(.solo-asistencia) { grid-template-rows: auto minmax(0, 1fr); }
+  .dash-grid .asistencia-card,
+  .dash-grid .dash-lado { min-height: 0; height: 100%; }
+  .dash-grid .asistencia-card { overflow: hidden; }
+  .dash-grid .asistencia-card .scrollable { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+  /* Columna de indicadores: las tarjetas se encogen hasta su contenido
+     mínimo y cada una se desliza por dentro. */
+  .dash-grid .dash-lado { overflow: hidden; }
+  .dash-grid .dash-lado > .card { flex: 0 1 auto; min-height: 72px; overflow-y: auto; overscroll-behavior: contain; }
+  .dash-grid .dash-lado > .card:last-child { flex: 1 1 auto; }
+  /* Pantallas de una sola tarjeta (Asistencia y las que usan .grow). */
+  .dash-grid.solo-asistencia .asistencia-card { height: auto; }
+  .screen > .card.grow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .screen > .card.grow > .scrollable { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+}
 `;
