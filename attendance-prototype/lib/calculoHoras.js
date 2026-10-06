@@ -88,18 +88,30 @@ const minutosDeHora = (hora) => {
  * respaldo de los empleados registrados antes de que los horarios fueran por
  * día (ver db/migrations/empresa/006_horarios_por_dia.sql).
  */
-const finDeHorario = (empleado, entrada) => {
-  const delDia = empleado.jornadaDias?.[String(entrada.dow)]
+/**
+ * Fin de la JORNADA de ese día de la semana (sin mirar el almuerzo), en
+ * minutos desde las 0:00; pasa de 1440 si el turno cruza la medianoche.
+ * Null si ese día no tiene horario. Lo usa también el cierre automático de
+ * salidas olvidadas (lib/salidasAutomaticas.js).
+ */
+export const finDeJornada = (empleado, dow) => {
+  const delDia = empleado.jornadaDias?.[String(dow)]
   const usaDias = empleado.jornadaDias != null
   // Con horario por día pero SIN ese día: es día libre, no hay con qué cerrar.
   if (usaDias && !delDia) return null
-
   const fin = minutosDeHora(usaDias ? delDia.salida : empleado.salidaEsperada)
   if (fin == null) return null
-
   const inicio = minutosDeHora(usaDias ? delDia.entrada : empleado.entradaEsperada)
   // Turno que cruza la medianoche: su salida pertenece al día siguiente.
-  const finReal = inicio != null && fin <= inicio ? fin + 1440 : fin
+  return inicio != null && fin <= inicio ? fin + 1440 : fin
+}
+
+const finDeHorario = (empleado, entrada) => {
+  const finReal = finDeJornada(empleado, entrada.dow)
+  if (finReal == null) return null
+  const delDia = empleado.jornadaDias?.[String(entrada.dow)]
+  const usaDias = empleado.jornadaDias != null
+  const inicio = minutosDeHora(usaDias ? delDia.entrada : empleado.entradaEsperada)
 
   // ── El almuerzo también es un momento en que hay que marcar ──────────
   //

@@ -1,7 +1,8 @@
 /**
  * app/api/cron/resumen-diario/route.js
  *
- * GET — envía a cada empleado el resumen de su jornada, la del ÚLTIMO DÍA
+ * GET — cierra las salidas que nadie marcó (lib/salidasAutomaticas.js) y
+ *       envía a cada empleado el resumen de su jornada, la del ÚLTIMO DÍA
  *       COMPLETO. Corre de madrugada, ya cerrado el día que resume.
  *
  * Nació apuntando a las 11:59 p. m. para que el correo llegara el mismo día, y
@@ -35,6 +36,8 @@
 import { NextResponse } from 'next/server'
 import { enviarResumenesDelDia, ayerEnBogota } from '../../../../lib/enviosDiarios.js'
 import { control } from '../../../../lib/db.js'
+import { tieneAcceso } from '../../../../lib/empresas.js'
+import { cerrarSalidasFaltantes } from '../../../../lib/salidasAutomaticas.js'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -66,8 +69,23 @@ export async function GET(req) {
   const t0 = Date.now()
   let r
   let fallo = null
+  // ANTES del resumen: las salidas que nadie marcó se cierran con su horario
+  // (lib/salidasAutomaticas.js), así el correo ya sale con el día completo.
+  // Si falla en una empresa, se anota y se sigue: el resumen no se pierde.
+  const salidas = { creadas: 0, errores: [] }
+  const { rows: empresas } = await control(
+    `select id, nombre, esquema, estado, vence_en, prueba_hasta, cortesia from control.empresas`,
+  )
+  for (const empresa of empresas) {
+    if (!tieneAcceso(empresa)) continue
+    try {
+      salidas.creadas += (await cerrarSalidasFaltantes(empresa.esquema, fecha)).length
+    } catch (e) {
+      salidas.errores.push({ empresa: empresa.nombre, error: e?.message || String(e) })
+    }
+  }
   try {
-    r = await enviarResumenesDelDia(fecha)
+    r = { ...(await enviarResumenesDelDia(fecha)), salidasAutomaticas: salidas }
   } catch (e) {
     fallo = e?.message || String(e)
   }
