@@ -1645,6 +1645,24 @@ await test('exportar a Excel: un .xlsx válido, con números como números', asy
   assert.match(panel, /exportar\('dias'\)/);
   assert.match(panel, /exportar\('colaboradores'\)/);
 });
+await test('panel: salida olvidada en un día pasado se cierra con el horario, no a medianoche ni se pierde', async () => {
+  const ps = await import('../services/panelStore.js');
+  const src = leerCss(new URL('../components/AdminPanel.jsx', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('function paresDe('), src.indexOf('function pairedHours('));
+  const dayKey = (iso) => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
+  const paresDe = new Function('dayKey', 'todayKey', 'finJornadaMs', 'NIGHT_WINDOW_MS', `${fn}; return paresDe;`)(
+    dayKey, () => '2099-01-01', ps.finJornadaMs, ps.NIGHT_WINDOW_MS);
+  const ev = (f, hhmm, type) => ({ ts: new Date(`${f}T${hhmm}:00-05:00`).toISOString(), type });
+  const jd = { jornadaDias: { 1: { entrada: '09:00', salida: '18:00', almuerzoDesde: '12:00', almuerzoHasta: '14:00' }, 2: { entrada: '09:00', salida: '18:00' } } };
+  const horas = (p) => Math.round(p.reduce((s, x) => s + x.horas, 0) * 100) / 100;
+  const finDia = new Date('2026-10-05T23:59:59-05:00').getTime();
+  // Caso real del 5 de octubre: volvió del almuerzo 13:38 y no marcó salida → 18:00.
+  assert.equal(horas(paresDe([ev('2026-10-05', '09:42', 'in'), ev('2026-10-05', '12:31', 'out'), ev('2026-10-05', '13:38', 'in')], finDia, jd)), 7.18);
+  // Entrada después de su hora de salida: no abre jornada.
+  assert.equal(horas(paresDe([ev('2026-10-05', '18:30', 'in')], finDia, jd)), 0);
+  // En la semana, la entrada sin salida del lunes NO se pierde al llegar el martes.
+  assert.equal(horas(paresDe([ev('2026-10-05', '13:38', 'in'), ev('2026-10-06', '09:00', 'in'), ev('2026-10-06', '12:00', 'out')], finDia, jd)), 7.37);
+});
 await test('el rol consulta no marca ni baja rostros por la API (solo un kiosco o quien tenga permiso)', () => {
   const leer = (p) => leerCss(new URL(`../${p}`, import.meta.url), 'utf8');
   assert.match(leer('app/api/marcaciones/route.js'), /empresaDeLaPeticion\(req, 'corregir'\)/);

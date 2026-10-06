@@ -483,6 +483,10 @@ const fmtHoras = (n) => `${(Math.round(n * 100) / 100).toLocaleString('es-CO')} 
 function paresDe(events, nowMs, person = null) {
   const pares = [];
   let openIn = null;
+  // «Hoy» es el día REAL, no el de `nowMs`: quien mira un día pasado pasa como
+  // `nowMs` el final de ese día, y con eso una entrada sin salida se tomaba
+  // por «en curso» y contaba hasta la medianoche.
+  const hoy = todayKey();
   const cerrar = (inEv, finMs) => {
     const inicio = new Date(inEv.ts).getTime();
     const fecha = dayKey(inEv.ts);
@@ -490,28 +494,44 @@ function paresDe(events, nowMs, person = null) {
     const horas = (finMs - inicio) / 3600000;
     pares.push({ fecha, desde, hasta: desde + horas * 60, horas, dow: new Date(`${fecha}T12:00:00Z`).getUTCDay() });
   };
+  // Día terminado: cierra con el horario (o con el almuerzo, si entró antes).
+  // Si entró DESPUÉS de su hora de salida, `fin` queda antes que la entrada y
+  // no suma nada: quien llega pasada su jornada no abre un día nuevo.
+  const cerrarPorHorario = (inEv) => {
+    const inicio = new Date(inEv.ts).getTime();
+    const diaEntrada = dayKey(inEv.ts);
+    const entradaMin = (inicio - new Date(`${diaEntrada}T00:00:00-05:00`).getTime()) / 60000;
+    const fin = finJornadaMs(person, diaEntrada, entradaMin);
+    if (fin != null && fin > inicio) cerrar(inEv, fin);
+  };
+  // La entrada abierta que desplaza otra marcación: igual que `soltarAbierta`
+  // del servidor. Si la siguiente es del MISMO día no se cierra (faltó una
+  // salida en medio y estirarla solaparía tramos); si es de otro día, se
+  // cierra con su horario en vez de perderse.
+  const soltar = (siguiente) => {
+    if (openIn && dayKey(siguiente.ts) !== dayKey(openIn.ts) && dayKey(openIn.ts) < hoy) cerrarPorHorario(openIn);
+    openIn = null;
+  };
   for (const e of events) {
-    if (e.type === 'in') openIn = e;
-    else if (e.type === 'out' && openIn) {
+    if (e.type === 'in') {
+      soltar(e);
+      openIn = e;
+    } else if (e.type === 'out' && openIn) {
+      // Una salida de OTRO día y a más de 12 h no es de este turno (misma
+      // regla que MAX_TURNO_H en lib/calculoHoras.js).
+      const horas = (new Date(e.ts).getTime() - new Date(openIn.ts).getTime()) / 3600000;
+      if (dayKey(e.ts) !== dayKey(openIn.ts) && horas > NIGHT_WINDOW_MS / 3600000) { soltar(e); continue; }
       cerrar(openIn, new Date(e.ts).getTime());
       openIn = null;
     }
   }
   if (openIn) {
     const inicio = new Date(openIn.ts).getTime();
-    const diaEntrada = dayKey(openIn.ts);
-    if (diaEntrada >= dayKey(new Date(nowMs).toISOString())) {
+    if (dayKey(openIn.ts) >= hoy) {
       const span = nowMs - inicio;
       if (span < NIGHT_WINDOW_MS) cerrar(openIn, nowMs);
     } else {
-      // Día terminado: cierra con el horario. Si entró DESPUÉS de su hora de
-      // salida, `fin` queda antes que la entrada y no suma nada — que es la
-      // regla: quien llega pasada su jornada no abre un día nuevo.
-      // Minutos del día en que entró: deciden si su tope es el almuerzo (si
-      // entró antes) o el final de la jornada.
-      const entradaMin = (inicio - new Date(`${diaEntrada}T00:00:00-05:00`).getTime()) / 60000;
-      const fin = finJornadaMs(person, diaEntrada, entradaMin);
-      if (fin != null && fin > inicio) cerrar(openIn, fin);
+      cerrarPorHorario(openIn);
     }
   }
   return pares;
