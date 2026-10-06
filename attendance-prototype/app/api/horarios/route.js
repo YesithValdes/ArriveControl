@@ -1,6 +1,8 @@
 /**
  * app/api/horarios/route.js
  * GET  — lista de horarios (plantillas de jornada POR DÍAS, con nombre).
+ *        Panel con sesión, kiosco con su clave, o el sistema de gestión
+ *        humana con la clave de API (X-API-Key), que los importa.
  * POST — crea un horario (sesión + permiso de configuración).
  *
  * Un horario define su franja día por día: { "0".."6": {entrada, salida,
@@ -10,11 +12,20 @@ import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../lib/db.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
 import { validarDias } from '../../../lib/horariosDias.js'
+import { empresaDeApiKey } from '../../../lib/empresas.js'
 
 export const runtime = 'nodejs'
 
 export async function GET(req) {
-  const ctx = await empresaDeLaPeticion(req)
+  const clave = req.headers.get('x-api-key')
+  let ctx
+  if (clave) {
+    const { empresa, status, error } = await empresaDeApiKey(clave)
+    if (!empresa) return NextResponse.json({ ok: false, error }, { status })
+    ctx = { esquema: empresa.esquema }
+  } else {
+    ctx = await empresaDeLaPeticion(req)
+  }
   if (!ctx) {
     return NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: 401 })
   }
