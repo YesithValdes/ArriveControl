@@ -228,6 +228,7 @@ function construirEventos(marcaciones, correcciones = []) {
       lon: m.lon ?? null,
       precision: m.precision_m ?? null,
       direccion: m.direccion ?? null,
+      tieneFoto: Boolean(m.tiene_foto),
     };
   });
 

@@ -39,7 +39,7 @@ const diaBogota = (d) => new Date(new Date(d).getTime() - 5 * 3600000).toISOStri
  * @param {boolean=} p.diferido
  * @returns {{duplicado:true, ultima:object} | {tipo:'entrada'|'salida', marcacion:object} | {error:string}}
  */
-export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo = null, diferido = false, lat = null, lon = null, precisionM = null }) {
+export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo = null, diferido = false, lat = null, lon = null, precisionM = null, foto = null }) {
   // `conEmpresa` ya abre la transacción y fija el esquema; el lock por empleado
   // y la lectura de la última marcación viven dentro de ella, que es lo que
   // impide que dos pasadas simultáneas se pisen.
@@ -100,12 +100,13 @@ export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo
     const tipo = ultima && ultima.tipo === 'entrada' && mismoDia ? 'salida' : 'entrada'
 
     const ins = await client.query(
-      `insert into marcaciones (empleado_id, tipo, ts, ts_dispositivo, sede_id, origen, lat, lon, precision_m)
-       values ($1, $2, ${diferido && tsDispositivo ? '$8' : 'now()'}, $3, $4, ${diferido ? `'kiosco_diferido'` : `'kiosco'`}, $5, $6, $7)
-       returning *`,
+      `insert into marcaciones (empleado_id, tipo, ts, ts_dispositivo, sede_id, origen, lat, lon, precision_m, foto)
+       values ($1, $2, ${diferido && tsDispositivo ? '$9' : 'now()'}, $3, $4, ${diferido ? `'kiosco_diferido'` : `'kiosco'`}, $5, $6, $7, $8)
+       returning id, empleado_id, tipo, ts, ts_dispositivo, sede_id, origen, lat, lon, precision_m, (foto is not null) as tiene_foto`,
       [
         empleadoId, tipo, tsDispositivo, sedeId,
         guardaGps ? lat : null, guardaGps ? lon : null, guardaGps ? Math.round(Number(precisionM) || 0) || null : null,
+        foto,
         ...(diferido && tsDispositivo ? [tsDispositivo] : []),
       ],
     )
@@ -180,7 +181,7 @@ export async function listarMarcaciones(esquema, f = {}) {
     const { rows } = await db.query(
       `select m.id, m.empleado_id, e.nombre as empleado_nombre, e.cedula,
               m.tipo, m.ts, m.ts_dispositivo, m.sede_id, s.nombre as sede_nombre, m.origen,
-              m.lat, m.lon, m.precision_m, m.direccion
+              m.lat, m.lon, m.precision_m, m.direccion, (m.foto is not null) as tiene_foto
          from marcaciones m
          join empleados e on e.id = m.empleado_id
          left join sedes s on s.id = m.sede_id

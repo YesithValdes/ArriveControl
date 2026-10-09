@@ -44,3 +44,19 @@ export async function prepararAvatar(bytes) {
     .jpeg({ quality: 82, mozjpeg: true })
     .toBuffer()
 }
+
+export const LADO_FOTO_MARCACION = 320
+
+/**
+ * La foto del registro de una marcación: sin recortar (es evidencia, se ve
+ * el cuadro entero), lado mayor a 320 px y JPEG. Lanza si no es imagen.
+ * @returns {Promise<Buffer>}
+ */
+export async function prepararFotoMarcacion(bytes) {
+  const { default: sharp } = await import('sharp')
+  return sharp(bytes, { failOn: 'error' })
+    .rotate()
+    .resize(LADO_FOTO_MARCACION, LADO_FOTO_MARCACION, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 75, mozjpeg: true })
+    .toBuffer()
+}
