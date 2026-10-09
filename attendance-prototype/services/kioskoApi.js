@@ -187,10 +187,12 @@ export const pendientesEnCola = () => leerCola().length;
  * Sin red: encola y devuelve { pendiente: true } — la persona debe saber que
  * su marcación quedó guardada pero aún no sincronizada.
  */
-export async function registrarPaso(empleadoId, ubicacion = null) {
+export async function registrarPaso(empleadoId, ubicacion = null, foto = null) {
   // sede_id nulo (no ""): un dispositivo sin sede mandaba cadena vacía y el
   // insert reventaba en Postgres (la columna es uuid) — 500 en cada intento.
   const cuerpo = { empleado_id: empleadoId, sede_id: getSedeId() || null };
+  // Foto del registro (data URL JPEG pequeña): se guarda con la marcación.
+  if (foto) cuerpo.foto = foto;
   // Ubicación GPS del dispositivo, si el kiosco la tiene fresca. El SERVIDOR
   // decide qué hacer con ella: guardarla (validar_ubicacion) o exigir que
   // caiga dentro del radio de la sede del empleado (validar_sede).
@@ -210,7 +212,14 @@ export async function registrarPaso(empleadoId, ubicacion = null) {
     // decía "se enviará sola" y el reintento la rechazaba para siempre.
     const cola = leerCola();
     cola.push({ ...cuerpo, ts_dispositivo: new Date().toISOString(), diferido: true });
-    guardarCola(cola);
+    try {
+      guardarCola(cola);
+    } catch {
+      // Almacenamiento lleno: las fotos son lo que pesa. Se sueltan las de la
+      // cola y se guardan solo las marcaciones — la hora vale más que la foto.
+      for (const item of cola) delete item.foto;
+      guardarCola(cola);
+    }
     return { pendiente: true, enCola: cola.length };
   }
   let d = null;

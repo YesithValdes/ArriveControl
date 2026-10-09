@@ -73,6 +73,7 @@ function Icon({ name, size = 17 }) {
     link: <><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></>,
     userPlus: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" /></>,
     archive: <><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></>,
+    camera: <><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></>,
     eye: <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></>,
     eyeOff: <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /></>,
     copy: <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
@@ -1272,6 +1273,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // Drawer de detalle: línea de tiempo de marcaciones de una persona en un día.
   const [drawer, setDrawer] = useState(null); // { personId, personName, desde, hasta }
   const [evForm, setEvForm] = useState(null); // { mode:'add'|'edit', eventId?, fecha, type, time, reason }
+  const [fotoVer, setFotoVer] = useState(null); // id de la marcación cuya foto se está viendo
   const [openDia, setOpenDia] = useState(null); // día expandido dentro del drawer
   const [lugarAbierto, setLugarAbierto] = useState(null); // marcación con el detalle de ubicación abierto
   // Semanas desplegadas en el cajón: { lunes: true|false }. Sin entrada, la
@@ -5191,6 +5193,22 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
       </nav>
 
+      {/* Foto del registro de una marcación, encima del drawer. Clic fuera o Esc la cierra. */}
+      {fotoVer && (
+        <div
+          role="dialog" aria-modal="true" aria-label="Foto del registro" tabIndex={-1}
+          ref={(n) => n?.focus()}
+          onClick={() => setFotoVer(null)}
+          onKeyDown={(ev) => ev.key === 'Escape' && setFotoVer(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <img
+            src={`/api/marcaciones/${encodeURIComponent(fotoVer)}/foto`} alt="Foto del registro"
+            style={{ maxWidth: '100%', maxHeight: '90vh', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,.4)' }}
+          />
+        </div>
+      )}
+
       {/* Drawer de detalle: marcaciones de una persona en un día, editables */}
       {drawer && (
         <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setDrawer(null)}>
@@ -5339,6 +5357,15 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                 </span>
                                 {/* Solo iconos: el nombre va en el title y para el lector de pantalla. */}
                                 <span className="tl-actions">
+                                  {e.tieneFoto && (
+                                    <button
+                                      className="btn small btn-ico"
+                                      title="Ver foto del registro" aria-label="Ver foto del registro"
+                                      onClick={() => setFotoVer(e.id)}
+                                    >
+                                      <Icon name="camera" size={14} />
+                                    </button>
+                                  )}
                                   {permisos.corregir && (<>
                                   <button
                                     className="btn small btn-ico"

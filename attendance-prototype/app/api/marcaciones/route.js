@@ -13,6 +13,7 @@ import { registrarPaso, listarMarcaciones, guardarDireccion, acumuladoDelDia } f
 import { direccionDesdeCoordenadas } from '../../../lib/geocodificar.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
 import { puedeEscribir } from '../../../lib/empresas.js'
+import { decodificarImagen, prepararFotoMarcacion } from '../../../lib/avatar.js'
 
 export const runtime = 'nodejs'
 
@@ -66,9 +67,18 @@ export async function POST(req) {
     return NextResponse.json({ ok: false, error: 'Un envío diferido necesita ts_dispositivo.' }, { status: 400 })
   }
 
+  // Foto del registro (opcional): el cuadro de la cámara al confirmar la
+  // identidad. Si no llega o no se puede leer, la marcación se guarda igual
+  // sin ella — una foto rota no puede costarle a nadie su hora.
+  let foto = null
+  if (cuerpo?.foto) {
+    const { bytes } = decodificarImagen(cuerpo.foto)
+    if (bytes) foto = await prepararFotoMarcacion(bytes).catch(() => null)
+  }
+
   // sede_id "" (dispositivo sin sede, o colas viejas del kiosco) se vuelve
   // null: la columna es uuid y la cadena vacía revienta el insert con 500.
-  const r = await registrarPaso({ esquema: ctx.esquema, empleadoId, sedeId: sedeId || null, tsDispositivo: tsDispositivo ?? null, diferido: !!diferido, lat, lon, precisionM })
+  const r = await registrarPaso({ esquema: ctx.esquema, empleadoId, sedeId: sedeId || null, tsDispositivo: tsDispositivo ?? null, diferido: !!diferido, lat, lon, precisionM, foto })
   if (r.error) return NextResponse.json({ ok: false, error: r.error }, { status: 404 })
   // Fuera del rango de su sede (limitar ubicación): 400 con la causa — el
   // kiosco lo muestra tal cual y NO lo encola (reintentar daría lo mismo).

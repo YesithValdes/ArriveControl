@@ -56,6 +56,25 @@ const CAPTURE_GAP_MS = 450;
 // Fijo a propósito: no debe encogerse si se acorta la duración del resultado
 // (un arranque en frío de la función serverless puede tardar varios segundos).
 const ESPERA_RED_MS = 8800;
+const LADO_FOTO_REGISTRO = 320;     // lado mayor de la foto que va con la marcación
+
+/**
+ * Foto del registro: el cuadro actual del video como JPEG pequeño (data URL,
+ * ~20 KB). Null si la cámara no tiene cuadro — la marcación sale sin foto.
+ */
+function fotoDelRegistro(video) {
+  try {
+    const w = video?.videoWidth, h = video?.videoHeight;
+    if (!w || !h) return null;
+    const k = Math.min(1, LADO_FOTO_REGISTRO / Math.max(w, h));
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.75);
+  } catch {
+    return null;
+  }
+}
 
 /** El icono de la app en línea: el mismo símbolo «Presente ✓» de public/icon.svg. */
 function LogoApp({ size = 40 }) {
@@ -1500,6 +1519,9 @@ export default function KioskMode() {
 
     // Identidad confirmada → el SERVIDOR decide ENTRADA o SALIDA y pone la
     // hora. Mientras responde, la pantalla muestra "registrando…".
+    // Foto del registro: el cuadro de ESTE momento (antes de esperar al GPS),
+    // que se guarda junto con la marcación.
+    const foto = fotoDelRegistro(videoRef.current);
     setResult({ kind: 'saving', name: person.name, time });
     setUi('ok');
     st.until = performance.now() + ESPERA_RED_MS; // margen fijo para la red
@@ -1517,7 +1539,7 @@ export default function KioskMode() {
     console.log(gpsEnvio
       ? `[KioscoGPS] marcación de ${person.name} con ubicación ${gpsEnvio.lat.toFixed(7)}, ${gpsEnvio.lon.toFixed(7)} (±${Math.round(gpsEnvio.precision_m)} m, de hace ${Math.round((Date.now() - gpsEnvio.ts) / 1000)} s)`
       : `[KioscoGPS] marcación de ${person.name} SIN ubicación (sin permiso, sin señal, o fix de más de 2 min)`);
-    registrarPaso(person.id, gpsEnvio).then((paso) => {
+    registrarPaso(person.id, gpsEnvio, foto).then((paso) => {
       // Lo que no es pantalla va SIEMPRE, se haya detenido o no el kiosco.
       if (paso.pendiente) setPendientes(paso.enCola);
       // Salió sin ubicación: cuando llegue el fix (hasta 60 s), se adjunta.
@@ -1567,6 +1589,8 @@ export default function KioskMode() {
         flag: null,
         // Solo en la salida: cuánto lleva trabajado hoy, según el servidor.
         trabajadoHoySeg: paso.tipo === 'salida' ? paso.trabajadoHoySeg : null,
+        // El servidor confirma si la foto quedó guardada con la marcación.
+        fotoGuardada: Boolean(paso.marcacion?.tiene_foto),
       });
       setUi('ok');
     }).catch((e) => {
@@ -1721,6 +1745,7 @@ export default function KioskMode() {
 
               {(result.kind === 'in' || result.kind === 'out') && <div style={s.kHora}>{result.time}</div>}
               {result.kind === 'out' && result.trabajadoHoySeg > 0 && <div style={s.kDetalle}>{horasLegibles(result.trabajadoHoySeg)} trabajadas</div>}
+              {(result.kind === 'in' || result.kind === 'out') && result.fotoGuardada && <div style={s.kDetalle}>📷 Se guardó la foto</div>}
               {result.kind === 'dup' && <div style={s.kDetalle}>{result.lastLabel} registrada: {result.lastTime}</div>}
               {result.kind === 'prueba' && <div style={s.kDetalle}>No se registró ninguna marcación{result.distance != null ? ` · medida ${result.distance}` : ''}</div>}
               {result.kind === 'pending' && <div style={s.kDetalle}>Guardada; se enviará sola</div>}
@@ -1733,7 +1758,6 @@ export default function KioskMode() {
           <div style={s.kBarra}><div style={{ ...s.kBarraRelleno, width: `${scanProg}%`, ...(ver ? { background: ver.borde, width: '100%' } : {}) }} /></div>
         </div>
 
-        <div style={s.hudPrivacidad}>🔐 No se guardan fotos</div>
       </div>
 
       {/* Estado 1 · Reposo (solo con el kiosco DETENIDO: corriendo, la base
@@ -1818,7 +1842,6 @@ export default function KioskMode() {
               {syncMotivo && <div style={s.errNote}>No se pudieron enviar: {syncMotivo}</div>}
             </div>
           )}
-          <div style={s.privacy}>🔐 No se guardan fotos</div>
           {loadError && <div style={s.errNote}>{loadError}</div>}
         </div>
       )}
