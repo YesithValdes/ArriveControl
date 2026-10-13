@@ -64,7 +64,22 @@ export async function conEmpresa(esquema, fn) {
   try {
     await client.query('begin')
     await client.query(`set local search_path to ${esquema}`)
-    const r = await fn(client)
+    const cambiadas = new Set()
+    const db = new Proxy(client, {
+      get(target, propiedad) {
+        if (propiedad === 'query') return async (...args) => {
+          const sql = String(typeof args[0] === 'string' ? args[0] : args[0]?.text ?? '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*--.*$/gm, '')
+          const tabla = /^\s*(?:insert\s+into|update|delete\s+from)\s+"?(empleados|marcaciones|correcciones|config_laboral|sedes|horarios|cierres|horas_pagadas)"?\b/i.exec(sql)?.[1]?.toLowerCase()
+          const resultado = await target.query(...args)
+          if (tabla && resultado.rowCount > 0) cambiadas.add(tabla)
+          return resultado
+        }
+        const valor = Reflect.get(target, propiedad, target)
+        return typeof valor === 'function' ? valor.bind(target) : valor
+      },
+    })
+    const r = await fn(db)
+    if (cambiadas.size) await client.query("select pg_notify('arrive_panel_cambios', $1)", [JSON.stringify({ esquema, tablas: [...cambiadas] })])
     await client.query('commit')
     return r
   } catch (e) {

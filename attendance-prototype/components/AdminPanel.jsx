@@ -1267,27 +1267,39 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [semanasAbiertas, setSemanasAbiertas] = useState({});
   const semanaAbierta = (lunes) => semanasAbiertas[lunes] ?? (lunes === lunesDe(todayKey()));
   // refresh = re-sincronizar desde Postgres y re-renderizar.
-  const refresh = () => {
-    syncPanel()
-      .then(() => { setCfg(getLaborConfig()); setTick((t) => t + 1); })
-      .catch((e) => console.error('No se pudo sincronizar el panel:', e.message));
-  };
+  const refrescoRef = useRef({ activo: false, pendiente: false, montado: true });
+  const refresh = useCallback(async () => {
+    const estado = refrescoRef.current;
+    if (!estado.montado) return;
+    if (estado.activo) { estado.pendiente = true; return; }
+    estado.activo = true;
+    try {
+      do {
+        estado.pendiente = false;
+        await syncPanel();
+        if (!estado.montado) return;
+        setCfg(getLaborConfig());
+        setTick((t) => t + 1);
+      } while (estado.pendiente);
+    } catch (e) {
+      console.error('No se pudo sincronizar el panel:', e.message);
+    } finally {
+      estado.activo = false;
+    }
+  }, []);
 
   useEffect(() => {
-    refresh(); // carga inicial desde la API
-    // Casi en vivo: sondeo corto + refresco inmediato al volver a la pestaña,
-    // para que las marcaciones del kiosco (u otro admin) aparezcan enseguida.
-    const id = setInterval(refresh, 10000);
-    const alVolver = () => { if (document.visibilityState === 'visible') refresh(); };
-    document.addEventListener('visibilitychange', alVolver);
-    window.addEventListener('focus', alVolver);
+    refrescoRef.current.montado = true;
+    const eventos = new EventSource('/api/eventos-panel');
+    const alCambiar = () => refresh();
+    eventos.addEventListener('cambio', alCambiar);
+    refresh(); // única carga inicial; después solo cambios guardados
     return () => {
-      clearInterval(id);
-      document.removeEventListener('visibilitychange', alVolver);
-      window.removeEventListener('focus', alVolver);
+      refrescoRef.current.montado = false;
+      eventos.removeEventListener('cambio', alCambiar);
+      eventos.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refresh]);
 
   // La guía marca "✓ Vincula el dispositivo" con la lista real: se carga al
   // abrirla (normalmente solo se carga al entrar a la pestaña Dispositivos).
