@@ -1590,8 +1590,13 @@ export default function KioskMode() {
         // pierden; estos números no — son la base del ajuste de umbrales).
         metricas,
       });
-      // Evaluación de SFace en sombra (no hace nada con la fase apagada).
-      try { evaluarEnSombra(st.recortesSF, ok, person, metricas); } catch { /* nunca frena el kiosco */ }
+      // Evaluación de SFace en sombra (no hace nada con la fase apagada). Solo
+      // si hubo decisión de IDENTIDAD: un «no parpadeó» no dice nada del modelo.
+      // Se evalúa la identidad (`person` viene solo si el modelo la reconoció),
+      // no el resultado final: un rechazo por sede ajena sí fue un acierto.
+      if (!failReason?.includes('parpadeo')) {
+        try { evaluarEnSombra(st.recortesSF, person != null, person, metricas); } catch { /* nunca frena el kiosco */ }
+      }
     }
 
     const time = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });

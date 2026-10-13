@@ -11,7 +11,7 @@
  * Se carga SOLO si la evaluación está activa: con la fase apagada, el kiosco
  * no baja estos 38 MB.
  */
-import { cargarV2 } from './rostroV2.js'
+import { cargarV2, enFila } from './rostroV2.js'
 import { SFACE_LARGO, normalizar } from '../utils/evaluacionSface.js'
 
 export const SFACE_URL = '/models/eval/sface.onnx'
@@ -27,20 +27,13 @@ export function cargarSFace() {
       const r = await fetch(SFACE_URL, { priority: 'low' })
       if (!r.ok) throw new Error(`SFace: HTTP ${r.status}`)
       const bytes = new Uint8Array(await r.arrayBuffer())
-      const sesion = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] })
+      // En la fila del runtime: crear la sesión tampoco debe pisar una captura.
+      const sesion = await enFila(() => ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] }))
       return { ort, sesion }
     })()
     sesionProm.catch(() => { sesionProm = null })
   }
   return sesionProm
-}
-
-// Una inferencia a la vez (como el modelo actual): no compite con él.
-let cola = Promise.resolve()
-const enFila = (fn) => {
-  const p = cola.then(fn, fn)
-  cola = p.catch(() => {})
-  return p
 }
 
 /** Vector SFace (128, L2) de un recorte alineado 112×112 (ImageData RGBA). */

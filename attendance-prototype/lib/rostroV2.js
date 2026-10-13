@@ -211,8 +211,11 @@ export function puntos5DeFaceApi(landmarks) {
 
 // Una sesión de onnxruntime-web no admite dos `run` a la vez: se encolan. Solo
 // cambia el orden en el tiempo, nunca el resultado.
+// La fila es ÚNICA para todo el runtime: la comparte SFace (lib/sfaceWeb.js),
+// para que una medición de la evaluación nunca corra a la par de una captura
+// del modelo que decide.
 let colaRun = Promise.resolve()
-const enFila = (fn) => {
+export const enFila = (fn) => {
   const p = colaRun.then(fn, fn)
   colaRun = p.catch(() => {})
   return p
