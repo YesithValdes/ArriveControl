@@ -306,14 +306,15 @@ export function logIntento({ empleadoId = null, aceptado, distancia = null, live
  * prueba— devuelve { fase: 'apagada' } y no baja nada. Nunca lanza.
  */
 export async function cargarEvaluacionSface() {
-  if (getPruebaToken()) return { fase: 'apagada', inscritos: [] };
+  const apagada = { fase: 'apagada', modelos: [], inscritos: [] };
+  if (getPruebaToken()) return apagada;
   try {
     const r = await fetch('/api/evaluacion-sface?kiosco=1', { headers: headers() });
     const d = await r.json().catch(() => null);
-    if (!r.ok || !d?.ok) return { fase: 'apagada', inscritos: [] };
-    return { fase: d.fase, hasta: d.hasta ?? null, inscritos: d.inscritos ?? [] };
+    if (!r.ok || !d?.ok) return apagada;
+    return { fase: d.fase, hasta: d.hasta ?? null, modelos: d.modelos ?? [], inscritos: d.inscritos ?? [] };
   } catch {
-    return { fase: 'apagada', inscritos: [] };
+    return apagada;
   }
 }
 

@@ -21,8 +21,8 @@ import { euclideanDistance, MATCH_THRESHOLD, MARGEN_MINIMO } from '../utils/face
 import { cargarV2, descriptorV2, puntos5DeMediaPipe, similitudV2, promedioV2, recorteAlineado, V2_UMBRAL_SIM, V2_MARGEN_SIM } from '../lib/rostroV2.js';
 import { modelosDesdeApk } from '../lib/modelosApk.js';
 // Evaluación de SFace EN SOMBRA: mide, nunca decide (app/api/evaluacion-sface).
-import { cargarSFace, vectorSFace } from '../lib/sfaceWeb.js';
-import { ranking, normalizar, SFACE_MAX_POR_PERSONA } from '../utils/evaluacionSface.js';
+import { cargarModelo, vectorDe } from '../lib/sfaceWeb.js';
+import { ranking, normalizar, MODELOS, SFACE_MAX_POR_PERSONA } from '../utils/evaluacionSface.js';
 import {
   cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
   getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
@@ -302,8 +302,9 @@ export default function KioskMode() {
   // Máquina de estados: idle | challenge | result | cooldown
   const estadoReposo = () => ({ phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], descsV2: [], recortesSF: [], lastCapture: 0, captures: 0 });
   // Evaluación de SFace (ver evaluarEnSombra): fase vigente y vectores inscritos.
-  const evalRef = useRef({ fase: 'apagada', inscritos: new Map() });
-  const sfaceListoRef = useRef(false);
+  const evalRef = useRef({ fase: 'apagada', modelos: [], inscritos: {} });
+  const modelosListosRef = useRef(new Set()); // ya cargados en este aparato
+  const cargandoModelosRef = useRef(new Set());
   const stateRef = useRef(estadoReposo());
 
   // Arrancar y detener sin carreras. Salir de la app detiene el kiosco, y eso
@@ -990,11 +991,13 @@ export default function KioskMode() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configurado]);
 
-  // ── Evaluación de SFace, en sombra ───────────────────────────────────────
+  // ── Evaluación de modelos faciales, en sombra ────────────────────────────
   // Solo existe si el superadmin habilitó la empresa y el administrador la
   // puso en una fase activa (inscripción o medición). Con la fase apagada el
-  // kiosco no baja el modelo ni los vectores, y nada cambia. Se revisa cada
-  // 2 minutos: al activarla o apagarla desde el panel, el kiosco se entera solo.
+  // kiosco no baja modelos ni vectores, y nada cambia. Se revisa cada
+  // 2 minutos: al activarla, apagarla o cambiar de modelos desde el panel, el
+  // kiosco se entera solo. Cada modelo carga por su cuenta: si uno pesado
+  // (AuraFace) falla o tarda, los demás siguen.
   useEffect(() => {
     if (!configurado || esPrueba) return undefined;
     let vigente = true;
@@ -1002,11 +1005,18 @@ export default function KioskMode() {
       if (document.visibilityState !== 'visible') return;
       const e = await cargarEvaluacionSface();
       if (!vigente) return;
-      evalRef.current = { fase: e.fase, inscritos: new Map(e.inscritos.map((x) => [x.empleado_id, x.vectores])) };
-      if (e.fase !== 'apagada' && !sfaceListoRef.current) {
-        cargarSFace()
-          .then(() => { sfaceListoRef.current = true; console.log(`[Evaluación] SFace listo · fase ${e.fase} · ${e.inscritos.length} inscrito(s)`); })
-          .catch((err) => console.warn('[Evaluación] SFace no cargó (el kiosco sigue igual):', err?.message || err));
+      const inscritos = {};
+      for (const m of e.modelos) inscritos[m] = new Map();
+      for (const x of e.inscritos) inscritos[x.modelo ?? 'sface']?.set(x.empleado_id, x.vectores);
+      evalRef.current = { fase: e.fase, modelos: e.modelos, inscritos };
+      if (e.fase === 'apagada') return;
+      for (const m of e.modelos) {
+        if (modelosListosRef.current.has(m) || cargandoModelosRef.current.has(m)) continue;
+        cargandoModelosRef.current.add(m);
+        cargarModelo(m)
+          .then(() => { modelosListosRef.current.add(m); console.log(`[Evaluación] ${m} listo · fase ${e.fase}`); })
+          .catch((err) => console.warn(`[Evaluación] ${m} no cargó (el kiosco sigue igual):`, err?.message || err))
+          .finally(() => cargandoModelosRef.current.delete(m));
       }
     };
     revisar();
@@ -1016,55 +1026,68 @@ export default function KioskMode() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configurado]);
 
+  /** Modelos activos en la evaluación Y ya cargados en este aparato. */
+  const modelosEnUso = () => {
+    const ev = evalRef.current;
+    if (ev.fase === 'apagada') return [];
+    return (ev.modelos ?? []).filter((m) => modelosListosRef.current.has(m));
+  };
+
   /**
-   * Después de cada decisión del modelo actual, mide SFace con los MISMOS
-   * recortes. Corre aparte (setTimeout) y cualquier error se traga: la
-   * evaluación jamás frena ni cambia una marcación.
+   * Después de cada decisión del modelo actual, mide cada modelo en
+   * evaluación con los MISMOS recortes. Corre aparte (setTimeout), de a un
+   * modelo, y cualquier error se traga: jamás frena ni cambia una marcación.
    *  · Inscripción: a quien el modelo actual CONFIRMÓ se le guardan vectores
-   *    SFace (hasta 3).
-   *  · Medición: se anota a quién habría elegido SFace, con qué similitud y
-   *    en cuánto tiempo.
+   *    de cada modelo (hasta 3 por modelo).
+   *  · Medición: se anota a quién habría elegido cada modelo, con qué
+   *    similitud y en cuánto tiempo.
    */
   function evaluarEnSombra(recortes, ok, person, metricas) {
     const ev = evalRef.current;
-    if (!recortes?.length || ev.fase === 'apagada' || !sfaceListoRef.current) return;
+    const modelos = modelosEnUso();
+    if (!recortes?.length || modelos.length === 0) return;
     if (ev.fase === 'inscripcion' && (!ok || !person)) return;
-    // Medir a alguien que no está inscrito no compara nada.
-    if (ev.fase === 'medicion' && ok && person && !ev.inscritos.has(person.id)) return;
     const lista = recortes.slice();
     setTimeout(async () => {
-      try {
-        const t0 = performance.now();
-        const vectores = [];
-        for (const r of lista) vectores.push(await vectorSFace(r));
-        const ms = (performance.now() - t0) / vectores.length;
-        if (ev.fase === 'inscripcion') {
-          const actuales = ev.inscritos.get(person.id) ?? [];
-          for (const v of vectores) {
-            if (actuales.length >= SFACE_MAX_POR_PERSONA) break;
-            const r = await enviarEvaluacionSface({ tipo: 'inscripcion', empleado_id: person.id, vector: v });
-            if (r?.completo || !r?.ok) break;
-            actuales.push(v);
+      for (const modelo of modelos) {
+        const inscritos = ev.inscritos[modelo] ?? new Map();
+        // Medir a alguien que no está inscrito en ESE modelo no compara nada.
+        if (ev.fase === 'medicion' && ok && person && !inscritos.has(person.id)) continue;
+        try {
+          const t0 = performance.now();
+          const vectores = [];
+          // Los pesados (AuraFace) procesan menos recortes: comparten la fila
+          // con el modelo que decide y la siguiente persona no debe esperar.
+          for (const r of lista.slice(0, MODELOS[modelo]?.recortes ?? 2)) vectores.push(await vectorDe(modelo, r));
+          const ms = (performance.now() - t0) / vectores.length;
+          if (ev.fase === 'inscripcion') {
+            const actuales = inscritos.get(person.id) ?? [];
+            for (const v of vectores) {
+              if (actuales.length >= SFACE_MAX_POR_PERSONA) break;
+              const r = await enviarEvaluacionSface({ tipo: 'inscripcion', modelo, empleado_id: person.id, vector: v });
+              if (r?.completo || !r?.ok) break;
+              actuales.push(v);
+            }
+            inscritos.set(person.id, actuales);
+            console.log(`[Evaluación] ${modelo} · ${person.name}: ${actuales.length}/${SFACE_MAX_POR_PERSONA} (${Math.round(ms)} ms c/u)`);
+            continue;
           }
-          ev.inscritos.set(person.id, actuales);
-          console.log(`[Evaluación] ${person.name}: ${actuales.length}/${SFACE_MAX_POR_PERSONA} vectores SFace (${Math.round(ms)} ms c/u)`);
-          return;
-        }
-        const suma = new Array(vectores[0].length).fill(0);
-        for (const v of vectores) for (let i = 0; i < v.length; i++) suma[i] += v[i];
-        const { top1, top2 } = ranking(normalizar(suma), ev.inscritos);
-        enviarEvaluacionSface({
-          tipo: 'intento', referencia_id: person?.id ?? null, aceptado_actual: ok,
-          sim_actual: metricas?.v2_mejor ?? null,
-          sface_top1: top1.id, sface_sim1: top1.id ? top1.sim : null,
-          sface_top2: top2.id, sface_sim2: top2.id ? top2.sim : null,
-          inscritos: ev.inscritos.size, ms,
-        });
-        console.log(`[Evaluación] actual: ${ok ? person?.name : 'rechazo'} · SFace: ${top1.id ? `${top1.sim.toFixed(3)} / ${top2.id ? top2.sim.toFixed(3) : '—'}` : 'sin inscritos'} · ${Math.round(ms)} ms`);
-      } catch (e) {
-        console.warn('[Evaluación] SFace falló en esta medición (la marcación no se afecta):', e?.message || e);
-        if (ev.fase === 'medicion') {
-          enviarEvaluacionSface({ tipo: 'intento', referencia_id: person?.id ?? null, aceptado_actual: ok, inscritos: ev.inscritos.size, error: String(e?.message || e) });
+          const suma = new Array(vectores[0].length).fill(0);
+          for (const v of vectores) for (let i = 0; i < v.length; i++) suma[i] += v[i];
+          const { top1, top2 } = ranking(normalizar(suma), inscritos);
+          enviarEvaluacionSface({
+            tipo: 'intento', modelo, referencia_id: person?.id ?? null, aceptado_actual: ok,
+            sim_actual: metricas?.v2_mejor ?? null,
+            sface_top1: top1.id, sface_sim1: top1.id ? top1.sim : null,
+            sface_top2: top2.id, sface_sim2: top2.id ? top2.sim : null,
+            inscritos: inscritos.size, ms,
+          });
+          console.log(`[Evaluación] ${modelo} · actual: ${ok ? person?.name : 'rechazo'} · ${top1.id ? `${top1.sim.toFixed(3)} / ${top2.id ? top2.sim.toFixed(3) : '—'}` : 'sin inscritos'} · ${Math.round(ms)} ms`);
+        } catch (e) {
+          console.warn(`[Evaluación] ${modelo} falló en esta medición (la marcación no se afecta):`, e?.message || e);
+          if (ev.fase === 'medicion') {
+            enviarEvaluacionSface({ tipo: 'intento', modelo, referencia_id: person?.id ?? null, aceptado_actual: ok, inscritos: inscritos.size, error: String(e?.message || e) });
+          }
         }
       }
     }, 0);
@@ -1381,7 +1404,7 @@ export default function KioskMode() {
               const p5 = puntos5DeMediaPipe(lm, video.videoWidth, video.videoHeight);
               // Evaluación activa: se guarda el MISMO recorte para medir SFace
               // después de decidir. Es un dibujo en un lienzo (barato).
-              if (sfaceListoRef.current && evalRef.current.fase !== 'apagada') {
+              if (modelosEnUso().length > 0) {
                 try { (st.recortesSF ??= []).push(recorteAlineado(video, p5)); } catch { /* nunca frena el kiosco */ }
               }
               descriptorV2(video, p5)

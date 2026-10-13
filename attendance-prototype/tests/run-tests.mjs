@@ -1674,6 +1674,17 @@ await test('evaluación SFace: reglas de vectores, ranking, fases y reporte', as
     { aceptado_actual: true, referencia_id: 'ana', error: 'x' },
   ]);
   assert.deepEqual([r.total, r.coinciden, r.confunde, r.sfaceRechaza, r.sfaceSolo, r.errores], [5, 1, 1, 1, 1, 1]);
+  // Varios modelos: cada uno con su largo y su umbral; AuraFace no viene activo.
+  const v512 = new Array(512).fill(0); v512[3] = 1;
+  assert.ok(ev.esVector(v512, 'auraface') && !ev.esVector(v512, 'sface') && !ev.esVector(uno(0), 'auraface'));
+  assert.ok(ev.acepta('auraface', 0.5, 0.1) && !ev.acepta('auraface', 0.4, null) && ev.acepta('sface', 0.4, null));
+  assert.deepEqual(ev.MODELOS_POR_DEFECTO, ['sface']);
+  assert.deepEqual(ev.modelosValidos(['auraface', 'sface']), ['auraface', 'sface']);
+  assert.equal(ev.modelosValidos([]), null);
+  assert.equal(ev.modelosValidos(['sface', 'otro']), null);
+  // El modelo de fuera se verifica por su huella.
+  assert.match(ev.MODELOS.auraface.sha256, /^[0-9a-f]{64}$/);
+  assert.match(ev.MODELOS.auraface.url, /\/resolve\/[0-9a-f]{40}\//, 'fijado a una revisión exacta');
 });
 await test('evaluación SFace: la habilita el superadmin, arranca apagada y el kiosco nunca decide con ella', () => {
   const leer = (p) => leerCss(new URL(`../${p}`, import.meta.url), 'utf8');
@@ -1683,10 +1694,12 @@ await test('evaluación SFace: la habilita el superadmin, arranca apagada y el k
   assert.match(leer('db/migrations/control/017_laboratorio_facial.sql'), /laboratorio_facial boolean not null default false/);
   assert.match(leer('db/migrations/empresa/025_evaluacion_sface.sql'), /estado\s+text not null default 'apagada'/);
   const k = leer('components/KioskMode.jsx');
-  // Con la fase apagada no se guarda ni se mide nada.
-  assert.match(k, /if \(!recortes\?\.length \|\| ev\.fase === 'apagada' \|\| !sfaceListoRef\.current\) return;/);
-  // SFace no entra en la decisión: solo se llama desde la evaluación en sombra.
-  assert.equal((k.match(/vectorSFace\(/g) ?? []).length, 1);
+  // Con la fase apagada no hay modelos en uso: no se guarda ni se mide nada.
+  assert.match(k, /if \(ev\.fase === 'apagada'\) return \[\];/);
+  assert.match(k, /if \(!recortes\?\.length \|\| modelos\.length === 0\) return;/);
+  // Los modelos evaluados no entran en la decisión: solo los llama la evaluación en sombra.
+  assert.equal((k.match(/vectorDe\(/g) ?? []).length, 1);
+  assert.match(leer('db/migrations/empresa/026_evaluacion_modelos.sql'), /modelos text\[\] not null default array\['sface'\]/);
   assert.match(leer('components/AdminPanel.jsx'), /sesion\?\.laboratorioFacial && \(/);
 });
 await test('el rol consulta no marca ni baja rostros por la API (solo un kiosco o quien tenga permiso)', () => {
