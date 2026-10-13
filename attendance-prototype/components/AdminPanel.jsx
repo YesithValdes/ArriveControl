@@ -2033,7 +2033,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           lunes,
           horasPorDia: new Map(dias.map((d) => [d.fecha, d.horas])),
           festivos,
-          horasHorario: (fecha) => horasFranja(franjaEsperada(drawerPersona, fecha)),
           horasSemana: cfg.weeklyHours ?? 42,
           hoy: todayKey(),
         });
@@ -5472,11 +5471,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           {s.porDia && CODIGOS_HORA.every((c) => s.porCodigo[c] <= 0.001) && (
                             <span className="sem-chip" title="Ningún día pasó de la jornada de su horario">Sin extra</span>
                           )}
-                          {s.festivosAcreditados.map((f) => (
-                            <span className="sem-chip festivo" key={f.fecha} title={`Festivo del ${fmtDM(f.fecha)}: ${fmtH(f.horas)} acreditadas por horario en la cuenta de la semana`}>
-                              F {fmtDM(f.fecha)} +{fmtH(f.horas)}
-                            </span>
-                          ))}
                         </span>
                       </header>
 

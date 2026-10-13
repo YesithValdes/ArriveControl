@@ -27,8 +27,8 @@
  *  - Domingo y festivo NO entran en esa cuenta: lo que se trabaje esos días
  *    lleva recargo desde la primera hora, se cumplan o no las 42 (art. 179),
  *    y por eso sale aunque la semana siga en curso.
- *  - Un festivo entre semana es día que no se trabaja, pero la semana no se
- *    acorta: se ACREDITAN las horas del horario de ese día a la cuenta.
+ *  - Un festivo entre semana NO suma horas a la cuenta: solo cuenta lo
+ *    marcado (que además es dominical).
  *  - Nocturno: cada tramo se PARTE en la franja nocturna configurada
  *    (21:00–06:00 de fábrica) y cada pedazo sale con su propio código.
  *
@@ -257,8 +257,8 @@ export function emparejarMarcas(e, { festivos, hoy = hoyEnBogota() }) {
 
 /**
  * Horas del HORARIO de un empleado en una fecha: salida − entrada − almuerzo.
- * Null si ese día no tiene horario. Es lo que se ACREDITA cuando el día cae
- * en festivo: no se trabaja, y la semana no se acorta por eso.
+ * Null si ese día no tiene horario. Es la jornada contra la que se mide cada
+ * día en el modo de extra «por día».
  *
  * Misma fuente que `finDeHorario`: el horario por día cuando existe, y los
  * campos uniformes de respaldo para los empleados de antes.
@@ -457,7 +457,6 @@ export function calcularRegistros(
         lunes,
         horasPorDia,
         festivos,
-        horasHorario: (fecha) => horasDeHorario(e, fecha),
         horasSemana: horasSemanaEn(vigencias, lunes),
         hoy,
       })

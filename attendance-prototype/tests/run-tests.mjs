@@ -316,10 +316,10 @@ await test('el domingo NO entra en las 42: no se compensa con los días cortos',
   assert.deepEqual(regs.map((r) => [r.fecha, r.tipoHora, r.horas]), [[SEMANA.dom, 'HEDDF', 3]]);
 });
 
-await test('festivo entre semana: lo trabajado es festiva, y su horario se acredita a las 42', () => {
+await test('festivo entre semana: lo trabajado es festiva, y el festivo NO suma horas a las 42', () => {
   // Lunes festivo con horario de 7h 30. Martes a viernes 9 h (36 h) y sábado
-  // 4h 30 = 40,5 h reales; con las 7,5 h acreditadas son 48 → 6 h extra. Sin
-  // el crédito, 40,5 h no habrían generado nada.
+  // 4h 30 = 40,5 h reales: no pasan de 42, así que no hay extra de semana.
+  // (Antes se acreditaban las 7,5 h del horario y salían 6 h extra.)
   const LV = { entrada: '09:00', salida: '17:30', almuerzo_min: 60 };
   const horario = { 1: LV, 2: LV, 3: LV, 4: LV, 5: LV, 6: { entrada: '09:00', salida: '13:30', almuerzo_min: 0 } };
   const semana = [
@@ -328,15 +328,11 @@ await test('festivo entre semana: lo trabajado es festiva, y su horario se acred
   ];
   const cfg = { ...CERRADA, festivos: new Set([SEMANA.lun]) };
   const sinMarcar = calcularRegistros(unEmpleado(semana, { jornadaDias: horario }), cfg);
-  assert.equal(totalExtra(sinMarcar), 6);
-  assert.ok(sinMarcar.every((r) => r.tipoHora === 'HED'));
+  assert.equal(totalExtra(sinMarcar), 0, '40,5 h no pasan de 42');
 
   const trabajado = calcularRegistros(unEmpleado([...turno(SEMANA.lun, '10:00', '12:00'), ...semana], { jornadaDias: horario }), cfg);
   assert.deepEqual(trabajado.filter((r) => r.fecha === SEMANA.lun).map((r) => [r.tipoHora, r.horas]), [['HEDDF', 2]]);
-  assert.equal(totalExtra(trabajado), 8, 'las 2 h festivas + las mismas 6 h de la semana');
-
-  const sinHorario = calcularRegistros(unEmpleado(semana), cfg);
-  assert.equal(sinHorario.length, 0, 'sin horario no hay nada que acreditar: 40,5 h no pasan de 42');
+  assert.equal(totalExtra(trabajado), 2, 'solo las 2 h festivas, con recargo');
 });
 
 await test('horas del horario de un día: salida − entrada − almuerzo', () => {
@@ -1190,35 +1186,28 @@ await test('el domingo va aparte: no entra en las 42 y es dominical siempre', ()
   assert.equal(r.extra, 0);
   assert.equal(r.trabajado, 45);
 });
-await test('festivo entre semana: se acreditan las horas de su horario, con aviso', () => {
-  // Lunes festivo sin marcar. Trabaja normal martes a sábado (34,5 h). Sin
-  // el crédito quedaría 7,5 h por debajo de 42; con él, la semana cuadra.
+await test('festivo entre semana sin marcar: NO suma horas a la semana', () => {
+  // Lunes festivo sin marcar. Trabaja normal martes a sábado (34,5 h): la
+  // cuenta es 34,5, sin horas regaladas por el festivo.
   const r = semana(
     { '2026-09-08': 7.5, '2026-09-09': 7.5, '2026-09-10': 7.5, '2026-09-11': 7.5, '2026-09-12': 4.5 },
     { festivos: new Set(['2026-09-07']) },
   );
-  assert.equal(r.acreditadas, 7.5);
-  assert.deepEqual(r.festivosAcreditados, [{ fecha: '2026-09-07', horas: 7.5 }]);
-  assert.equal(r.cuenta, 42);
+  assert.equal(r.cuenta, 34.5);
+  assert.equal(r.trabajado, 34.5);
   assert.equal(r.extra, 0);
-  assert.equal(r.faltante, 0);
+  assert.equal(r.faltante, 7.5);
+  assert.ok(!('acreditadas' in r) && !('festivosAcreditados' in r));
 });
-await test('festivo trabajado: lo marcado es dominical Y el horario se acredita igual', () => {
+await test('festivo trabajado: lo marcado es dominical y no entra en la cuenta de las 42', () => {
   const r = semana(
     { '2026-09-07': 3, '2026-09-08': 7.5, '2026-09-09': 7.5, '2026-09-10': 7.5, '2026-09-11': 7.5, '2026-09-12': 4.5 },
     { festivos: new Set(['2026-09-07']) },
   );
   assert.equal(r.dominicales, 3);
   assert.equal(r.ordinarias, 34.5);
-  assert.equal(r.acreditadas, 7.5);
+  assert.equal(r.cuenta, 34.5);
   assert.equal(r.extra, 0);
-});
-await test('festivo en un día sin horario no acredita nada', () => {
-  // Alguien de lunes a viernes: un sábado festivo no le cambia la cuenta.
-  const soloLV = (f) => (HORARIO_42(f) === 4.5 ? null : HORARIO_42(f));
-  const r = semana({}, { festivos: new Set(['2026-09-12']), horasHorario: soloLV });
-  assert.equal(r.acreditadas, 0);
-  assert.deepEqual(r.festivosAcreditados, []);
 });
 await test('la jornada semanal de la empresa es configurable', () => {
   const r = semana({ '2026-09-07': 8, '2026-09-08': 8, '2026-09-09': 8, '2026-09-10': 8, '2026-09-11': 8, '2026-09-12': 8 }, { horasSemana: 44 });
