@@ -47,6 +47,19 @@ const args = process.argv.slice(2);
 const soloEsquema = args.find((a) => a.startsWith('--solo='))?.split('=')[1] ?? null;
 const soloListar = args.includes('--listar');
 
+// Una base remota (Supabase) es PRODUCCIÓN mientras no se demuestre lo
+// contrario. `.env.local` llegó a apuntar a producción, y con eso «correr las
+// migraciones en local» las aplicaba a los clientes reales sin que nadie lo
+// decidiera. Ahora hay que pedirlo con todas las letras. Listar no escribe
+// nada, así que no lo exige.
+const esLocal = /@(localhost|127\.0\.0\.1)(:\d+)?\//.test(process.env.DATABASE_URL);
+if (!esLocal && !soloListar && !args.includes('--produccion')) {
+  const host = process.env.DATABASE_URL.replace(/^.*@/, '').replace(/\/.*$/, '');
+  console.error(`DATABASE_URL apunta a ${host}, que NO es una base local.`);
+  console.error('Si de verdad quieres migrar esa base, repite el comando con --produccion.');
+  process.exit(1);
+}
+
 /**
  * Nombre de esquema seguro para interpolar. NO se puede parametrizar (`$1` no
  * sirve para identificadores), así que se valida contra el mismo patrón que

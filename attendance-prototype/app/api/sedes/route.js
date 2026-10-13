@@ -13,7 +13,7 @@ export async function GET(req) {
   // El kiosco la consulta SIN sesión, con su clave de dispositivo: de ahí sale
   // a qué empresa pertenece. Antes bastaba con no pedir nada, porque solo
   // había una empresa; ahora hay que saber de quién son estas sedes.
-  const ctx = await empresaDeLaPeticion(req)
+  const ctx = await empresaDeLaPeticion(req, 'ver', 'panel:ver')
   if (!ctx) {
     return NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: 401 })
   }
@@ -24,7 +24,7 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
-  const { estado, esquema } = await estadoAcceso('config')
+  const { estado, esquema } = await estadoAcceso('config', { permisoInvitado: 'sedes:crear' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   let c

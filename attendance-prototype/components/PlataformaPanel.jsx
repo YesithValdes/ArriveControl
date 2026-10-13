@@ -25,6 +25,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from '../lib/auth-client';
 import { PLANES, planPorId, MONEDA } from '../lib/planes.js';
+import SoportePlataforma from './SoportePlataforma.jsx';
 
 const nf = new Intl.NumberFormat('es-CO');
 
@@ -167,6 +168,7 @@ const SECCIONES = [
   { id: 'resumen', label: 'Resumen', icon: 'dashboard', grupo: 'Plataforma' },
   { id: 'empresas', label: 'Empresas', icon: 'database', grupo: 'Plataforma' },
   { id: 'pagos', label: 'Pagos', icon: 'receipt', grupo: 'Plataforma' },
+  { id: 'soporte', label: 'Soporte', icon: 'lock', grupo: 'Plataforma' },
   { id: 'envios', label: 'Envíos automáticos', icon: 'mail', grupo: 'Sistema' },
 ];
 
@@ -831,6 +833,9 @@ export default function PlataformaPanel({ sesion }) {
             </section>
           </>
         )}
+
+        {/* Soporte: solo las empresas que lo autorizaron, y solo mientras dure */}
+        {tab === 'soporte' && <SoportePlataforma />}
 
         {/* Envíos automáticos: las tareas programadas */}
         {tab === 'envios' && (

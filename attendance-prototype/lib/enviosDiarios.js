@@ -70,7 +70,8 @@ export async function destinoResumen(esquema) {
 export async function resumenesDeEmpresa(esquema, fechaISO) {
   const filas = await conEmpresa(esquema, async (db) => (await db.query(
     `select m.empleado_id,
-            e.nombre, e.cedula, e.correo, e.jornada_dias, e.entrada_esperada, e.salida_esperada,
+            e.nombre, e.cedula, e.correo, e.jornada_dias, e.entrada_esperada, e.salida_esperada, e.almuerzo_min,
+            (select json_agg(json_build_object('tipo',p.tipo,'inicio',to_char(p.inicio,'YYYY-MM-DD'),'fin',to_char(p.fin,'YYYY-MM-DD'),'descontar',p.descontar,'hora_inicio',to_char(p.hora_inicio,'HH24:MI'),'hora_fin',to_char(p.hora_fin,'HH24:MI'))) from permisos p where p.empleado_id=e.id and p.anulado_en is null and p.inicio <= $1::date and p.fin >= $1::date) as permisos,
             m.tipo, s.nombre as sede,
             -- Minutos del día en hora Bogotá, con los segundos: el mismo
             -- criterio con el que se calculan las horas de nómina.
@@ -94,7 +95,7 @@ export async function resumenesDeEmpresa(esquema, fechaISO) {
   }
   const dow = new Date(`${fechaISO}T12:00:00Z`).getUTCDay()
   return [...porEmpleado.values()].map(({ empleado, marcas }) => ({
-    empleado, marcas, resumen: resumenDelDia(empleado, marcas, dow),
+    empleado, marcas, resumen: resumenDelDia(empleado, marcas, dow, fechaISO),
   }))
 }
 

@@ -38,7 +38,7 @@ const esDescriptor = (d) =>
   Array.isArray(d) && d.length === 128 && d.every((n) => typeof n === 'number' && Number.isFinite(n))
 
 export async function GET(req, { params }) {
-  const { estado, esquema } = await estadoAcceso('ver')
+  const { estado, esquema } = await estadoAcceso('ver', { permisoInvitado: 'colaboradores:ver' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params
@@ -49,7 +49,7 @@ export async function GET(req, { params }) {
 }
 
 export async function POST(req, { params }) {
-  const { estado, esquema } = await estadoAcceso('empleados')
+  const { estado, esquema } = await estadoAcceso('empleados', { permisoInvitado: 'colaboradores:editar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params
@@ -121,7 +121,7 @@ export async function POST(req, { params }) {
 }
 
 export async function DELETE(req, { params }) {
-  const { estado, esquema } = await estadoAcceso('empleados')
+  const { estado, esquema } = await estadoAcceso('empleados', { permisoInvitado: 'colaboradores:editar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params

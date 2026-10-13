@@ -13,7 +13,7 @@ import { estadoAcceso } from '../../../../lib/sesion'
 export const runtime = 'nodejs'
 
 export async function PATCH(req, { params }) {
-  const { estado, usuario, esquema } = await estadoAcceso('corregir')
+  const { estado, usuario, esquema } = await estadoAcceso('corregir', { permisoInvitado: 'marcaciones:editar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params
@@ -60,7 +60,7 @@ export async function PATCH(req, { params }) {
 }
 
 export async function DELETE(req, { params }) {
-  const { estado, usuario, esquema } = await estadoAcceso('corregir')
+  const { estado, usuario, esquema } = await estadoAcceso('corregir', { permisoInvitado: 'marcaciones:eliminar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params

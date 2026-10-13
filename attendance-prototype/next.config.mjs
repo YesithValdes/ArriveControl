@@ -12,6 +12,9 @@ const nextConfig = {
    */
   distDir: process.env.NEXT_DIST_DIR || '.next',
 
+  // `npm run dev:celular`: el celular entra por la IP del PC en la red local.
+  allowedDevOrigins: ['192.168.1.47'],
+
   /**
    * Los .sql de la plantilla de empresa TIENEN que viajar al servidor.
    *

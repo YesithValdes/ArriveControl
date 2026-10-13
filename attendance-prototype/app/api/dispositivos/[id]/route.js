@@ -12,7 +12,7 @@ import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../../lib/sesio
 export const runtime = 'nodejs'
 
 export async function PATCH(req, { params }) {
-  const { estado, empresa } = await estadoAcceso('config')
+  const { estado, empresa } = await estadoAcceso('config', { permisoInvitado: 'dispositivos:editar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
   const { id } = await params
   let c
@@ -37,7 +37,7 @@ export async function PATCH(req, { params }) {
 }
 
 export async function DELETE(req, { params }) {
-  const { estado, empresa } = await estadoAcceso('config')
+  const { estado, empresa } = await estadoAcceso('config', { permisoInvitado: 'dispositivos:eliminar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
   const { id } = await params
   // Se pasa la empresa para que nadie elimine el kiosco de otro cliente.

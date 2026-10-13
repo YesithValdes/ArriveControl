@@ -30,7 +30,7 @@ const TABLAS = {
 }
 
 export async function GET() {
-  const { estado, empresa, esquema } = await estadoAcceso('config')
+  const { estado, empresa, esquema } = await estadoAcceso('config', { permisoInvitado: 'seguridad:exportar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const datos = await conEmpresa(esquema, async (db) => {

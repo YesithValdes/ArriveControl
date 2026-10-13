@@ -37,7 +37,7 @@ async function leerCuerpo(req) {
 }
 
 export async function POST(req) {
-  const { esquema, quien, error } = await accesoHoras(req, 'liquidar')
+  const { esquema, quien, error } = await accesoHoras(req, 'liquidar', 'cierres:cerrar')
   if (error) return error
   const cuerpo = await leerCuerpo(req)
   if (cuerpo.error) return NextResponse.json({ ok: false, error: cuerpo.error }, { status: 400 })
@@ -46,7 +46,7 @@ export async function POST(req) {
 }
 
 export async function DELETE(req) {
-  const { esquema, error } = await accesoHoras(req, 'liquidar')
+  const { esquema, error } = await accesoHoras(req, 'liquidar', 'cierres:reabrir')
   if (error) return error
   const cuerpo = await leerCuerpo(req)
   if (cuerpo.error) return NextResponse.json({ ok: false, error: cuerpo.error }, { status: 400 })

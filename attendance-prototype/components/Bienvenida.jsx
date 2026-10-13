@@ -194,7 +194,7 @@ const CSS = `
 .bv-nota { margin: 28px 0 0; font-size: 13px; line-height: 1.6; color: #8698ab; }
 
 .bv-der { background: #fff; color: #233240; padding: 36px 32px; display: flex; flex-direction: column; }
-.bv-titulo { margin: 0 0 16px; font-size: 13.5px; color: #7b8ca0; }
+.bv-titulo { margin: 0 0 16px; font-size: 13.5px; color: #47607e; }
 .bv-vacio { margin: 0 0 20px; font-size: 14px; line-height: 1.6; color: #46586a; }
 
 .bv-correo { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: #46586a; margin-bottom: 16px; }
@@ -208,7 +208,7 @@ const CSS = `
 .bv-plan.sugerido { border-color: #1e3a5f; border-width: 2px; }
 .bv-plan.corto { opacity: .55; }
 .bv-plan-datos b { display: block; font-size: 15px; font-weight: 800; }
-.bv-plan-datos span { font-size: 12.5px; color: #7b8ca0; }
+.bv-plan-datos span { font-size: 12.5px; color: #47607e; }
 .bv-btn {
   font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap;
   padding: 10px 18px; border-radius: 9px; border: 1px solid #d8e2ee; background: #fff; color: #233240;
@@ -218,7 +218,7 @@ const CSS = `
 .bv-btn:disabled { opacity: .5; cursor: default; }
 
 .bv-error { margin: 14px 0 0; font-size: 13px; color: #b3403a; }
-.bv-pie { margin: 18px 0 0; font-size: 12px; line-height: 1.55; color: #7b8ca0; }
+.bv-pie { margin: 18px 0 0; font-size: 12px; line-height: 1.55; color: #47607e; }
 .bv-luego {
   margin-top: auto; padding-top: 20px; font: inherit; font-size: 13.5px; font-weight: 600;
   background: none; border: none; color: #1f5a99; cursor: pointer; text-align: center;

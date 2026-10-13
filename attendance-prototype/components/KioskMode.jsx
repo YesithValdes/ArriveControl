@@ -182,6 +182,23 @@ function offscreenConWebGL() {
 }
 
 /**
+ * El wasm de MediaPipe escribe sus avisos («INFO: Created TensorFlow Lite
+ * XNNPACK delegate for CPU.») por console.error, y Next en desarrollo muestra
+ * cada console.error como un error en pantalla. Se pasan a console.info; los
+ * errores de verdad siguen saliendo igual.
+ */
+let infoSilenciado = false;
+function silenciarInfoDeMediaPipe() {
+  if (infoSilenciado) return;
+  infoSilenciado = true;
+  const original = console.error;
+  console.error = (...args) => {
+    if (typeof args[0] === 'string' && args[0].startsWith('INFO:')) return console.info(...args);
+    return original(...args);
+  };
+}
+
+/**
  * Crea el detector (GPU, y CPU si la GPU no sirve) y corre su PRIMER cuadro.
  *
  * Crear y calentar van juntos, dentro del mismo intento: sin WebGL2, crear
@@ -190,6 +207,7 @@ function offscreenConWebGL() {
  * aviso). Así, ese fallo cae a CPU o termina en «↻ Recargar».
  */
 async function crearDeteccion(p) {
+  silenciarInfoDeMediaPipe();
   const vision = await p.visionProm;
   const fileset = await vision.FilesetResolver.forVisionTasks(WASM_PATH);
   const crear = async (delegate) => {

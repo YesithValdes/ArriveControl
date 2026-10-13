@@ -66,17 +66,19 @@ export const domingoDe = (iso) => sumarDias(lunesDe(iso), 6)
  *   cuenta: number, extra: number|null, faltante: number|null,
  * }}
  *   `ordinarias`: lunes a sábado sin festivo. `dominicales`: domingo y
- *   festivos. `cuenta` = ordinarias, lo que se compara con la jornada
- *   semanal. `extra`/`faltante` son null mientras la semana está en curso:
+ *   festivos. `cuenta` = ordinarias + horas de permisos justificados, lo
+ *   que se compara con la jornada semanal. `extra`/`faltante` son null mientras la semana está en curso:
  *   todavía no se sabe.
  */
-export function resumenSemana({ lunes, horasPorDia, festivos, horasSemana = 42, hoy }) {
+export function resumenSemana({ lunes, horasPorDia, festivos, horasSemana = 42, hoy, horasJustificadas = () => 0 }) {
   const domingo = sumarDias(lunes, 6)
   // Cerrada cuando el domingo ya terminó: hoy es, como mínimo, el lunes siguiente.
   const cerrada = domingo < hoy
 
   let ordinarias = 0
   let dominicales = 0
+  // Horas de permisos justificados (sin descuento) que cuentan para la jornada.
+  let justificadas = 0
 
   for (let i = 0; i < 7; i++) {
     const fecha = sumarDias(lunes, i)
@@ -85,10 +87,11 @@ export function resumenSemana({ lunes, horasPorDia, festivos, horasSemana = 42, 
       dominicales += horas
     } else {
       ordinarias += horas
+      if (fecha < hoy) justificadas += horasJustificadas(fecha, horas)
     }
   }
 
-  const cuenta = ordinarias
+  const cuenta = ordinarias + justificadas
   return {
     lunes,
     domingo,

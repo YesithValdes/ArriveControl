@@ -27,7 +27,7 @@ async function accesoEscritura(req) {
     if (!empresa) return { error: NextResponse.json({ ok: false, error }, { status }) }
     return { esquema: empresa.esquema }
   }
-  const { estado, esquema } = await estadoAcceso('empleados')
+  const { estado, esquema } = await estadoAcceso('empleados', { permisoInvitado: 'colaboradores:editar' })
   if (estado !== 'OK') return { error: NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) }) }
   return { esquema }
 }

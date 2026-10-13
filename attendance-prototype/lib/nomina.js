@@ -87,6 +87,19 @@ export async function construirLote(esquema, rango = null) {
     porEmpleado.get(r.empleado_id).marcas.push(r)
   }
 
+  const novedades = await conEmpresa(esquema, async db => (await db.query(
+    "select p.empleado_id, to_char(p.inicio,'YYYY-MM-DD') as inicio, to_char(p.fin,'YYYY-MM-DD') as fin, p.tipo, p.descontar, to_char(p.hora_inicio,'HH24:MI') as hora_inicio, to_char(p.hora_fin,'HH24:MI') as hora_fin, e.cedula, e.nombre, e.jornada_dias, e.entrada_esperada, e.salida_esperada, e.almuerzo_min, e.salario_mensual from permisos p join empleados e on e.id=p.empleado_id where p.anulado_en is null"
+  )).rows);
+  for (const p of novedades) {
+    if (!porEmpleado.has(p.empleado_id)) porEmpleado.set(p.empleado_id, {
+      cedula:p.cedula, nombre:p.nombre, jornadaDias:p.jornada_dias,
+      entradaEsperada:p.entrada_esperada, salidaEsperada:p.salida_esperada,
+      almuerzoMin:p.almuerzo_min, salarioMensual:p.salario_mensual==null?null:Number(p.salario_mensual), marcas:[],
+    });
+    const e=porEmpleado.get(p.empleado_id);
+    (e.permisos ??= []).push(p);
+  }
+
   const registros = calcularRegistros(porEmpleado, {
     festivos,
     vigencias,
