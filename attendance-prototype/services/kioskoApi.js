@@ -299,3 +299,27 @@ export function logIntento({ empleadoId = null, aceptado, distancia = null, live
     }),
   }).catch(() => { /* métricas: si se pierde una, no pasa nada */ });
 }
+
+/**
+ * Evaluación de SFace (app/api/evaluacion-sface): fase vigente y vectores de
+ * los inscritos. Con la fase apagada —o sin habilitar, o con enlace de
+ * prueba— devuelve { fase: 'apagada' } y no baja nada. Nunca lanza.
+ */
+export async function cargarEvaluacionSface() {
+  if (getPruebaToken()) return { fase: 'apagada', inscritos: [] };
+  try {
+    const r = await fetch('/api/evaluacion-sface?kiosco=1', { headers: headers() });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d?.ok) return { fase: 'apagada', inscritos: [] };
+    return { fase: d.fase, hasta: d.hasta ?? null, inscritos: d.inscritos ?? [] };
+  } catch {
+    return { fase: 'apagada', inscritos: [] };
+  }
+}
+
+/** Envía una inscripción o un intento de la evaluación. Fire-and-forget. */
+export function enviarEvaluacionSface(cuerpo) {
+  return fetch('/api/evaluacion-sface', { method: 'POST', headers: headers(), body: JSON.stringify(cuerpo) })
+    .then((r) => r.json().catch(() => null))
+    .catch(() => null);
+}

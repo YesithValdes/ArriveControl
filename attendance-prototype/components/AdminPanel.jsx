@@ -3914,6 +3914,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   <span className="tool-txt"><b>Diagnóstico GPS</b><small>Precisión y distancia a cada sede</small></span>
                   <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
                 </button>
+                {/* Solo si el superadmin habilitó la evaluación para esta empresa. */}
+                {sesion?.laboratorioFacial && (
+                  <a className="tool" href="/evaluacion-modelos">
+                    <span className="icon"><Icon name="monitor" size={19} /></span>
+                    <span className="tool-txt"><b>Evaluación de modelos</b><small>Probar SFace en sombra, sin afectar la asistencia</small></span>
+                    <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
+                  </a>
+                )}
               </div>
               </>)}
             </div>

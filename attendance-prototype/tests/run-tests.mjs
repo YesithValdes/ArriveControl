@@ -1652,6 +1652,43 @@ await test('panel: salida olvidada en un día pasado se cierra con el horario, n
   // En la semana, la entrada sin salida del lunes NO se pierde al llegar el martes.
   assert.equal(horas(paresDe([ev('2026-10-05', '13:38', 'in'), ev('2026-10-06', '09:00', 'in'), ev('2026-10-06', '12:00', 'out')], finDia, jd)), 7.37);
 });
+await test('evaluación SFace: reglas de vectores, ranking, fases y reporte', async () => {
+  const ev = await import('../utils/evaluacionSface.js');
+  const uno = (i) => { const v = new Array(128).fill(0); v[i] = 1; return v; };
+  assert.ok(ev.esVectorSface(uno(0)));
+  assert.ok(!ev.esVectorSface(new Array(128).fill(1)), 'sin normalizar no vale');
+  assert.ok(!ev.esVectorSface(uno(0).slice(0, 127)));
+  const insc = new Map([['ana', [uno(0)]], ['beto', [uno(1)]]]);
+  const { top1, top2 } = ev.ranking(ev.normalizar([0.9, 0.1, ...new Array(126).fill(0)]), insc);
+  assert.equal(top1.id, 'ana'); assert.equal(top2.id, 'beto');
+  assert.ok(ev.aceptaSface(0.5, 0.2)); assert.ok(!ev.aceptaSface(0.5, 0.45), 'sin margen no acepta'); assert.ok(!ev.aceptaSface(0.3, null));
+  // Fase: por defecto apagada, y con `hasta` vencido se apaga sola.
+  assert.equal(ev.faseVigente(null), 'apagada');
+  assert.equal(ev.faseVigente({ estado: 'medicion', hasta: '2000-01-01T00:00:00Z' }), 'apagada');
+  assert.equal(ev.faseVigente({ estado: 'medicion', hasta: null }), 'medicion');
+  const r = ev.resumir([
+    { aceptado_actual: true, referencia_id: 'ana', sface_top1: 'ana', sface_sim1: 0.6, sface_sim2: 0.1, ms: 50 },
+    { aceptado_actual: true, referencia_id: 'ana', sface_top1: 'beto', sface_sim1: 0.6, sface_sim2: 0.1, ms: 70 },
+    { aceptado_actual: true, referencia_id: 'ana', sface_top1: 'ana', sface_sim1: 0.2, sface_sim2: 0.1, ms: 60 },
+    { aceptado_actual: false, referencia_id: null, sface_top1: 'ana', sface_sim1: 0.6, sface_sim2: 0.1, ms: 55 },
+    { aceptado_actual: true, referencia_id: 'ana', error: 'x' },
+  ]);
+  assert.deepEqual([r.total, r.coinciden, r.confunde, r.sfaceRechaza, r.sfaceSolo, r.errores], [5, 1, 1, 1, 1, 1]);
+});
+await test('evaluación SFace: la habilita el superadmin, arranca apagada y el kiosco nunca decide con ella', () => {
+  const leer = (p) => leerCss(new URL(`../${p}`, import.meta.url), 'utf8');
+  const api = leer('app/api/evaluacion-sface/route.js');
+  // Cada método revisa el permiso del superadmin.
+  assert.equal((api.match(/laboratorioHabilitado\(/g) ?? []).length, 5);
+  assert.match(leer('db/migrations/control/017_laboratorio_facial.sql'), /laboratorio_facial boolean not null default false/);
+  assert.match(leer('db/migrations/empresa/025_evaluacion_sface.sql'), /estado\s+text not null default 'apagada'/);
+  const k = leer('components/KioskMode.jsx');
+  // Con la fase apagada no se guarda ni se mide nada.
+  assert.match(k, /if \(!recortes\?\.length \|\| ev\.fase === 'apagada' \|\| !sfaceListoRef\.current\) return;/);
+  // SFace no entra en la decisión: solo se llama desde la evaluación en sombra.
+  assert.equal((k.match(/vectorSFace\(/g) ?? []).length, 1);
+  assert.match(leer('components/AdminPanel.jsx'), /sesion\?\.laboratorioFacial && \(/);
+});
 await test('el rol consulta no marca ni baja rostros por la API (solo un kiosco o quien tenga permiso)', () => {
   const leer = (p) => leerCss(new URL(`../${p}`, import.meta.url), 'utf8');
   assert.match(leer('app/api/marcaciones/route.js'), /empresaDeLaPeticion\(req, 'corregir'\)/);

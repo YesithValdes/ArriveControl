@@ -223,16 +223,25 @@ const enFila = (fn) => {
  * @param {HTMLVideoElement|HTMLImageElement|HTMLCanvasElement} media
  * @param {Array<[number,number]>} puntos5  en píxeles del media (¡no normalizados!)
  */
-export async function descriptorV2(media, puntos5) {
-  const { ort, sesion } = await cargarV2()
-
+/**
+ * El rostro recortado y ALINEADO a la plantilla ArcFace, 112×112 RGBA. Es
+ * síncrono y barato (un dibujo en un lienzo): sirve para guardar el cuadro
+ * de una captura y procesarlo después con otro modelo (lib/sfaceWeb.js usa la
+ * misma plantilla).
+ */
+export function recorteAlineado(media, puntos5) {
   const lienzo = document.createElement('canvas')
   lienzo.width = LADO; lienzo.height = LADO
   const ctx = lienzo.getContext('2d', { willReadFrequently: true })
   ctx.setTransform(...semejanzaUmeyama(puntos5, PLANTILLA))
   ctx.drawImage(media, 0, 0)
+  return ctx.getImageData(0, 0, LADO, LADO)
+}
 
-  const { data } = ctx.getImageData(0, 0, LADO, LADO) // RGBA
+export async function descriptorV2(media, puntos5) {
+  const { ort, sesion } = await cargarV2()
+
+  const { data } = recorteAlineado(media, puntos5) // RGBA
   // NCHW, RGB, (x − 127.5) / 127.5 — el preprocesamiento canónico de ArcFace.
   const plano = LADO * LADO
   const entrada = new Float32Array(3 * plano)

@@ -1,0 +1,5 @@
+SFace (OpenCV Zoo, face_recognition_sface 2021dec), sin modificar.
+Origen: https://github.com/opencv/opencv_zoo/tree/ba91a3b/models/face_recognition_sface
+Licencia: Apache-2.0 (SFace-LICENSE).
+SHA-256: 0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79
+Uso: evaluacion en sombra en el kiosco web (lib/sfaceWeb.js).

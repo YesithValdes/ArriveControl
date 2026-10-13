@@ -18,12 +18,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { euclideanDistance, MATCH_THRESHOLD, MARGEN_MINIMO } from '../utils/faceMath.js';
 // Modelo v2 (ArcFace 512-D, similitud coseno): decide la identidad cuando la
 // captura viva y la persona lo tienen; v1 queda de respaldo del resto.
-import { cargarV2, descriptorV2, puntos5DeMediaPipe, similitudV2, promedioV2, V2_UMBRAL_SIM, V2_MARGEN_SIM } from '../lib/rostroV2.js';
+import { cargarV2, descriptorV2, puntos5DeMediaPipe, similitudV2, promedioV2, recorteAlineado, V2_UMBRAL_SIM, V2_MARGEN_SIM } from '../lib/rostroV2.js';
 import { modelosDesdeApk } from '../lib/modelosApk.js';
+// Evaluación de SFace EN SOMBRA: mide, nunca decide (app/api/evaluacion-sface).
+import { cargarSFace, vectorSFace } from '../lib/sfaceWeb.js';
+import { ranking, normalizar, SFACE_MAX_POR_PERSONA } from '../utils/evaluacionSface.js';
 import {
   cargarRoster, cargarSedes, registrarPaso, sincronizarCola, logIntento,
   getSedeId, setSedeId, getDeviceKey, setDeviceKey, pendientesEnCola,
   olvidarActivacion, ClaveRechazada, getPruebaToken, adjuntarUbicacion, miDispositivo,
+  cargarEvaluacionSface, enviarEvaluacionSface,
 } from '../services/kioskoApi.js';
 
 /**
@@ -296,7 +300,10 @@ export default function KioskMode() {
   const peopleRef = useRef([]);
 
   // Máquina de estados: idle | challenge | result | cooldown
-  const estadoReposo = () => ({ phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], descsV2: [], lastCapture: 0, captures: 0 });
+  const estadoReposo = () => ({ phase: 'idle', deadline: 0, until: 0, sawOpen: false, sawClosed: false, descs: [], descsV2: [], recortesSF: [], lastCapture: 0, captures: 0 });
+  // Evaluación de SFace (ver evaluarEnSombra): fase vigente y vectores inscritos.
+  const evalRef = useRef({ fase: 'apagada', inscritos: new Map() });
+  const sfaceListoRef = useRef(false);
   const stateRef = useRef(estadoReposo());
 
   // Arrancar y detener sin carreras. Salir de la app detiene el kiosco, y eso
@@ -983,6 +990,86 @@ export default function KioskMode() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configurado]);
 
+  // ── Evaluación de SFace, en sombra ───────────────────────────────────────
+  // Solo existe si el superadmin habilitó la empresa y el administrador la
+  // puso en una fase activa (inscripción o medición). Con la fase apagada el
+  // kiosco no baja el modelo ni los vectores, y nada cambia. Se revisa cada
+  // 2 minutos: al activarla o apagarla desde el panel, el kiosco se entera solo.
+  useEffect(() => {
+    if (!configurado || esPrueba) return undefined;
+    let vigente = true;
+    const revisar = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const e = await cargarEvaluacionSface();
+      if (!vigente) return;
+      evalRef.current = { fase: e.fase, inscritos: new Map(e.inscritos.map((x) => [x.empleado_id, x.vectores])) };
+      if (e.fase !== 'apagada' && !sfaceListoRef.current) {
+        cargarSFace()
+          .then(() => { sfaceListoRef.current = true; console.log(`[Evaluación] SFace listo · fase ${e.fase} · ${e.inscritos.length} inscrito(s)`); })
+          .catch((err) => console.warn('[Evaluación] SFace no cargó (el kiosco sigue igual):', err?.message || err));
+      }
+    };
+    revisar();
+    const id = setInterval(revisar, 2 * 60 * 1000);
+    document.addEventListener('visibilitychange', revisar);
+    return () => { vigente = false; clearInterval(id); document.removeEventListener('visibilitychange', revisar); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configurado]);
+
+  /**
+   * Después de cada decisión del modelo actual, mide SFace con los MISMOS
+   * recortes. Corre aparte (setTimeout) y cualquier error se traga: la
+   * evaluación jamás frena ni cambia una marcación.
+   *  · Inscripción: a quien el modelo actual CONFIRMÓ se le guardan vectores
+   *    SFace (hasta 3).
+   *  · Medición: se anota a quién habría elegido SFace, con qué similitud y
+   *    en cuánto tiempo.
+   */
+  function evaluarEnSombra(recortes, ok, person, metricas) {
+    const ev = evalRef.current;
+    if (!recortes?.length || ev.fase === 'apagada' || !sfaceListoRef.current) return;
+    if (ev.fase === 'inscripcion' && (!ok || !person)) return;
+    // Medir a alguien que no está inscrito no compara nada.
+    if (ev.fase === 'medicion' && ok && person && !ev.inscritos.has(person.id)) return;
+    const lista = recortes.slice();
+    setTimeout(async () => {
+      try {
+        const t0 = performance.now();
+        const vectores = [];
+        for (const r of lista) vectores.push(await vectorSFace(r));
+        const ms = (performance.now() - t0) / vectores.length;
+        if (ev.fase === 'inscripcion') {
+          const actuales = ev.inscritos.get(person.id) ?? [];
+          for (const v of vectores) {
+            if (actuales.length >= SFACE_MAX_POR_PERSONA) break;
+            const r = await enviarEvaluacionSface({ tipo: 'inscripcion', empleado_id: person.id, vector: v });
+            if (r?.completo || !r?.ok) break;
+            actuales.push(v);
+          }
+          ev.inscritos.set(person.id, actuales);
+          console.log(`[Evaluación] ${person.name}: ${actuales.length}/${SFACE_MAX_POR_PERSONA} vectores SFace (${Math.round(ms)} ms c/u)`);
+          return;
+        }
+        const suma = new Array(vectores[0].length).fill(0);
+        for (const v of vectores) for (let i = 0; i < v.length; i++) suma[i] += v[i];
+        const { top1, top2 } = ranking(normalizar(suma), ev.inscritos);
+        enviarEvaluacionSface({
+          tipo: 'intento', referencia_id: person?.id ?? null, aceptado_actual: ok,
+          sim_actual: metricas?.v2_mejor ?? null,
+          sface_top1: top1.id, sface_sim1: top1.id ? top1.sim : null,
+          sface_top2: top2.id, sface_sim2: top2.id ? top2.sim : null,
+          inscritos: ev.inscritos.size, ms,
+        });
+        console.log(`[Evaluación] actual: ${ok ? person?.name : 'rechazo'} · SFace: ${top1.id ? `${top1.sim.toFixed(3)} / ${top2.id ? top2.sim.toFixed(3) : '—'}` : 'sin inscritos'} · ${Math.round(ms)} ms`);
+      } catch (e) {
+        console.warn('[Evaluación] SFace falló en esta medición (la marcación no se afecta):', e?.message || e);
+        if (ev.fase === 'medicion') {
+          enviarEvaluacionSface({ tipo: 'intento', referencia_id: person?.id ?? null, aceptado_actual: ok, inscritos: ev.inscritos.size, error: String(e?.message || e) });
+        }
+      }
+    }, 0);
+  }
+
   const handleStart = async () => {
     toqueRef.current = performance.now();
     const gen = ++arranqueRef.current;
@@ -1219,7 +1306,7 @@ export default function KioskMode() {
             // Que el GPS vaya llegando mientras se hace el reconocimiento.
             if (!esPrueba && !gpsFresco()) pedirGpsAhora();
             st.sawOpen = false; st.sawClosed = false;
-            st.descs = []; st.descsV2 = []; st.captures = 0; st.lastCapture = 0;
+            st.descs = []; st.descsV2 = []; st.recortesSF = []; st.captures = 0; st.lastCapture = 0;
             st.reintento = false; // reintento silencioso por identidad
             // Cronómetro del reto: cuánto tarda cada validación (se lee en el
             // logcat de Android como mensajes de consola del WebView).
@@ -1291,7 +1378,13 @@ export default function KioskMode() {
               // landmarks que ya se usaron para el parpadeo y el encuadre. Sin
               // una segunda detección sobre el mismo cuadro — antes se corría
               // el detector dos veces para llegar a las mismas coordenadas.
-              descriptorV2(video, puntos5DeMediaPipe(lm, video.videoWidth, video.videoHeight))
+              const p5 = puntos5DeMediaPipe(lm, video.videoWidth, video.videoHeight);
+              // Evaluación activa: se guarda el MISMO recorte para medir SFace
+              // después de decidir. Es un dibujo en un lienzo (barato).
+              if (sfaceListoRef.current && evalRef.current.fase !== 'apagada') {
+                try { (st.recortesSF ??= []).push(recorteAlineado(video, p5)); } catch { /* nunca frena el kiosco */ }
+              }
+              descriptorV2(video, p5)
                 .then((v) => { st.descsV2.push(v); anotarTiempo(); })
                 .catch(() => {})
                 .finally(() => { faBusy = false; });
@@ -1407,7 +1500,7 @@ export default function KioskMode() {
             // decide DE CERO: mezclar mediciones v1/v2 entre intentos confunde.
             if (!reconocido && !st.reintento) {
               st.reintento = true;
-              st.descs = []; st.descsV2 = []; st.captures = 0; st.lastCapture = 0;
+              st.descs = []; st.descsV2 = []; st.recortesSF = []; st.captures = 0; st.lastCapture = 0;
               st.deadline = Math.max(st.deadline, now + 4000); // aire para las capturas nuevas
               console.log(`[Kiosco⏱] ${ambiguo ? 'AMBIGUO' : 'identidad no coincidió'} (modo ${modoV2 ? 'v2' : 'v1'}); reintento silencioso con capturas frescas`);
               break;
@@ -1497,6 +1590,8 @@ export default function KioskMode() {
         // pierden; estos números no — son la base del ajuste de umbrales).
         metricas,
       });
+      // Evaluación de SFace en sombra (no hace nada con la fase apagada).
+      try { evaluarEnSombra(st.recortesSF, ok, person, metricas); } catch { /* nunca frena el kiosco */ }
     }
 
     const time = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
