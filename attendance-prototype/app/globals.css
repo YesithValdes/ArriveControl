@@ -21,7 +21,10 @@
   --surface-blanca: #ffffff;
   --ink: #233240;
   --ink-2: #46586a;
-  --muted: #7b8ca0;
+  /* Texto secundario. Antes #7b8ca0 (3,3:1 sobre la tarjeta, ilegible).
+     #47607e: azul pizarra, 6,2:1 en tarjeta y 5,2:1 en el fondo (AA), con
+     tinte azul para que no se vea negro junto a --ink. */
+  --muted: #47607e;
   --grid: #d8e2ee;
   --border: #d8e2ee;
 

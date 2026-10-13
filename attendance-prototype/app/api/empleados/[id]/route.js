@@ -33,6 +33,9 @@ const CAMPOS = {
   validar_ubicacion: 'validar_ubicacion',
 }
 
+/** Los campos que forman la jornada: lo que cambia al asignar un horario. */
+const CAMPOS_JORNADA = ['entrada_esperada', 'salida_esperada', 'almuerzo_min', 'jornada_dias', 'jornada_semanal']
+
 /** Jornada distribuida válida: null (estándar) o [lun..sáb] con horas 0–12. */
 const jornadaValida = (v) =>
   v === null || (Array.isArray(v) && v.length === 6 && v.every((h) => typeof h === 'number' && h >= 0 && h <= 12))
@@ -44,12 +47,17 @@ const jornadaValida = (v) =>
 const salarioValido = (v) => v === null || (typeof v === 'number' && Number.isFinite(v) && v > 0)
 
 export async function PATCH(req, { params }) {
-  const { estado, esquema, empresa } = await estadoAcceso('empleados')
-  if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
-
   const { id } = await params
   let c
   try { c = await req.json() } catch { return NextResponse.json({ ok: false, error: 'JSON inválido.' }, { status: 400 }) }
+
+  // Un Invitado que solo cambia la JORNADA (asignar un horario) basta con
+  // horarios:asignar; cualquier otro campo exige colaboradores:editar.
+  const soloJornada = Object.keys(c ?? {}).length > 0 && Object.keys(c).every((k) => CAMPOS_JORNADA.includes(k))
+  const { estado, esquema, empresa } = await estadoAcceso('empleados', {
+    permisoInvitado: soloJornada ? ['colaboradores:editar', 'horarios:asignar'] : 'colaboradores:editar',
+  })
+  if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   // REACTIVAR a alguien archivado ocupa cupo otra vez: mismo tope que un alta.
   if (c?.activo === true && empresa) {
@@ -112,7 +120,7 @@ export async function PATCH(req, { params }) {
 }
 
 export async function DELETE(req, { params }) {
-  const { estado, esquema } = await estadoAcceso('empleados')
+  const { estado, esquema } = await estadoAcceso('empleados', { permisoInvitado: 'colaboradores:eliminar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params

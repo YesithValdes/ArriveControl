@@ -85,15 +85,15 @@ export async function enviarComprobanteMarcacion({ para, nombre, tipo, ts, sede,
       <div style="font-size:15px;font-weight:800;color:${color}">${titulo}</div>
       <div style="font-size:21px;font-weight:800;margin-top:6px">${nombre}</div>
       <div style="font-size:30px;font-weight:800;color:${color};font-variant-numeric:tabular-nums;margin-top:2px">${hora}</div>
-      <div style="font-size:13px;color:#7b8ca0;text-transform:capitalize">${dia}</div>
+      <div style="font-size:13px;color:#47607e;text-transform:capitalize">${dia}</div>
       <table style="margin-top:16px;font-size:13px;color:#46586a;border-collapse:collapse">
-        ${acumulado ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Acumulado hoy</td><td style="font-variant-numeric:tabular-nums;font-weight:700">${acumulado}</td></tr>` : ''}
-        ${sede ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Sede</td><td>${sede}</td></tr>` : ''}
-        ${mapa ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Ubicación</td><td><a href="${mapa}" style="color:#557d9e">${direccion || `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`}</a></td></tr>` : ''}
-        ${empresa ? `<tr><td style="padding:3px 10px 3px 0;color:#7b8ca0">Empresa</td><td>${empresa}</td></tr>` : ''}
+        ${acumulado ? `<tr><td style="padding:3px 10px 3px 0;color:#47607e">Acumulado hoy</td><td style="font-variant-numeric:tabular-nums;font-weight:700">${acumulado}</td></tr>` : ''}
+        ${sede ? `<tr><td style="padding:3px 10px 3px 0;color:#47607e">Sede</td><td>${sede}</td></tr>` : ''}
+        ${mapa ? `<tr><td style="padding:3px 10px 3px 0;color:#47607e">Ubicación</td><td><a href="${mapa}" style="color:#557d9e">${direccion || `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`}</a></td></tr>` : ''}
+        ${empresa ? `<tr><td style="padding:3px 10px 3px 0;color:#47607e">Empresa</td><td>${empresa}</td></tr>` : ''}
       </table>
       ${diferido ? `<div style="margin-top:14px;font-size:12px;color:#7a6432;background:#f3ecd9;border-radius:10px;padding:9px 12px">Marcación registrada sin internet y sincronizada después: la hora es la del dispositivo en el momento de marcar.</div>` : ''}
-      <div style="margin-top:18px;font-size:11px;color:#7b8ca0">Este es un comprobante automático de tu marcación de asistencia. No respondas a este correo.</div>
+      <div style="margin-top:18px;font-size:11px;color:#47607e">Este es un comprobante automático de tu marcación de asistencia. No respondas a este correo.</div>
     </div>
   </div>`
 
@@ -146,7 +146,7 @@ export async function enviarResumenDiario({ para, nombre, fechaISO, resumen, emp
       <td style="padding:6px 12px 6px 0;font-size:15px">${entrada ? '🟢' : '🟠'}</td>
       <td style="padding:6px 14px 6px 0;font-size:13px;color:#46586a">${entrada ? 'Entrada' : 'Salida'}</td>
       <td style="padding:6px 0;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums">${enDoce(m.minutos)}</td>
-      <td style="padding:6px 0 6px 10px;font-size:11.5px;color:#7b8ca0">${m.automatica ? 'automática' : ''}</td>
+      <td style="padding:6px 0 6px 10px;font-size:11.5px;color:#47607e">${m.automatica ? 'automática' : ''}</td>
     </tr>`
   }).join('')
 
@@ -160,7 +160,7 @@ export async function enviarResumenDiario({ para, nombre, fechaISO, resumen, emp
     resumen.sede ? ['Sede', resumen.sede] : null,
     empresa ? ['Empresa', empresa] : null,
   ].filter(Boolean).map(([k, v]) => `
-    <tr><td style="padding:3px 14px 3px 0;color:#7b8ca0">${k}</td><td style="font-weight:600">${v}</td></tr>`).join('')
+    <tr><td style="padding:3px 14px 3px 0;color:#47607e">${k}</td><td style="font-weight:600">${v}</td></tr>`).join('')
 
   const html = `
   <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:480px;margin:0 auto;border:1px solid #d8e2ee;border-radius:14px;overflow:hidden">
@@ -168,23 +168,23 @@ export async function enviarResumenDiario({ para, nombre, fechaISO, resumen, emp
       ASISTENC<span style="color:#9fdcca">IA</span>
     </div>
     <div style="padding:22px 20px;color:#233240">
-      <div style="font-size:13px;color:#7b8ca0">Resumen de tu jornada</div>
+      <div style="font-size:13px;color:#47607e">Resumen de tu jornada</div>
       <div style="font-size:21px;font-weight:800;margin-top:2px">${nombre}</div>
-      <div style="font-size:13px;color:#7b8ca0;text-transform:capitalize">${dia}</div>
+      <div style="font-size:13px;color:#47607e;text-transform:capitalize">${dia}</div>
 
       <div style="margin:20px 0 4px;text-align:center">
         <div style="font-size:34px;font-weight:800;color:#3a5570;font-variant-numeric:tabular-nums;line-height:1.1">${total}</div>
-        <div style="font-size:12px;color:#7b8ca0;letter-spacing:.06em;text-transform:uppercase">trabajado</div>
+        <div style="font-size:12px;color:#47607e;letter-spacing:.06em;text-transform:uppercase">trabajado</div>
       </div>
       ${avisos}
 
-      <div style="margin-top:20px;font-size:11px;color:#7b8ca0;letter-spacing:.08em;text-transform:uppercase">Tus marcaciones</div>
+      <div style="margin-top:20px;font-size:11px;color:#47607e;letter-spacing:.08em;text-transform:uppercase">Tus marcaciones</div>
       <table style="margin-top:6px;border-collapse:collapse;width:100%">${filas}</table>
 
-      ${detalle ? `<div style="margin-top:18px;font-size:11px;color:#7b8ca0;letter-spacing:.08em;text-transform:uppercase">Detalle</div>
+      ${detalle ? `<div style="margin-top:18px;font-size:11px;color:#47607e;letter-spacing:.08em;text-transform:uppercase">Detalle</div>
       <table style="margin-top:6px;font-size:13px;color:#46586a;border-collapse:collapse">${detalle}</table>` : ''}
 
-      <div style="margin-top:20px;font-size:11px;color:#7b8ca0">Resumen automático de tu asistencia. No respondas a este correo.</div>
+      <div style="margin-top:20px;font-size:11px;color:#47607e">Resumen automático de tu asistencia. No respondas a este correo.</div>
     </div>
   </div>`
 

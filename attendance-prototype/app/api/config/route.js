@@ -19,11 +19,11 @@ export const runtime = 'nodejs'
 const aHHMM = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`
 
 export async function GET() {
-  const { estado, esquema } = await estadoAcceso('ver')
+  const { estado, esquema } = await estadoAcceso('ver', { permisoInvitado: 'panel:ver' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const { rows } = await conEmpresa(esquema, (db) => db.query(
-    `select gracia_min, resumen_correo, resumen_api from config_laboral where id`,
+    `select gracia_min, resumen_correo, resumen_api, salida_tarde_min, descanso_min, descanso_tolerancia_min from config_laboral where id`,
   ))
   const laboral = await configLaboral(esquema)
   const hoy = new Date().toISOString().slice(0, 10)
@@ -31,6 +31,11 @@ export async function GET() {
     ok: true,
     config: {
       gracia_min: rows[0].gracia_min,
+      // Tolerancia de salida tardía; null = la de fábrica (lib/salidaTardia.js).
+      salida_tarde_min: rows[0].salida_tarde_min ?? null,
+      // Descanso con que nace un horario nuevo, y su tolerancia (solo avisos).
+      descanso_min: rows[0].descanso_min ?? 60,
+      descanso_tolerancia_min: rows[0].descanso_tolerancia_min ?? 10,
       horas_semana: horasSemanaEn(laboral.vigencias, hoy),
       festivos: [...laboral.festivos].sort(),
       divisor_horas_mes: laboral.divisor,
@@ -48,7 +53,7 @@ export async function GET() {
 }
 
 export async function PATCH(req) {
-  const { estado, esquema } = await estadoAcceso('config')
+  const { estado, esquema } = await estadoAcceso('config', { permisoInvitado: 'reglamento:editar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   let c
@@ -61,6 +66,27 @@ export async function PATCH(req) {
     const v = Number(c.gracia_min)
     if (!Number.isInteger(v) || v < 0 || v > 240) return NextResponse.json({ ok: false, error: 'La gracia debe ser un número entre 0 y 240 minutos.' }, { status: 400 })
     args.push(v); sets.push(`gracia_min = $${args.length}`)
+  }
+
+  if ('salida_tarde_min' in c) {
+    // Solo decide qué salidas se avisan como anomalía; no toca horas ni pago.
+    // null = la de fábrica.
+    const v = c.salida_tarde_min == null ? null : Number(c.salida_tarde_min)
+    if (v !== null && (!Number.isInteger(v) || v < 0 || v > 240)) {
+      return NextResponse.json({ ok: false, error: 'La tolerancia de salida va de 0 a 240 minutos.' }, { status: 400 })
+    }
+    args.push(v); sets.push(`salida_tarde_min = $${args.length}`)
+  }
+
+  // Descanso de la empresa y su tolerancia: el primero solo siembra los
+  // horarios nuevos y la segunda solo decide qué se avisa. Ninguno toca horas.
+  for (const [campo, max, nombre] of [['descanso_min', 240, 'El descanso'], ['descanso_tolerancia_min', 120, 'La tolerancia del descanso']]) {
+    if (!(campo in c)) continue
+    const v = Number(c[campo])
+    if (!Number.isInteger(v) || v < 0 || v > max) {
+      return NextResponse.json({ ok: false, error: `${nombre} va de 0 a ${max} minutos.` }, { status: 400 })
+    }
+    args.push(v); sets.push(`${campo} = $${args.length}`)
   }
 
   if ('horas_semana' in c) {
@@ -165,7 +191,7 @@ export async function PATCH(req) {
   const { rows } = await conEmpresa(esquema, async (db) => {
     const r = await db.query(
       `update config_laboral set ${sets.join(', ')} where id
-       returning gracia_min, horas_semana, festivos,
+       returning gracia_min, salida_tarde_min, descanso_min, descanso_tolerancia_min, horas_semana, festivos,
                  divisor_horas_mes, factores_hora, modo_extra, extra_minima_min, periodo_pago,
                  resumen_correo, resumen_api,
                  to_char(nocturno_inicio, 'HH24:MI') as nocturno_inicio,

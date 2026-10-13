@@ -38,6 +38,7 @@
  * códigos (HED, HEN, HEDDF, HENDF) y sus factores viven en lib/tiposHora.js.
  */
 import { horasSemanaEn } from './jornada.js'
+import { permisoDelDia, horasReconocidas } from './permisos.js'
 import { codigoDeTramo, partirPorNocturno, NOCTURNO_DEFECTO } from './tiposHora.js'
 import { resumenSemana, lunesDe, diaSemana, EXTRA_MINIMA_H } from './semanaLaboral.js'
 
@@ -185,6 +186,7 @@ export function emparejarMarcas(e, { festivos, hoy = hoyEnBogota() }) {
    *    hubiera marcado antes.
    */
   const parAutomatico = (entrada) => {
+    if (permisoDelDia(e, entrada.fecha)) return null
     if (entrada.fecha >= hoy) return null
     const fin = finDeHorario(e, entrada)
     if (fin == null || fin <= entrada.minutos) return null
@@ -444,6 +446,7 @@ export function calcularRegistros(
       const semana = resumenSemana({
         lunes,
         horasPorDia,
+        horasJustificadas: (fecha, trabajadas) => horasReconocidas(e, fecha, trabajadas, ps),
         festivos,
         horasHorario: (fecha) => horasDeHorario(e, fecha),
         horasSemana: horasSemanaEn(vigencias, lunes),

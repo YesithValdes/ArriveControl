@@ -39,7 +39,7 @@ export async function PATCH(req, { params }) {
   // Cambio de rol: nadie se cambia el suyo, y siempre debe quedar un dueño.
   let nuevoRol = null
   if ('rol' in c && c.rol !== actuales[0].rol) {
-    if (!esRolDeEmpresa(c.rol)) return NextResponse.json({ ok: false, error: 'El rol debe ser propietario, administrador o consulta.' }, { status: 400 })
+    if (!esRolDeEmpresa(c.rol)) return NextResponse.json({ ok: false, error: 'El rol debe ser propietario, administrador, consulta o invitado.' }, { status: 400 })
     if (id === usuario.id) return NextResponse.json({ ok: false, error: 'No puedes cambiar tu propio rol.' }, { status: 400 })
     if (actuales[0].rol === 'empresa') {
       const { rows } = await pool.query(

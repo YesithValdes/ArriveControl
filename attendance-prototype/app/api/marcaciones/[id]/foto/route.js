@@ -12,7 +12,7 @@ import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../../../lib/se
 export const runtime = 'nodejs'
 
 export async function GET(req, { params }) {
-  const { estado, esquema } = await estadoAcceso('ver')
+  const { estado, esquema } = await estadoAcceso('ver', { permisoInvitado: 'marcaciones:ver_foto' })
   if (estado !== 'OK') {
     return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
   }

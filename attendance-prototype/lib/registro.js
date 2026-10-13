@@ -56,7 +56,7 @@ const dominioCorporativo = (email) => {
  */
 async function invitacionDe(email) {
   const { rows } = await control(
-    `select id, empresa_id, rol from control.invitaciones
+    `select id, empresa_id, rol, permisos_invitado from control.invitaciones
       where lower(email) = lower($1) and aceptada_en is null and expira_en > now()
       order by creada_en desc limit 1`,
     [email],
@@ -85,11 +85,11 @@ export async function asignarEmpresa(usuario) {
   const invitacion = await invitacionDe(usuario.email)
   if (invitacion) {
     // Entra con el rol que le dio quien lo invitó (consulta si no se dijo).
-    const rol = ['empresa', 'admin', 'consulta'].includes(invitacion.rol) ? invitacion.rol : 'consulta'
+    const rol = ['empresa', 'admin', 'consulta', 'invitado'].includes(invitacion.rol) ? invitacion.rol : 'consulta'
     await control(
-      `update control."user" set empresa_id = $1, rol = $3, updated_at = now()
+      `update control."user" set empresa_id = $1, rol = $3, permisos_invitado = $4, updated_at = now()
         where id = $2`,
-      [invitacion.empresa_id, usuario.id, rol],
+      [invitacion.empresa_id, usuario.id, rol, invitacion.permisos_invitado],
     )
     await control(
       `update control.invitaciones set aceptada_en = now() where id = $1`,

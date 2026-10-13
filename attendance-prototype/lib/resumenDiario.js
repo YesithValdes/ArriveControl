@@ -10,6 +10,8 @@
  * probar (ver tests/run-tests.mjs).
  */
 
+import { permisoDelDia, permisoCubreTramo, horasReconocidas, etiquetaPermiso } from './permisos.js'
+
 /** "17:30:00" | "17:30" → 1050. Null si no es una hora legible. */
 const minutosDeHora = (h) => {
   if (!h) return null
@@ -60,14 +62,16 @@ const TARDE_MIN = 180
  * @returns {{trabajadoSeg, marcas, avisos, franja, sede}|null}
  *          null si ese día no marcó nada: no hay resumen que mandar.
  */
-export function resumenDelDia(empleado, marcas, dow) {
+export function resumenDelDia(empleado, marcas, dow, fechaISO = null) {
   if (!marcas || marcas.length === 0) return null
 
+  const permiso = fechaISO ? permisoDelDia(empleado, fechaISO) : null
   const franja = franjaDelDia(empleado, dow)
   const finJornada = minutosDeHora(franja?.salida)
   const iniJornada = minutosDeHora(franja?.entrada)
   const almuerzo = minutosDeHora(franja?.almuerzo_desde)
 
+  const pares = []
   const eventos = []
   const avisos = []
   let trabajadoSeg = 0
@@ -83,6 +87,7 @@ export function resumenDelDia(empleado, marcas, dow) {
     }
     if (!abierta) continue // salida suelta: no hay turno que cerrar
     trabajadoSeg += (m.minutos - abierta.minutos) * 60
+    pares.push({fecha:fechaISO,desde:abierta.minutos,hasta:m.minutos})
     eventos.push({ tipo: 'entrada', minutos: abierta.minutos })
     eventos.push({ tipo: 'salida', minutos: m.minutos })
     abierta = null
@@ -91,7 +96,7 @@ export function resumenDelDia(empleado, marcas, dow) {
   // Quedó dentro al terminar el día: se cierra con su horario, la misma regla
   // que aplica la nómina — hasta el almuerzo si nunca lo marcó, y hasta el
   // fin de jornada si volvió después.
-  if (abierta) {
+  if (abierta && !permiso) {
     const tope = almuerzo != null && abierta.minutos < almuerzo ? almuerzo : finJornada
     eventos.push({ tipo: 'entrada', minutos: abierta.minutos })
     if (tope != null && tope > abierta.minutos) {
@@ -108,11 +113,21 @@ export function resumenDelDia(empleado, marcas, dow) {
     }
   }
 
+  if (abierta && permiso) {
+    eventos.push({ tipo: 'entrada', minutos: abierta.minutos })
+    const base = Date.parse(fechaISO+'T00:00:00-05:00')
+    if (finJornada == null || !permisoCubreTramo(empleado,fechaISO,base+abierta.minutos*60000,base+finJornada*60000)) {
+      avisos.push({ clase: 'sin-salida', texto: 'No marcaste tu salida, y ese tramo no se pudo contar.' })
+    }
+  }
   const primeraEntrada = eventos.find((e) => e.tipo === 'entrada')
-  if (iniJornada != null && primeraEntrada && primeraEntrada.minutos >= iniJornada + TARDE_MIN) {
+  if (iniJornada != null && primeraEntrada && primeraEntrada.minutos >= iniJornada + TARDE_MIN && !(fechaISO && permisoCubreTramo(empleado,fechaISO,Date.parse(fechaISO+'T00:00:00-05:00')+iniJornada*60000,Date.parse(fechaISO+'T00:00:00-05:00')+primeraEntrada.minutos*60000))) {
     avisos.push({ clase: 'tarde', texto: `Tu entrada fue a las ${enDoce(primeraEntrada.minutos)} y tu horario empieza a las ${enDoce(iniJornada)}.` })
   }
+  const reconocidoSeg = permiso ? horasReconocidas(empleado, fechaISO, trabajadoSeg / 3600, pares) * 3600 : 0
+  if (permiso) avisos.push({ clase: permiso.tipo, texto: etiquetaPermiso(permiso) + (reconocidoSeg ? ". Horas reconocidas: " + hhmmss(reconocidoSeg) : ".") })
   return {
+    ...(permiso ? { permiso: { tipo: permiso.tipo, descontar: permiso.descontar }, reconocidoSeg, computableSeg: trabajadoSeg + reconocidoSeg } : {}),
     trabajadoSeg,
     marcas: eventos.filter((e) => !e.huerfana),
     avisos,
@@ -142,6 +157,7 @@ const hhmm = (min) => {
  */
 export function formatearResumen({ empleado, resumen }) {
   return {
+    ...(resumen.permiso ? { permiso: resumen.permiso, horasReconocidas: resumen.reconocidoSeg, horasComputables: resumen.computableSeg } : {}),
     documento: empleado.cedula ?? null,
     nombre: empleado.nombre,
     sede: resumen.sede,

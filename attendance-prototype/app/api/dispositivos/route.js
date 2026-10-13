@@ -11,7 +11,7 @@ import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../lib/sesion'
 export const runtime = 'nodejs'
 
 export async function POST(req) {
-  const { estado, usuario, empresa } = await estadoAcceso('config')
+  const { estado, usuario, empresa } = await estadoAcceso('config', { permisoInvitado: 'dispositivos:crear' })
   if (estado !== 'OK') {
     return NextResponse.json(
       { ok: false, error: estado === 'SIN_SESION' ? 'Inicia sesión como administrador para activar este dispositivo.' : 'No tienes permiso para activar dispositivos.' },
@@ -32,7 +32,7 @@ export async function POST(req) {
 }
 
 export async function GET() {
-  const { estado, empresa } = await estadoAcceso('ver')
+  const { estado, empresa } = await estadoAcceso('ver', { permisoInvitado: 'dispositivos:ver' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
   return NextResponse.json({ ok: true, dispositivos: await listarDispositivos(empresa) })
 }

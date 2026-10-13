@@ -76,7 +76,7 @@ export const domingoDe = (iso) => sumarDias(lunesDe(iso), 6)
  *   jornada semanal. `extra`/`faltante` son null mientras la semana está en
  *   curso: todavía no se sabe.
  */
-export function resumenSemana({ lunes, horasPorDia, festivos, horasHorario, horasSemana = 42, hoy }) {
+export function resumenSemana({ lunes, horasPorDia, festivos, horasHorario, horasSemana = 42, hoy, horasJustificadas = () => 0 }) {
   const domingo = sumarDias(lunes, 6)
   // Cerrada cuando el domingo ya terminó: hoy es, como mínimo, el lunes siguiente.
   const cerrada = domingo < hoy
@@ -96,6 +96,7 @@ export function resumenSemana({ lunes, horasPorDia, festivos, horasHorario, hora
       dominicales += horas
     } else {
       ordinarias += horas
+      if (fecha < hoy) acreditadas += horasJustificadas(fecha, horas)
     }
 
     // El festivo entre semana se acredita HAYA O NO marcado: el día no se

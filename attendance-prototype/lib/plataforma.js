@@ -12,6 +12,7 @@
  */
 import { control, conEmpresa, enTransaccion } from './db.js'
 import { olvidarEmpresas } from './empresas.js'
+import { olvidarLlaves } from './llaves.js'
 import { planPorId } from './planes.js'
 
 /**
@@ -180,6 +181,9 @@ export async function eliminarEmpresa(id, confirmacion) {
     await db.query(`drop schema if exists ${empresa.esquema} cascade`)
   })
 
+  // Sus llaves se fueron en cascada con la fila (borrado criptográfico): que
+  // tampoco quede su DEK abierta en la memoria de este servidor.
+  olvidarLlaves(id)
   olvidarEmpresas()
   return { ok: true, nombre: empresa.nombre, esquema: empresa.esquema }
 }

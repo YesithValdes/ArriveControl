@@ -12,7 +12,7 @@ import { validarDias } from '../../../../lib/horariosDias.js'
 export const runtime = 'nodejs'
 
 export async function PATCH(req, { params }) {
-  const { estado, esquema } = await estadoAcceso('config')
+  const { estado, esquema } = await estadoAcceso('config', { permisoInvitado: 'horarios:editar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const { id } = await params
@@ -49,7 +49,7 @@ export async function PATCH(req, { params }) {
 }
 
 export async function DELETE(req, { params }) {
-  const { estado, esquema } = await estadoAcceso('config')
+  const { estado, esquema } = await estadoAcceso('config', { permisoInvitado: 'horarios:eliminar' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const { id } = await params

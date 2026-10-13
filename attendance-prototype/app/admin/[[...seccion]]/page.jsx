@@ -17,6 +17,7 @@ import { redirect } from 'next/navigation';
 import AdminPanel from '../../../components/AdminPanel.jsx';
 import DefinirContrasena from '../../../components/DefinirContrasena.jsx';
 import { estadoAcceso, tienePermiso } from '../../../lib/sesion';
+import { permisosInvitado } from '../../../lib/roles.js';
 import { tabDeSegmentos } from '../../../lib/rutasPanel.js';
 import { estadoDelPlan } from '../../../lib/empresas.js';
 
@@ -30,7 +31,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function AdminPage({ params }) {
   const { seccion } = await params;
-  const { estado, usuario, empresa, sedeLimite } = await estadoAcceso('ver');
+  const { estado, usuario, empresa, sedeLimite, soporte = null } = await estadoAcceso('ver');
 
   if (estado === 'SIN_SESION') redirect('/login?destino=/admin');
   if (estado === 'SIN_PERMISO' || estado === 'CUENTA_INACTIVA') redirect('/login?error=sin-permiso');
@@ -39,7 +40,8 @@ export default async function AdminPage({ params }) {
   // desde ahí se puede omitir, y al omitir queda `bienvenida_en` marcada, que
   // es lo que impide que esto se repita (y que se forme un bucle: la pantalla
   // vive en su propia ruta fija, /admin/bienvenida, no en este comodín).
-  if (estado === 'OK' && !empresa?.bienvenida_en) redirect('/admin/bienvenida');
+  // El soporte no: esa decisión es de la empresa, no de quien la ayuda.
+  if (estado === 'OK' && !soporte && !empresa?.bienvenida_en) redirect('/admin/bienvenida');
 
   // Sin empresa no hay panel que mostrar. El superadmin va al suyo; quien
   // quedó sin empresa por un fallo del alta ve qué hacer.
@@ -57,19 +59,23 @@ export default async function AdminPage({ params }) {
 
   // El panel necesita saber qué puede hacer quien entró, para esconder lo demás.
   const permisos = {
-    corregir: tienePermiso(usuario, 'corregir'),
-    empleados: tienePermiso(usuario, 'empleados'),
-    config: tienePermiso(usuario, 'config'),
-    usuarios: tienePermiso(usuario, 'usuarios'),
-    liquidar: tienePermiso(usuario, 'liquidar'),
-    cuenta: tienePermiso(usuario, 'cuenta'),
+    corregir: tienePermiso(usuario, 'corregir', empresa),
+    empleados: tienePermiso(usuario, 'empleados', empresa),
+    config: tienePermiso(usuario, 'config', empresa),
+    usuarios: tienePermiso(usuario, 'usuarios', empresa),
+    liquidar: tienePermiso(usuario, 'liquidar', empresa),
+    cuenta: tienePermiso(usuario, 'cuenta', empresa),
+    // Ver la pantalla de Seguridad: el dueño, o un Invitado con seguridad:ver (solo lectura).
+    seguridad: tienePermiso(usuario, 'cuenta', empresa, 'seguridad:ver'),
+    // Invitado: su lista fina (modulo:accion) para esconder botones. null = otro rol.
+    lista: usuario.rol === 'invitado' ? permisosInvitado(usuario) : null,
   };
 
   // Último paso del registro: ponerle contraseña a la app. Se pide aquí y no
   // en un ajuste escondido porque quien entró con Google NO puede abrir el
   // panel desde el celular sin ella —Google bloquea su inicio de sesión dentro
   // de una app— y lo descubriría el día que lo necesite, lejos del computador.
-  if (!usuario.tieneContrasena) {
+  if (!soporte && !usuario.tieneContrasena) {
     return <DefinirContrasena correo={usuario.email} />;
   }
 
@@ -94,6 +100,9 @@ export default async function AdminPage({ params }) {
         // Cobro en PRUEBAS: el panel lo advierte, para que nadie active un
         // plan creyendo que pagó ni espere que le hayan cobrado de verdad.
         pagoDePrueba: (process.env.BOLD_ENTORNO ?? 'test') !== 'prod',
+        // Superadmin dentro de la empresa como soporte: el panel lo anuncia
+        // arriba de todo, con cuándo vence y cómo salir.
+        soporte: soporte ? { hasta: new Date(soporte.hasta).toISOString(), motivo: soporte.motivo } : null,
       }}
       permisos={permisos}
     />

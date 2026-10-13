@@ -21,7 +21,7 @@ import { estadoAcceso, estadoAHttp, estadoAMensaje } from './sesion'
  *                  |{esquema: null, quien: null, error: Response}>}
  *          `quien`: con quién se firma lo que se anote (correo, o «api»).
  */
-export async function accesoHoras(req, accion) {
+export async function accesoHoras(req, accion, permisoInvitado = null) {
   const clave = req.headers.get('x-api-key')
   if (clave) {
     const { empresa, status, error } = await empresaDeApiKey(clave)
@@ -30,7 +30,7 @@ export async function accesoHoras(req, accion) {
     }
     return { esquema: empresa.esquema, quien: 'api', error: null }
   }
-  const acceso = await estadoAcceso(accion)
+  const acceso = await estadoAcceso(accion, { permisoInvitado })
   if (acceso.estado !== 'OK') {
     return {
       esquema: null, quien: null,

@@ -13,7 +13,7 @@ import Link from 'next/link';
 // las mismas formas que los services locales que reemplaza.
 import {
   syncPanel,
-  listJourneyEvents, listCorrecciones,
+  listJourneyEvents, listCorrecciones, listPermisosHistorial,
   addManualEvent,
   updateEventTime,
   updateEventType,
@@ -40,15 +40,23 @@ import { emparejarMarcas, tramosDeSemana, tramosDeDia } from '../lib/calculoHora
 // cerraron. Los festivos legales se calculan aquí igual que en el servidor.
 import { resumenSemana, lunesDe, domingoDe, EXTRA_MINIMA_H } from '../lib/semanaLaboral.js';
 import { getHolidaysForYear } from 'colombian-holidays';
+import { minutosDespuesDelHorario, toleranciaSalida, esSalidaTardia } from '../lib/salidaTardia.js';
+import { DESCANSO_DEFECTO_MIN, descansoEmpresa, toleranciaDescanso, descansosExcedidos } from '../lib/descanso.js';
+import { horasIncompletas, textoHorasIncompletas } from '../lib/horasIncompletas.js';
 import { rutaDe, tabDeRuta } from '../lib/rutasPanel.js';
 import { haversineDistance } from '../utils/haversine.js';
 import { signOut } from '../lib/auth-client';
 // Diagnóstico GPS embebido en Ajustes (la página /gps sigue existiendo).
 import GpsDebug from './GpsDebug.jsx';
+import SeguridadEmpresa from './SeguridadEmpresa.jsx';
+import PermisosColaborador from './PermisosColaborador.jsx';
+import { permisoDelDia, registroPermisoDelDia, permisoCubreDia, permisoCubreTramo, horasJustificadasPermiso, horasReconocidas, diasEntre, etiquetaPermiso, turnoPermisoTerminado, filasReportePermisos, csvPermisos } from '../lib/permisos.js';
 // Formulario de alta de empleados: el mismo de /admin/registro, embebido en
 // un cajón para registrar sin salir de la pestaña.
 import { RegistroEmpleadoForm } from './EmployeeRegister.jsx';
 import { getDeviceKey } from '../services/kioskoApi.js';
+import PermisosInvitadoModal from './PermisosInvitadoModal.jsx';
+import ColillaPago from './ColillaPago.jsx';
 
 /** Iconos de línea (estilo Lucide, inline SVG): heredan el color del texto. */
 function Icon({ name, size = 17 }) {
@@ -72,9 +80,10 @@ function Icon({ name, size = 17 }) {
     edit: <><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></>,
     link: <><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></>,
     userPlus: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" /></>,
+    calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 11h18M9 16h6" /></>,
     archive: <><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></>,
     camera: <><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></>,
-    eye: <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></>,
+    eye:<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></>,
     eyeOff: <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /></>,
     copy: <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
     refresh: <><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></>,
@@ -177,9 +186,23 @@ function AccList({ items }) {
   );
 }
 
+/**
+ * Rango de almuerzo que arranca a las 12:00 y dura el descanso de la empresa
+ * (Ajustes → Reglamento). Con 0 el día nace sin almuerzo.
+ */
+const almuerzoNuevo = (descansoMin = DESCANSO_DEFECTO_MIN) => {
+  const n = Math.max(0, Number(descansoMin) || 0);
+  if (n === 0) return { almuerzoMin: 0, almuerzoDesde: '', almuerzoHasta: '' };
+  const fin = 12 * 60 + n;
+  return { almuerzoMin: n, almuerzoDesde: '12:00', almuerzoHasta: `${String(Math.floor(fin / 60) % 24).padStart(2, '0')}:${String(fin % 60).padStart(2, '0')}` };
+};
+
+// Franja de oficina con la que nace un día al crear un horario.
+const franjaNueva = (descansoMin) => ({ entrada: '08:00', salida: '17:00', ...almuerzoNuevo(descansoMin) });
+
 // Mapa de días L–V con la franja de oficina, punto de partida al crear.
-const diasLunesAViernes = () => Object.fromEntries(
-  [1, 2, 3, 4, 5].map((d) => [String(d), { entrada: '08:00', salida: '17:00', almuerzoMin: 60, almuerzoDesde: '12:00', almuerzoHasta: '13:00' }]),
+const diasLunesAViernes = (descansoMin) => Object.fromEntries(
+  [1, 2, 3, 4, 5].map((d) => [String(d), franjaNueva(descansoMin)]),
 );
 
 /**
@@ -254,7 +277,7 @@ const almuerzoDe = (dias) => {
  * horarios y la ficha del empleado, para que editar "qué días y a qué horas"
  * se vea igual en los dos sitios.
  */
-function EditorDias({ dias, onChange }) {
+function EditorDias({ dias, onChange, descansoMin = DESCANSO_DEFECTO_MIN }) {
   const toggle = (d) => {
     const k = String(d);
     const next = { ...dias };
@@ -264,7 +287,7 @@ function EditorDias({ dias, onChange }) {
       // Al activar un día arranca con la franja de otro día ya definido: lo
       // normal es que la semana comparta horas y solo cambien excepciones.
       const modelo = ORDEN_SEMANA.map((x) => next[String(x)]).find(Boolean);
-      next[k] = modelo ? { ...modelo } : { entrada: '08:00', salida: '17:00', almuerzoMin: 60, almuerzoDesde: '12:00', almuerzoHasta: '13:00' };
+      next[k] = modelo ? { ...modelo } : franjaNueva(descansoMin);
     }
     onChange(next);
   };
@@ -338,7 +361,7 @@ function EditorDias({ dias, onChange }) {
                 ) : (
                   <button
                     type="button" className="hd-agregar"
-                    onClick={() => setAlmuerzo(d, '12:00', '13:00')}
+                    onClick={() => { const a = almuerzoNuevo(descansoMin || DESCANSO_DEFECTO_MIN); setAlmuerzo(d, a.almuerzoDesde, a.almuerzoHasta); }}
                   >
                     + almuerzo
                   </button>
@@ -360,10 +383,32 @@ function EditorDias({ dias, onChange }) {
  * superior de un contenedor con scroll, donde hacia arriba quedan recortados.
  */
 function Q({ texto, abajo = false }) {
+  // El globo va con position: fixed calculado desde el ícono. Con absolute
+  // quedaba recortado por las tablas con scroll (p. ej. «Cierre», la última
+  // columna de horas extra) y se salía por el borde de la pantalla.
+  const [pos, setPos] = useState(null);
+  const mostrar = (e) => {
+    const ANCHO = 230, MARGEN = 8, ALTO_MIN = 120;
+    const r = e.currentTarget.getBoundingClientRect();
+    const left = Math.min(Math.max(r.left + r.width / 2 - ANCHO / 2, MARGEN), window.innerWidth - ANCHO - MARGEN);
+    // Hacia donde se pidió, salvo que de ese lado no quepa.
+    const haciaAbajo = abajo ? window.innerHeight - r.bottom > ALTO_MIN || r.top < ALTO_MIN : r.top < ALTO_MIN;
+    // Los dos lados explícitos: .q-tip trae `bottom` puesto, y con top + bottom
+    // a la vez el globo se estiraba (lo que pasaba en «Cierre», que abre abajo).
+    setPos(haciaAbajo
+      ? { left, right: 'auto', top: r.bottom + 8, bottom: 'auto' }
+      : { left, right: 'auto', top: 'auto', bottom: window.innerHeight - r.top + 8 });
+  };
   return (
-    <span className="q-ico" tabIndex={0}>
+    <span className="q-ico" tabIndex={0} aria-label={texto}
+      onMouseEnter={mostrar} onFocus={mostrar} onMouseLeave={() => setPos(null)} onBlur={() => setPos(null)}>
       ?
-      <span className={`q-tip${abajo ? ' abajo' : ''}`}>{texto}</span>
+      {pos && (
+        <span className="q-tip q-tip-fijo" role="tooltip"
+          style={{ display: 'block', position: 'fixed', transform: 'none', zIndex: 1000, ...pos }}>
+          {texto}
+        </span>
+      )}
     </span>
   );
 }
@@ -437,8 +482,7 @@ const fmtHM = (n) => {
   if (n == null) return '—';
   const total = Math.round(n * 60);
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-};
-// Hora del día corta "7:02" (sin segundos ni cero inicial).
+};// Hora del día corta "7:02" (sin segundos ni cero inicial).
 const horaCorta = (iso) => {
   const d = new Date(iso);
   return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -504,7 +548,7 @@ function paresDe(events, nowMs, person = null) {
     if (diaEntrada >= dayKey(new Date(nowMs).toISOString())) {
       const span = nowMs - inicio;
       if (span < NIGHT_WINDOW_MS) cerrar(openIn, nowMs);
-    } else {
+    } else if (!permisoDelDia(person, diaEntrada)) {
       // Día terminado: cierra con el horario. Si entró DESPUÉS de su hora de
       // salida, `fin` queda antes que la entrada y no suma nada — que es la
       // regla: quien llega pasada su jornada no abre un día nuevo.
@@ -518,8 +562,16 @@ function paresDe(events, nowMs, person = null) {
   return pares;
 }
 
-function pairedHours(events, nowMs, person = null) {
-  return paresDe(events, nowMs, person).reduce((s, p) => s + p.horas, 0);
+function pairedHours(events, nowMs, person = null, desde = null, hasta = null) {
+  const pares = paresDe(events, nowMs, person);
+  const horas = pares.reduce((s, p) => s + p.horas, 0);
+  const fechas = events.map(e => dayKey(e.ts)).sort();
+  const hoy = dayKey(new Date(nowMs).toISOString());
+  const inicio = desde ?? fechas[0] ?? hoy;
+  const fin = hasta ?? fechas.at(-1) ?? hoy;
+  const porDia = new Map();
+  for (const p of pares) porDia.set(p.fecha, (porDia.get(p.fecha) ?? 0) + p.horas);
+  return horas + diasEntre(inicio, fin).filter(f => turnoPermisoTerminado(person, f, nowMs)).reduce((s, f) => s + horasReconocidas(person, f, porDia.get(f) ?? 0, pares), 0);
 }
 
 /**
@@ -594,15 +646,28 @@ const nombreCorto = (texto, { mayusculas = true } = {}) => {
   return [p[0], p[p.length >= 4 ? 2 : 1]].map(cap).join(' ');
 };
 
-const ROL_ETIQUETA = { empresa: 'Propietario', admin: 'Administrador', consulta: 'Consulta', superadmin: 'Superadministrador' };
+/** Pestaña → la vista que la abre (permiso del Invitado, lib/roles.js). */
+const VISTA_DE_TAB = {
+  dashboard: 'asistencia:ver',
+  asistencia: 'asistencia:historial',
+  historial: 'asistencia:historial',
+  anomalias: 'asistencia:anomalias',
+  reportes: 'asistencia:reportes',
+};
+
+const ROL_ETIQUETA = { empresa: 'Propietario', admin: 'Administrador', consulta: 'Consulta', invitado: 'Invitado', superadmin: 'Superadministrador' };
 /** Roles que se pueden dar a alguien de la empresa, con lo que puede hacer. */
 const ROLES_EMPRESA = [
   ['empresa', 'Propietario', 'Todo, incluida la cuenta: plan, clave de API y quién entra.'],
   ['admin', 'Administrador', 'Toda la operación: asistencia, correcciones, colaboradores, reglamento, sedes, dispositivos y cierres. No toca la cuenta ni invita.'],
   ['consulta', 'Consulta', 'Solo ver: asistencia, reportes, historial y exportar.'],
+  ['invitado', 'Invitado', 'Permisos individuales: de entrada lo mismo que el Administrador. Usa «Permisos» junto a cada persona para elegir qué puede ver y hacer.'],
 ];
 
 export default function AdminPanel({ sesion = null, permisos = {}, seccionInicial = 'dashboard' }) {
+  // Permiso fino del Invitado (modulo:accion). Los demás roles no tienen
+  // lista: para ellos manda la bandera general (permisos.corregir…).
+  const puedeInv = (clave) => !permisos.lista || permisos.lista.includes(clave);
   // Cada pantalla tiene su propia dirección (/admin/empleados,
   // /admin/ajustes/sedes…). La inicial la resuelve el servidor desde la ruta;
   // aquí solo hay que mantenerlas sincronizadas.
@@ -684,7 +749,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     };
   }, [sesionAbierta]);
   const [sedeFilter, setSedeFilter] = useState('all'); // 'all' | nombre de sede
-  const [tick, setTick] = useState(0); // fuerza relectura de localStorage
+  const [tick, setTick] = useState(0); // revisión de los datos tras la carga o un cambio
   // ¿Este navegador es además un kiosco registrado? Entonces la barra lleva
   // un botón para volver a él sin buscar nada (se decide al montar: la clave
   // vive en localStorage y en el servidor no existe).
@@ -802,6 +867,34 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [usrError, setUsrError] = useState(null);
   const [nuevoUsr, setNuevoUsr] = useState(null); // { email, rol }
   const [cupoUsuarios, setCupoUsuarios] = useState(null); // { actuales, limite } del plan
+  // Permisos de la persona Invitada seleccionada: el catálogo y su lista
+  // vienen juntos del servidor; el borrador vive dentro del modal.
+  const [datosPermisosInv, setDatosPermisosInv] = useState(null); // { permisos, secciones, modulos, perfiles }
+  const [personaPermisosInv, setPersonaPermisosInv] = useState(null);
+  const [cargandoPermisosInv, setCargandoPermisosInv] = useState(false);
+  const [guardandoInv, setGuardandoInv] = useState(false);
+  const abrirPermisosInv = async (persona, tipo = 'usuario') => {
+    setCargandoPermisosInv(true);
+    try {
+      const r = await fetch('/api/roles/invitado?' + new URLSearchParams({ id: persona.id, tipo }));
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Error al cargar');
+      setPersonaPermisosInv({ ...persona, tipo });
+      setDatosPermisosInv(d);
+    } catch (e) { showToast('No se pudieron cargar los permisos: ' + e.message); }
+    finally { setCargandoPermisosInv(false); }
+  };
+  const cerrarPermisosInv = () => { if (!guardandoInv) setDatosPermisosInv(null); };
+  const guardarPermisosInv = async (permisos) => {
+    setGuardandoInv(true);
+    try {
+      const r = await fetch('/api/roles/invitado?' + new URLSearchParams({ id: personaPermisosInv.id, tipo: personaPermisosInv.tipo }), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ permisos }) });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Error al guardar');
+      setDatosPermisosInv(null); showToast('Permisos del Invitado guardados');
+    } catch (e) { showToast('No se pudo guardar: ' + e.message); }
+    finally { setGuardandoInv(false); }
+  };
   const cargarUsuarios = () => {
     fetch('/api/usuarios')
       .then((r) => r.json())
@@ -1224,6 +1317,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [verArchivados, setVerArchivados] = useState(false);
   const [archPage, setArchPage] = useState(0);
   // Cajón de registro de empleado (pestaña Empleados, sin cambiar de página).
+  const [permisoPersona, setPermisoPersona] = useState(null);
   const [regAbierto, setRegAbierto] = useState(false);
   // Guía "¿Cómo empezar?" (los 3 pasos que antes ocupaban el dashboard).
   const [guiaAbierta, setGuiaAbierta] = useState(false);
@@ -1261,27 +1355,39 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const [semanasAbiertas, setSemanasAbiertas] = useState({});
   const semanaAbierta = (lunes) => semanasAbiertas[lunes] ?? (lunes === lunesDe(todayKey()));
   // refresh = re-sincronizar desde Postgres y re-renderizar.
-  const refresh = () => {
-    syncPanel()
-      .then(() => { setCfg(getLaborConfig()); setTick((t) => t + 1); })
-      .catch((e) => console.error('No se pudo sincronizar el panel:', e.message));
-  };
+  const refrescoRef = useRef({ activo: false, pendiente: false, montado: true });
+  const refresh = useCallback(async () => {
+    const estado = refrescoRef.current;
+    if (!estado.montado) return;
+    if (estado.activo) { estado.pendiente = true; return; }
+    estado.activo = true;
+    try {
+      do {
+        estado.pendiente = false;
+        await syncPanel();
+        if (!estado.montado) return;
+        setCfg(getLaborConfig());
+        setTick((t) => t + 1);
+      } while (estado.pendiente);
+    } catch (e) {
+      console.error('No se pudo sincronizar el panel:', e.message);
+    } finally {
+      estado.activo = false;
+    }
+  }, []);
 
   useEffect(() => {
-    refresh(); // carga inicial desde la API
-    // Casi en vivo: sondeo corto + refresco inmediato al volver a la pestaña,
-    // para que las marcaciones del kiosco (u otro admin) aparezcan enseguida.
-    const id = setInterval(refresh, 10000);
-    const alVolver = () => { if (document.visibilityState === 'visible') refresh(); };
-    document.addEventListener('visibilitychange', alVolver);
-    window.addEventListener('focus', alVolver);
+    refrescoRef.current.montado = true;
+    const eventos = new EventSource('/api/eventos-panel');
+    const alCambiar = () => refresh();
+    eventos.addEventListener('cambio', alCambiar);
+    refresh(); // única carga inicial; después solo cambios guardados
     return () => {
-      clearInterval(id);
-      document.removeEventListener('visibilitychange', alVolver);
-      window.removeEventListener('focus', alVolver);
+      refrescoRef.current.montado = false;
+      eventos.removeEventListener('cambio', alCambiar);
+      eventos.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refresh]);
 
   // La guía marca "✓ Vincula el dispositivo" con la lista real: se carga al
   // abrirla (normalmente solo se carga al entrar a la pestaña Dispositivos).
@@ -1316,7 +1422,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     const byId = new Map();
     // La copia lleva también la foto de perfil: sin `avatarEn` la miniatura
     // de Asistencia, Anomalías y el dashboard caía siempre a las iniciales.
-    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '', expectedEntry: p.expectedEntry || '', expectedExit: p.expectedExit || '', breakMinutes: p.breakMinutes ?? null, jornadaDias: p.jornadaDias ?? null, avatarEn: p.avatarEn ?? null });
+    for (const p of listPeople()) byId.set(p.id, { id: p.id, name: p.name, cedula: p.cedula || '', sede: p.sede || '', expectedEntry: p.expectedEntry || '', expectedExit: p.expectedExit || '', breakMinutes: p.breakMinutes ?? null, jornadaDias: p.jornadaDias ?? null, avatarEn: p.avatarEn ?? null, permisos: p.permisos ?? [] });
     for (const e of events) if (!byId.has(e.personId)) byId.set(e.personId, { id: e.personId, name: e.personName, sede: e.sede || '', expectedEntry: '', expectedExit: '', breakMinutes: null, jornadaDias: null });
     const people = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1340,6 +1446,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       for (let i = 0; i < mine.length; i++) {
         const e = mine[i];
         if (new Date(e.ts).getTime() < weekAgo) continue;
+        const fechaTurno = e.type === 'out' && mine[i - 1]?.type === 'in' ? dayKey(mine[i - 1].ts) : dayKey(e.ts);
+        if (permisoCubreDia(p, fechaTurno)) continue;
         if (e.type === 'in') {
           const next = mine[i + 1];
           const closed = next && next.type === 'out';
@@ -1367,7 +1475,53 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             if (nowMs > topeMs) anomalies.push({ kind: 'missing-exit', person: p, event: e });
           }
         }
-        if (e.flag === 'late-entry') anomalies.push({ kind: 'late-entry', person: p, event: e });
+        if (e.flag === 'late-entry') {
+          const f = franjaEsperada(p, fechaTurno);
+          const inicio = f ? Date.parse(`${fechaTurno}T${f.entrada}:00-05:00`) : null;
+          if (!inicio || !permisoCubreTramo(p, fechaTurno, inicio, Date.parse(e.ts))) anomalies.push({ kind: 'late-entry', person: p, event: e });
+        }
+
+        // Salida tardía: marcó su salida pasado el fin del horario por más de
+        // la tolerancia. Solo la ÚLTIMA salida del turno (la del almuerzo no
+        // cuenta) y solo si nadie la revisó: confirmarla o corregirla deja la
+        // marcación con `correctedBy` y el caso sale de la bandeja.
+        // Es solo un aviso: no toca ni consulta el cálculo de horas extra.
+        if (e.type === 'out' && mine[i - 1]?.type === 'in' && !e.correctedBy) {
+          const fecha = dayKey(mine[i - 1].ts);
+          const ultimaDelTurno = !mine.slice(i + 1).some((x) => x.type === 'in' && dayKey(x.ts) === fecha);
+          const minutos = ultimaDelTurno
+            ? minutosDespuesDelHorario({ fechaEntrada: fecha, salidaMs: new Date(e.ts).getTime(), franja: franjaEsperada(p, fecha) })
+            : null;
+          if (esSalidaTardia(minutos, cfg.salidaTardeMin)) {
+            anomalies.push({ kind: 'late-exit', person: p, event: e, minutos });
+          }
+        }
+      }
+
+      // Descanso excedido: una pausa (salida → regreso el mismo día) que pasó
+      // del descanso de su horario más la tolerancia. El caso apunta al
+      // REGRESO; confirmarlo o corregirlo lo saca de la bandeja. Solo aviso:
+      // no toca ni consulta el cálculo de horas extra.
+      const porDia = new Map();
+      for (const e of mine) {
+        if (new Date(e.ts).getTime() < weekAgo) continue;
+        const d = dayKey(e.ts);
+        if (!porDia.has(d)) porDia.set(d, []);
+        porDia.get(d).push(e);
+      }
+      for (const [fecha, evs] of porDia) {
+        if (permisoCubreDia(p, fecha)) continue;
+        const casos = descansosExcedidos({ eventos: evs, franja: franjaEsperada(p, fecha), tolerancia: toleranciaDescanso(cfg.descansoToleranciaMin) });
+        for (const c of casos) {
+          if (c.regreso.correctedBy || permisoCubreTramo(p, fecha, Date.parse(c.salida.ts), Date.parse(c.regreso.ts))) continue;
+          anomalies.push({ kind: 'long-break', person: p, event: c.regreso, salida: c.salida, minutos: c.minutos, permitido: c.permitido, exceso: c.exceso });
+        }
+      }
+
+      // Solo pares reales completos: no usar cierres automáticos ni tiempo en curso.
+      for (const c of horasIncompletas({ eventos: mine, franjaDe: fecha => franjaEsperada(p, fecha), nowMs })) {
+        if (Date.parse(c.event.ts) < weekAgo || c.faltanteMin <= horasJustificadasPermiso(p, c.fecha, c.trabajadoMin / 60, paresDe(mine, nowMs, p)) * 60 + 1e-6) continue;
+        anomalies.push({ ...c, kind: 'incomplete-hours', person: p });
       }
 
       const corrected = mine.some((e) => e.correctedBy && dayKey(e.ts) === todayKey());
@@ -1376,7 +1530,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       // puede variar por día de la semana) + gracia configurable.
       let onTime = null;
       const franjaHoy = firstIn ? franjaEsperada(p, todayKey()) : null;
-      if (firstIn && franjaHoy) {
+      if (firstIn && franjaHoy && !permisoDelDia(p, todayKey())) {
         const [h, m] = franjaHoy.entrada.split(':').map(Number);
         const d = new Date(firstIn.ts);
         onTime = d.getHours() * 60 + d.getMinutes() <= h * 60 + m + cfg.graceMinutes;
@@ -1388,9 +1542,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         firstIn,
         lastOut,
         onTime,
-        hoursToday: firstIn ? pairedHours(today, nowMs, p) : null,
-        weekHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= weekAgo), nowMs, p),
-        rangoHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= rangoAgo), nowMs, p),
+        hoursToday: firstIn || permisoDelDia(p, todayKey()) ? pairedHours(today, nowMs, p, todayKey(), todayKey()) : null,
+        weekHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= weekAgo), nowMs, p, dayKey(new Date(weekAgo).toISOString()), todayKey()),
+        rangoHours: pairedHours(mine.filter((e) => new Date(e.ts).getTime() >= rangoAgo), nowMs, p, dayKey(new Date(rangoAgo).toISOString()), todayKey()),
         present: !!firstIn && today[today.length - 1]?.type === 'in',
         corrected,
         // Desde DÓNDE marcó por última vez hoy. La columna se llama «Sede /
@@ -1573,6 +1727,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       if (!porPersona.has(e.personId)) porPersona.set(e.personId, { name: e.personName, sede: e.sede || '', events: [] });
       porPersona.get(e.personId).events.push(e);
     }
+    for (const p of listPeople()) {
+      if (!porPersona.has(p.id) && diasEntre(repFrom, repTo).some(f => permisoDelDia(p, f))) porPersona.set(p.id, { name: p.name, sede: p.sede, events: [] });
+    }
     for (const [id, r] of porPersona) {
       const persona = rosterById.get(id);
       const cedula = persona?.cedula || `id:${id}`;
@@ -1581,8 +1738,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         name: r.name,
         sede: r.sede || persona?.sede || '',
         days: new Set(r.events.filter((e) => e.type === 'in').map((e) => dayKey(e.ts))).size,
-        hours: pairedHours(r.events, nowMs, persona),
-        lateCount: r.events.filter((e) => e.flag === 'late-entry').length,
+        hours: pairedHours(r.events, nowMs, persona, repFrom, repTo),
+        horasReales: paresDe(r.events, nowMs, persona).reduce((s,p) => s+p.horas,0),
+        diasNovedad: diasEntre(repFrom, repTo).filter(f => permisoDelDia(persona, f)).length,
+        novedades: (persona?.permisos ?? []).filter(p => p.inicio <= repTo && p.fin >= repFrom).map(p => `${etiquetaPermiso(p)}: ${p.inicio} a ${p.fin}`).join(' | '),
+        lateCount: r.events.filter((e) => e.flag === 'late-entry' && !permisoDelDia(persona, dayKey(e.ts))).length,
         horasPorTipo: Object.fromEntries(CODIGOS_HORA.map((c) => [c, 0])),
         extras: 0,
         valor: 0,
@@ -1670,6 +1830,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       setRepRecarga((n) => n + 1);
     } finally { setCerrando(false); }
   };
+  // Comprobante de pago abierta: { name, cedula } de la fila, o null.
+  const [colillaDe, setColillaDe] = useState(null);
+  const puedeColillas = Boolean(permisos.liquidar) && puedeInv('cierres:colillas');
+
   const alternarCierre = (fila) => {
     if (fila.cerrado) {
       if (!confirm(`¿Reabrir el período de ${fila.name}? Volverá a calcularse en vivo y perderá la marca de pagado.`)) return;
@@ -1719,7 +1883,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       'Empleado', 'Cédula', 'Sede',
       ...TIPOS_HORA.flatMap((t) => [`${t.codigo} (h)`, `${t.codigo} (COP)`]),
       'Total horas extra', 'Valor total (COP)', 'Estado de pago',
-      'Días trabajados', 'Horas trabajadas', 'Entradas tardías',
+      'Días trabajados', 'Horas computables', 'Entradas tardías', 'Horas trabajadas', 'Horas reconocidas', 'Días con permiso/incapacidad', 'Novedades',
     ];
     const h2 = (n) => Math.round((n ?? 0) * 100) / 100;
     const ESTADO = { pagado: 'Pagado', parcial: 'Parcial', pendiente: 'Pendiente', na: '' };
@@ -1730,6 +1894,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       r.sinSalario ? 'sin salario' : r.valor,
       ESTADO[r.pago],
       r.days, h2(r.hours), r.lateCount,
+      h2(r.horasReales ?? r.hours), h2(Math.max(0, r.hours - (r.horasReales ?? r.hours))), r.diasNovedad ?? 0, r.novedades ?? '',
     ]);
     return [head, ...lines];
   };
@@ -1812,6 +1977,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   const exportar = async (formato) => {
     setExportMenu(false);
+    if (formato === 'permisos') {
+      const personas = new Map([...listPeople(), ...listArchivados()].map(p => [p.id, p]));
+      const registros = listPermisosHistorial().filter(p => sedeFilter === 'all' || personas.get(p.empleado_id)?.sede === sedeFilter);
+      const filas = filasReportePermisos(registros, id => personas.get(id), repFrom, repTo);
+      descargar(new Blob([csvPermisos(filas)], { type: 'text/csv;charset=utf-8;' }), `permisos_incapacidades_${repFrom}_a_${repTo}.csv`);
+      showToast('Reporte de permisos e incapacidades descargado');
+      return;
+    }
     const filas = filasReporte();
     const base = `reporte_${repFrom}_a_${repTo}`;
     const XLSX_TIPO = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -1880,6 +2053,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // Rango por defecto: la semana en curso Y la anterior, para que siempre
   // haya a la vista una semana ya cerrada, con su extra definida.
   const openDrawer = (personId, personName, day = null) => {
+    if (!puedeInv('marcaciones:ver')) { showToast('No tienes permiso para ver el detalle de marcaciones.'); return; }
     setEvForm(null);
     setOpenDia(day);
     const hoy = todayKey();
@@ -1914,7 +2088,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       setEvForm({ mode: 'add', fecha: dia, type: 'out', time: '17:00', reason: '' });
     } else {
       const d = new Date(a.event.ts);
-      setEvForm({ mode: 'edit', eventId: a.event.id, fecha: dia, type: 'in', time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, reason: '' });
+      setEvForm({ mode: 'edit', eventId: a.event.id, fecha: dia, type: a.event.type, time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, reason: '' });
     }
   };
 
@@ -1941,6 +2115,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     try {
       if (a.kind === 'missing-exit') {
         await addManualEvent(a.person.id, a.person.name, 'out', iso, anomForm.reason);
+      } else if ((a.kind === 'late-exit' || a.kind === 'long-break') && fmt12(a.event.ts).slice(0, 5) === anomForm.time) {
+        // Misma hora: es una confirmación. Se manda la marca ORIGINAL, con
+        // sus segundos, para no mover ni un segundo del cálculo de horas.
+        await updateEventTime(a.event.id, a.event.ts, anomForm.reason);
       } else {
         await updateEventTime(a.event.id, iso, anomForm.reason);
       }
@@ -1975,8 +2153,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       if (!map.has(d)) map.set(d, []);
       map.get(d).push(e);
     }
+    for (const fecha of diasEntre(drawer?.desde, drawer?.hasta)) {
+      if (permisoDelDia(drawerPersona, fecha) && !map.has(fecha)) map.set(fecha, []);
+    }
     return [...map.entries()]
-      .map(([fecha, evs]) => ({ fecha, evs, horas: pairedHours(evs, Date.now(), drawerPersona) }))
+      .map(([fecha, evs]) => ({ fecha, evs, horas: pairedHours(evs, Date.now(), drawerPersona, fecha, fecha) }))
       .sort((a, b) => b.fecha.localeCompare(a.fecha));
   }, [drawerEvents, drawerPersona]);
 
@@ -2011,7 +2192,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       .map(([lunes, dias]) => {
         const semana = resumenSemana({
           lunes,
-          horasPorDia: new Map(dias.map((d) => [d.fecha, d.horas])),
+          horasPorDia: new Map(dias.map((d) => [d.fecha, paresDe(d.evs, ahora, drawerPersona).reduce((s, p) => s + p.horas, 0)])),
+          horasJustificadas: (fecha, trabajadas) => horasReconocidas(drawerPersona, fecha, trabajadas, dias.flatMap(d => paresDe(d.evs, ahora, drawerPersona))),
           festivos,
           horasHorario: (fecha) => horasFranja(franjaEsperada(drawerPersona, fecha)),
           horasSemana: cfg.weeklyHours ?? 42,
@@ -2138,7 +2320,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         const mine = delDia.filter((e) => e.personId === r.person.id);
         const firstIn = mine.find((e) => e.type === 'in') || null;
         const lastOut = [...mine].reverse().find((e) => e.type === 'out') || null;
-        return { ...r, firstIn, lastOut, present: false, hoursToday: firstIn ? pairedHours(mine, finDia, r.person) : null };
+        return { ...r, firstIn, lastOut, present: false, hoursToday: firstIn || registroPermisoDelDia(r.person, diaAsistencia) ? pairedHours(mine, finDia + 1000, r.person, diaAsistencia, diaAsistencia) : null };
       });
     }
     const q = search.trim().toLowerCase();
@@ -2245,11 +2427,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     });
   }, [roster, empSearch, empFiltros]);
 
-  // En el dashboard van TODAS las personas que marcaron ese día, sin
+  // En el dashboard van las personas con marcaciones o novedades ese día, sin
   // paginación. En la sección Asistencia (con ausentes y filtros) se pagina
   // de a 9.
   const enDashboard = tab === 'dashboard';
-  const filasTabla = enDashboard ? attRows.filter((r) => r.firstIn || r.lastOut) : attRows;
+  const filasTabla = enDashboard ? attRows.filter((r) => r.firstIn || r.lastOut || registroPermisoDelDia(r.person, diaAsistencia)) : attRows;
   const tamPagina = enDashboard ? Math.max(1, filasTabla.length) : tab === 'asistencia' ? 9 : PAGE_SIZE;
   const pageCount = Math.max(1, Math.ceil(filasTabla.length / tamPagina));
   const safePage = Math.min(page, pageCount - 1);
@@ -2290,11 +2472,20 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   ].filter((t) => {
     // Cada pestaña exige lo que exigen sus rutas. Lo que no puede usar no le
     // aparece (y el servidor lo rechaza igual si entra por la URL).
+    // Vistas del panel: un Invitado puede tener alguna apagada.
+    if (VISTA_DE_TAB[t.id]) return puedeInv(VISTA_DE_TAB[t.id]);
     if (t.id === 'empleados') return Boolean(permisos.empleados);
     if (t.id === 'horarios' || t.id === 'cfg-sedes' || t.id === 'cfg-dispositivos') return Boolean(permisos.config);
-    if (t.id === 'ajustes') return Boolean(permisos.config || permisos.usuarios || permisos.cuenta);
+    if (t.id === 'ajustes') return Boolean(permisos.config || permisos.usuarios || permisos.cuenta || permisos.seguridad);
     return true;
   });
+
+  // Si la pantalla actual es una vista que el Invitado tiene apagada (p. ej.
+  // entró por /admin, que abre el dashboard), se va a la primera que sí ve.
+  useEffect(() => {
+    if (VISTA_DE_TAB[tab] && !puedeInv(VISTA_DE_TAB[tab]) && tabs[0]) setTab(tabs[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   // Pantallas que muestran el submenú de Ajustes al lado (sedes y
   // dispositivos ya no: son pestañas del menú principal). La portada de
@@ -2411,6 +2602,27 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           grilla, encima del contenido. Sueltos, la grilla les inventaba una
           fila extra bajo el menú lateral que le robaba altura a todo. */}
       <div className="avisos">
+      {/* Superadmin dentro de la empresa como SOPORTE: que no haya duda de en
+          qué modo está, hasta cuándo, ni de cómo salir. El servidor ya lo
+          limita a solo lectura y anota cada consulta. */}
+      {sesion?.soporte && (
+        <div className="banner-vencida" role="alert" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span>
+            Modo soporte — solo lectura, autorizado por la empresa hasta el{' '}
+            {new Date(sesion.soporte.hasta).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })}.
+            Cada consulta queda registrada. Motivo: {sesion.soporte.motivo}
+          </span>
+          <button
+            className="btn small"
+            onClick={async () => {
+              await fetch('/api/plataforma/soporte', { method: 'DELETE' }).catch(() => {});
+              window.location.href = '/plataforma';
+            }}
+          >
+            Salir del modo soporte
+          </button>
+        </div>
+      )}
       {/* Suscripción vencida: el backend ya bloquea las escrituras (402); esto
           explica POR QUÉ, antes de que la persona choque con el error. */}
       {sesion?.plan === 'pago' && sesion?.estadoSuscripcion !== 'activa' && (
@@ -2599,6 +2811,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     <span className="cfg-ico"><Icon name="users" size={16} /></span> Acceso al panel
                   </button>
                 )}
+                {permisos.seguridad && (
+                  <button className={`cfg-item${tab === 'cfg-seguridad' ? ' on' : ''}`} onClick={() => setTab('cfg-seguridad')}>
+                    <span className="cfg-ico"><Icon name="lock" size={16} /></span> Seguridad
+                  </button>
+                )}
               </div>
             )}
             {permisos.config && (<>
@@ -2679,6 +2896,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     // ya dice el estado (verde marcó hoy, rojo ausente).
                     // La hora de la ÚLTIMA marcación, entrada o salida.
                     const ultima = (r) => {
+                      const registro = registroPermisoDelDia(r.person, diaAsistencia);
+                      if (!r.ultimoEv && registro) return `${registro.tipo === 'incapacidad' ? 'Incapacidad' : 'Permiso'} · ${registro.inicio} al ${registro.fin}`;
                       if (!r.ultimoEv) return esHoy ? 'sin marcación hoy' : 'sin marcación';
                       return `${r.ultimoEv.type === 'in' ? 'entró' : 'salió'} ${horaCorta(r.ultimoEv.ts)}`;
                     };
@@ -2700,6 +2919,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                             <span className={`punto-estado ${estadoPunto(r)}`} title={estadoPunto(r) === 'on' ? 'Trabajando' : 'No está trabajando'} />
                           </span>
                           <span className="emp-cedula">{ultima(r)}</span>
+                          {registroPermisoDelDia(r.person, diaAsistencia) && <span className="emp-cedula">{chip('warn', etiquetaPermiso(registroPermisoDelDia(r.person, diaAsistencia)))}</span>}
                         </span>
                       </span>
                     );
@@ -2712,9 +2932,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     // Novedad: ¿esta persona tiene alguna anomalía DEL DÍA que
                     // se está viendo? Se señala resaltando la FILA con un lavado
                     // suave (sin columna aparte); el detalle va en el tooltip.
-                    const NOMBRE_NOVEDAD = { 'missing-exit': 'Salida faltante', 'late-entry': 'Entrada tardía' };
+                    const NOMBRE_NOVEDAD = { 'missing-exit': 'Salida faltante', 'late-entry': 'Entrada tardía', 'incomplete-hours': 'Horas incompletas' };
                     const novedadDe = (r) => {
-                      const novs = data.anomalies.filter((a) => a.person.id === r.person.id && dayKey(a.event.ts) === diaAsistencia);
+                      const permiso = registroPermisoDelDia(r.person, diaAsistencia);
+                      if (permiso) return etiquetaPermiso(permiso);
+                      const novs = data.anomalies.filter((a) => a.person.id === r.person.id && (a.fecha ?? dayKey(a.event.ts)) === diaAsistencia);
                       if (novs.length === 0) return null;
                       return [...new Set(novs.map((n) => NOMBRE_NOVEDAD[n.kind] ?? n.kind))].join(' · ');
                     };
@@ -2772,7 +2994,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                   </div>
                                   <div className="acc-tile">
                                     <b>{fmtH(r.hoursToday)}</b>
-                                    <small>trabajado</small>
+                                    <small>{registroPermisoDelDia(r.person, diaAsistencia)?.descontar === false ? 'computable' : 'trabajado'}</small>
                                   </div>
                                   <div className="acc-tile">
                                     <b>{celdaExtras(r)}</b>
@@ -2862,10 +3084,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 </button>
                 <div className="anom-desglose">
                   {view.anomalies.length === 0 && <span>Nada pendiente.</span>}
-                  {['missing-exit', 'late-entry'].map((k) => {
+                  {['missing-exit', 'late-entry', 'late-exit', 'long-break', 'incomplete-hours'].map((k) => {
                     const n = view.anomalies.filter((a) => a.kind === k).length;
                     if (!n) return null;
-                    const txt = k === 'missing-exit' ? 'sin registrar salida' : 'con entrada tardía';
+                    const txt = { 'missing-exit': 'sin registrar salida', 'late-entry': 'con entrada tardía', 'late-exit': 'con salida tardía', 'long-break': 'con descanso excedido', 'incomplete-hours': 'con horas incompletas' }[k];
                     return <span key={k}>{n} {txt}</span>;
                   })}
                 </div>
@@ -2996,7 +3218,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 En el celular es una sola fila de tres celdas con el número
                 arriba y el nombre corto abajo; en PC, chips con el nombre largo. */}
             <div className="att-controls anom-filtros">
-              {[['all', 'Todas', 'Todas'], ['missing-exit', 'Salida faltante', 'Sin salida'], ['late-entry', 'Entrada tardía', 'Tardías']].map(([id, lbl, corto]) => (
+              {[['all', 'Todas', 'Todas'], ['missing-exit', 'Salida faltante', 'Sin salida'], ['late-entry', 'Entrada tardía', 'Tardías'], ['late-exit', 'Salida tardía', 'Salió tarde'], ['long-break', 'Descanso excedido', 'Descanso'], ['incomplete-hours', 'Horas incompletas', 'Horas incompletas']].map(([id, lbl, corto]) => (
                 <button key={id} className="fchip" aria-pressed={anomFiltro === id} onClick={() => { setAnomFiltro(id); setAnomAbierta(null); setAnomPage(0); }}>
                   <span className="solo-pc">{lbl}</span><span className="solo-movil">{corto}</span>
                   <span className="fchip-n">{id === 'all' ? view.anomalies.length : view.anomalies.filter((a) => a.kind === id).length}</span>
@@ -3017,12 +3239,21 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 const dosTextos = (largo, corto) => <><span className="solo-pc">{largo}</span><span className="solo-movil">{corto}</span></>;
                 const aChip = (a) =>
                   a.kind === 'missing-exit' ? chip('crit', dosTextos('Salida faltante', 'Sin salida'))
+                    : a.kind === 'late-exit' ? chip('warn', dosTextos('Salida tardía', 'Salió tarde'))
+                    : a.kind === 'incomplete-hours' ? chip('warn', 'Horas incompletas')
+                    : a.kind === 'long-break' ? chip('warn', dosTextos('Descanso excedido', 'Descanso'))
                     : chip('warn', dosTextos('Entrada tardía', 'Tardía'));
                 const aDesc = (a) =>
-                  a.kind === 'missing-exit'
+                  a.kind === 'incomplete-hours'
+                    ? textoHorasIncompletas(a)
+                    : a.kind === 'missing-exit'
                     ? `Entró ${fmt12(a.event.ts)}, sin salida.`
-                    : `Entró ${fmt12(a.event.ts)}.`;
-                const aDay = (a) => new Date(a.event.ts).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
+                    : a.kind === 'late-exit'
+                      ? `Salió ${fmt12(a.event.ts)}, ${fmtHM(a.minutos / 60)} después de su horario.`
+                      : a.kind === 'long-break'
+                        ? `Salió a descanso ${fmt12(a.salida.ts)} y volvió ${fmt12(a.event.ts)}: ${Math.round(a.minutos)} min de ${a.permitido} permitidos (${Math.round(a.exceso)} min de más).`
+                      : `Entró ${fmt12(a.event.ts)}.`;
+                const aDay = (a) => new Date(a.fecha ? `${a.fecha}T12:00:00-05:00` : a.event.ts).toLocaleDateString('es-CO', { timeZone: 'America/Bogota', weekday: 'short', day: 'numeric', month: 'short' });
                 if (view.anomalies.length === 0) return <p className="empty">🎉 Sin anomalías pendientes.</p>;
                 if (casos.length === 0) return <p className="empty">Sin anomalías de este tipo.</p>;
                 return (
@@ -3034,13 +3265,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       {casosPagina.map((a) => {
                         const key = a.event.id + a.kind;
                         const abierta = anomAbierta === key;
+                        const finJornada = a.kind === 'missing-exit' ? finJornadaMs(a.person, dayKey(a.event.ts)) : null;
+                        const salidaAutomatica = finJornada == null
+                          ? 'Sin horario de salida configurado para ese día'
+                          : `Salida generada automáticamente (${new Date(finJornada).toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}${dayKey(new Date(finJornada).toISOString()) !== dayKey(a.event.ts) ? ' del día siguiente' : ''})`;
                         return (
                           <div className={`caso${abierta ? ' abierto' : ''}`} key={key}>
                             <button className="caso-cab" aria-expanded={abierta} onClick={() => abrirCaso(a, key)}>
                               <AvatarEmp person={a.person} />
                               <span className="caso-nom">
                                 <b>{a.person.name}</b>
-                                <small>{aDay(a)}{a.person.sede ? ` · ${a.person.sede}` : ''}</small>
+                                <small className={a.kind === 'incomplete-hours' ? 'horas-incompletas-detalle' : undefined}>{aDay(a)}{a.person.sede ? ` · ${a.person.sede}` : ''}{a.kind === 'missing-exit' ? ` · ${salidaAutomatica}` : a.kind === 'incomplete-hours' ? ` · ${textoHorasIncompletas(a)}` : ''}</small>
                               </span>
                               {aChip(a)}
                               <span className="caso-chev"><Icon name="chevronRight" size={13} /></span>
@@ -3053,7 +3288,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                 </p>
                                 {permisos.corregir && <div className="caso-fix">
                                   <label>
-                                    {a.kind === 'missing-exit' ? 'Salida' : dosTextos('Hora correcta', 'Hora')}
+                                    {a.kind === 'missing-exit' ? 'Salida' : a.kind === 'long-break' ? dosTextos('Hora de regreso', 'Regreso') : dosTextos('Hora correcta', 'Hora')}
                                     <input
                                       type="time" value={anomForm.time}
                                       onChange={(e) => setAnomForm({ ...anomForm, time: e.target.value })}
@@ -3068,7 +3303,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                     />
                                   </label>
                                   <div className="caso-acciones">
-                                    <button className="btn primary" onClick={() => guardarAnomalia(a)}>Guardar</button>
+                                    <button className="btn primary" onClick={() => guardarAnomalia(a)}>
+                                      {(a.kind === 'late-exit' || a.kind === 'long-break') && fmt12(a.event.ts).slice(0, 5) === anomForm.time ? (a.kind === 'long-break' ? 'Confirmar regreso' : 'Confirmar salida') : 'Guardar'}
+                                    </button>
                                     <button className="costo-link" onClick={() => openFix(a)}>Ver día completo →</button>
                                   </div>
                                 </div>}
@@ -3252,6 +3489,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                               </td>
                               <td className="att-sede">{fmtUltima(ultimaMarca.get(p.id))}</td>
                               <td>
+                                {permisos.empleados && <button type="button" className="btn small btn-ico" title="permisos e incapacidades" aria-label={`Permisos e incapacidades de ${p.name}`} onClick={(e) => { e.stopPropagation(); setPermisoPersona(p); }}><Icon name="calendar" size={16} /></button>}
                                 {permisos.empleados && <button
                                   type="button" className="btn small btn-ico danger-btn"
                                   title={`Eliminar a ${p.name}`} aria-label={`Eliminar a ${p.name}`}
@@ -3297,6 +3535,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         ),
                         actions: <>
                           <button className="btn primary block" onClick={() => openEdit(p)}>Editar</button>
+                          {permisos.empleados && <button className="btn btn-ico" title="permisos e incapacidades" onClick={() => setPermisoPersona(p)}><Icon name="calendar" size={16} /></button>}
                           {permisos.empleados && <button
                             type="button" className="btn btn-ico danger-btn"
                             title={`Eliminar a ${p.name}`} aria-label={`Eliminar a ${p.name}`}
@@ -3374,7 +3613,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 <div className="att-controls">
               <button
                 className="btn primary"
-                onClick={() => setHorForm({ nombre: '', dias: diasLunesAViernes() })}
+                onClick={() => setHorForm({ nombre: '', dias: diasLunesAViernes(descansoEmpresa(cfg.descansoMin)) })}
               >
                 Crear horario
               </button>
@@ -3474,12 +3713,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   <Icon name="refresh" size={17} />
                 </button>
                 {/* Exportar: se elige el formato en un menú corto. */}
-                <div className="export-menu" ref={exportMenuRef}>
+                {puedeInv('asistencia:exportar') && <div className="export-menu" ref={exportMenuRef}>
                   <button
                     className="btn primary btn-ico"
                     title="Exportar el reporte" aria-label="Exportar el reporte"
                     aria-haspopup="menu" aria-expanded={exportMenu}
-                    onClick={() => setExportMenu((v) => !v)} disabled={report.length === 0}
+                    onClick={() => setExportMenu((v) => !v)} disabled={report.length === 0 && !listPermisosHistorial().some(p => p.inicio <= repTo && p.fin >= repFrom)}
                   >
                     <Icon name="download" size={18} />
                     <span className="solo-pc">Exportar ▾</span>
@@ -3498,19 +3737,30 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       <button role="menuitem" onClick={() => exportar('csv')}>
                         <b>CSV</b><small>Para otros sistemas o nómina</small>
                       </button>
+                      <button role="menuitem" onClick={() => exportar('permisos')}>
+                        <b>Permisos e incapacidades (CSV)</b><small>Fechas, motivo, soporte, descuento y estado</small>
+                      </button>
                     </div>
                   )}
-                </div>
+                </div>}
               </div>
             </div>
             <div className="rep-periodo">
               <select className="sede-select" aria-label="Mes" value={repMes} onChange={(e) => setRepMes(e.target.value)}>
                 {mesesReporte.map((m) => <option key={m.valor} value={m.valor}>{m.etiqueta}</option>)}
               </select>
+              <div className="rep-periodo-acciones">
               <div className="fchips rep-quincena" role="group" aria-label="Período del mes">
                 <button className="fchip" aria-pressed={repQuincena === 'a'} onClick={() => setRepQuincena('a')}>1 – 15</button>
                 <button className="fchip" aria-pressed={repQuincena === 'b'} onClick={() => setRepQuincena('b')}>16 – {ultimoDiaRepMes}</button>
                 <button className="fchip" aria-pressed={repQuincena === 'mes'} onClick={() => setRepQuincena('mes')}>Todo el mes</button>
+              </div>
+              {report.length > 0 && totalValorizado > 0 && (
+                <div className="val-total" style={repDatos.estado === 'cargando' ? { opacity: 0.55 } : undefined}>
+                  <span className="label">Total a pagar</span>
+                  <span className="value">{fmtCOP(totalValorizado)}</span>
+                </div>
+              )}
               </div>
             </div>
             {/* La semana en curso no tiene extra todavía (domingo y festivo sí:
@@ -3538,13 +3788,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
               {report.length > 0 && (
                 <div style={repDatos.estado === 'cargando' ? { opacity: 0.55, pointerEvents: 'none' } : undefined}>
-                  {totalValorizado > 0 && (
-                    <div className="val-total">
-                      <span className="label">Total a pagar</span>
-                      <span className="value">{fmtCOP(totalValorizado)}</span>
-                    </div>
-                  )}
-
                   {/* PC: la tabla. Solo las columnas de los tipos que ocurrieron
                       en el período (las demás eran puros «—»); nombre y apellido;
                       cifras a la derecha; totales al pie. La gente sin extra va
@@ -3562,7 +3805,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       ...tipos.map(() => 'minmax(78px, .7fr)'),
                       'minmax(80px, .75fr)', 'minmax(104px, .95fr)',
                       ...(repColsAsistencia ? ['minmax(90px, .9fr)', '.45fr', '.6fr', '.55fr'] : []),
-                      ...(permisos.liquidar ? ['minmax(96px, .8fr)'] : []),
+                      ...(permisos.liquidar ? ['minmax(120px, .9fr)'] : []),
                     ].join(' ');
                     const celdasVacias = (repColsAsistencia ? 4 : 0) + (permisos.liquidar ? 1 : 0);
                     return (
@@ -3632,6 +3875,16 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                     {r.cerrado && <span className="ico-num">{r.cerradoEn ? new Date(r.cerradoEn).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) : ''}</span>}
                                   </button>
                                 ) : <span className="muted-cell">—</span>}
+                                {puedeColillas && (
+                                  <button
+                                    className="btn small btn-ico rep-colilla"
+                                    title={`Comprobante de pago de ${nombreCorto(r.name)}: generar o consultar`}
+                                    aria-label={`Comprobante de pago de ${r.name}`}
+                                    onClick={() => setColillaDe({ name: r.name, cedula: r.cedula })}
+                                  >
+                                    <Icon name="file" size={14} />
+                                  </button>
+                                )}
                               </span>
                             )}
                           </div>
@@ -3718,6 +3971,16 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                       <Icon name="lock" size={14} />
                                     </button>
                                   )}
+                                  {puedeColillas && (
+                                    <button
+                                      className="btn small btn-ico rep-colilla"
+                                      title={`Comprobante de pago de ${nombreCorto(e.name)}: generar o consultar`}
+                                      aria-label={`Comprobante de pago de ${e.name}`}
+                                      onClick={() => setColillaDe({ name: e.name, cedula: e.cedula, desde: p.desde, hasta: p.hasta })}
+                                    >
+                                      <Icon name="file" size={14} />
+                                    </button>
+                                  )}
                                 </div>
                               ))}
                             </section>
@@ -3746,6 +4009,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           const describir = (c) => {
             const ant = c.valor_anterior ?? {}; const nue = c.valor_nuevo ?? {};
             switch (c.accion) {
+              case 'crear_permiso':
+              case 'anular_permiso':
+                return { icono: 'calendar', clase: c.accion === 'crear_permiso' ? 'crear' : 'eliminar', texto: <>{c.accion === 'crear_permiso' ? 'Registró' : 'Anuló'} <b>{etiquetaPermiso(nue)}</b> del {nue.inicio} al {nue.fin}{nue.soporte_nombre ? ` · Soporte: ${nue.soporte_nombre}` : ''}</> };
               case 'crear':
                 return { icono: 'userPlus', clase: 'crear', texto: <>Agregó <b>{tipoTxt(nue.tipo).toLowerCase()} {hora(nue.ts)}</b> del {diaCorto(nue.ts)}</> };
               case 'editar_hora':
@@ -3772,7 +4038,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           const hayFiltro = histFiltro.desde || histFiltro.hasta;
           return (
           <section className="card grow">
-            <h2>Historial de ajustes <span className="muted-count">{filtrados.length}</span></h2>
+            <h2>Historial de ajustes y novedades <span className="muted-count">{filtrados.length}</span></h2>
 <div className="att-controls">
               <label className="hist-fecha">Desde{' '}
                 <input
@@ -3794,7 +4060,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             </div>
             <div className="scrollable">
               {filtrados.length === 0 && (
-                <p className="empty">{hayFiltro ? 'Sin correcciones en ese rango de fechas.' : 'Sin correcciones.'}</p>
+                <p className="empty">{hayFiltro ? 'Sin ajustes ni novedades en ese rango de fechas.' : 'Sin ajustes ni novedades.'}</p>
               )}
               <div className="hist-lista">
                 {pagina.map((c) => {
@@ -3853,6 +4119,13 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                       <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
                     </button>
                   )}
+                  {permisos.seguridad && (
+                    <button className="tool" onClick={() => setTab('cfg-seguridad')}>
+                      <span className="icon"><Icon name="lock" size={19} /></span>
+                      <span className="tool-txt"><b>Seguridad</b><small>Llave de recuperación y acceso del soporte</small></span>
+                      <span className="tool-chev"><Icon name="chevronRight" size={14} /></span>
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -3899,6 +4172,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               </>)}
             </div>
           </section>
+        )}
+
+        {/* ── Sub-pantalla: Seguridad (llave de recuperación y soporte) ── */}
+        {tab === 'cfg-seguridad' && permisos.seguridad && (
+          <SeguridadEmpresa alVolver={() => setTab('ajustes')} soloLectura={!permisos.cuenta} />
         )}
 
         {/* ── Sub-pantalla: Usuarios y roles ── */}
@@ -3995,6 +4273,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           <td>{u.ultimoAcceso ? fmtTs(u.ultimoAcceso) : 'nunca'}</td>
                           <td>
                             <span className="tl-actions">
+                              {u.rol === 'invitado' && <button className="btn small" disabled={cargandoPermisosInv} onClick={() => abrirPermisosInv(u)}>Permisos</button>}
                               {/* El nombre que se muestra en el Historial y en el menú:
                                   se corrige aquí cuando Google trae otro. */}
                               <button
@@ -4037,6 +4316,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                             <td className="att-name">{i.email} <small style={{ color: 'var(--muted)' }}>· {ROL_ETIQUETA[i.rol] ?? i.rol}</small></td>
                             <td>{fmtTs(i.expiraEn)}</td>
                             <td style={{ whiteSpace: 'nowrap' }}>
+                              {i.rol === 'invitado' && <><button className="btn small" disabled={cargandoPermisosInv} onClick={() => abrirPermisosInv(i, 'invitacion')}>Permisos</button>{' '}</>}
                               <button className="btn small" onClick={() => copiarInvitacion(i.email)}>
                                 Copiar
                               </button>{' '}
@@ -4308,9 +4588,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <div className="cfg-group">
                   <div className="cfg-group-head">
                     <h3>Mis datos</h3>
-                    <a className="btn btn-ico" href="/api/empresa/exportar" download title="Exportar todos los datos (JSON)" aria-label="Exportar todos los datos">
+                    {puedeInv('seguridad:exportar') && <a className="btn btn-ico" href="/api/empresa/exportar" download title="Exportar todos los datos (JSON)" aria-label="Exportar todos los datos">
                       <Icon name="download" size={16} />
-                    </a>
+                    </a>}
                   </div>
                   <p className="cfg-note" style={{ marginTop: 0 }}>Todo en un JSON, sin rostros (dato biométrico).</p>
                 </div>
@@ -5012,6 +5292,60 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     </select>
                   </div>
                 </div>
+                {/* Descanso de la empresa: con cuánto almuerzo nace un horario
+                    nuevo. Los horarios ya creados conservan el suyo. */}
+                <div className="cfg-row">
+                  <label htmlFor="cfg-descanso">
+                    Tiempo de descanso
+                    <small>Duración del almuerzo con que se crean los horarios nuevos. Cada horario puede ajustarlo después.</small>
+                  </label>
+                  <div className="cfg-input">
+                    <input
+                      id="cfg-descanso" type="number" min="0" max="240" step="5"
+                      value={descansoEmpresa(cfg.descansoMin)}
+                      onChange={(e) => { const v = Number(e.target.value); if (Number.isInteger(v) && v >= 0 && v <= 240) updateCfg({ descansoMin: v }); }}
+                    /> min
+                  </div>
+                </div>
+                {/* Tolerancia de la anomalía «Descanso excedido»: solo avisa. */}
+                <div className="cfg-row">
+                  <label htmlFor="cfg-descanso-tol">
+                    Tolerancia de descanso
+                    <small>
+                      {`Una pausa de más de ${toleranciaDescanso(cfg.descansoToleranciaMin)} min sobre el descanso del horario se avisa en Anomalías. No afecta las horas extra.`}
+                    </small>
+                  </label>
+                  <div className="cfg-input">
+                    <input
+                      id="cfg-descanso-tol" type="number" min="0" max="120"
+                      value={toleranciaDescanso(cfg.descansoToleranciaMin)}
+                      onChange={(e) => { const v = Number(e.target.value); if (Number.isInteger(v) && v >= 0 && v <= 120) updateCfg({ descansoToleranciaMin: v }); }}
+                    /> min
+                  </div>
+                </div>
+                {/* Tolerancia de la anomalía «Salida tardía». Solo decide qué se
+                    AVISA; no tiene relación con el cálculo de horas extra. */}
+                <div className="cfg-row">
+                  <label htmlFor="cfg-salida-tarde">
+                    Tolerancia de salida
+                    <small>
+                      {`Salir más de ${toleranciaSalida(cfg.salidaTardeMin)} min después del horario se avisa en Anomalías. No afecta las horas extra.`}
+                    </small>
+                  </label>
+                  <div className="cfg-input">
+                    <select
+                      id="cfg-salida-tarde"
+                      className="sede-select"
+                      aria-label="Tolerancia de salida tardía"
+                      value={String(toleranciaSalida(cfg.salidaTardeMin))}
+                      onChange={(e) => updateCfg({ salidaTardeMin: Number(e.target.value) })}
+                    >
+                      {[0, 5, 10, 15, 20, 30, 45, 60].map((m) => (
+                        <option key={m} value={String(m)}>{m === 0 ? 'Sin tolerancia' : `${m} min`}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
                 <div className="cfg-row">
                   <label htmlFor="cfg-grace">
                     Gracia de puntualidad
@@ -5213,7 +5547,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 type="date" value={drawer.hasta} min={drawer.desde} max={todayKey()} aria-label="Hasta"
                 onChange={(e) => { if (!e.target.value) return; setDrawer({ ...drawer, ...rangoSemanas(drawer.desde, e.target.value) }); setEvForm(null); }}
               />
-              <span className="drawer-hours">{fmtH(pairedHours(drawerEvents, Date.now(), drawerPersona))}</span>
+              <span className="drawer-hours">{fmtH(pairedHours(drawerEvents, Date.now(), drawerPersona, drawer?.desde, drawer?.hasta))}</span>
             </div>
 
             <div className="drawer-body">
@@ -5287,6 +5621,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           </span>
                           <span className="dia-horas">
                             {fmtH(d.horas)}
+                            {permisoDelDia(drawerPersona, d.fecha) && <small>{etiquetaPermiso(permisoDelDia(drawerPersona, d.fecha))}</small>}
                             {/* En modo día cada día trae su extra (ya definitiva);
                                 el domingo/festivo, su recargo; y si pasó de la
                                 jornada por menos del mínimo, se dice. */}
@@ -5337,7 +5672,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                 </span>
                                 {/* Solo iconos: el nombre va en el title y para el lector de pantalla. */}
                                 <span className="tl-actions">
-                                  {e.tieneFoto && (
+                                  {e.tieneFoto && puedeInv('marcaciones:ver_foto') && (
                                     <button
                                       className="btn small btn-ico"
                                       title="Ver foto del registro" aria-label="Ver foto del registro"
@@ -5347,7 +5682,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                     </button>
                                   )}
                                   {permisos.corregir && (<>
-                                  <button
+                                  {puedeInv('marcaciones:editar') && <button
                                     className="btn small btn-ico"
                                     title="Editar" aria-label="Editar marcación"
                                     onClick={() => {
@@ -5356,10 +5691,10 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                     }}
                                   >
                                     <Icon name="edit" size={14} />
-                                  </button>
-                                  <button className="btn small danger-btn btn-ico" title="Eliminar" aria-label="Eliminar marcación" onClick={() => removeEv(e)}>
+                                  </button>}
+                                  {puedeInv('marcaciones:eliminar') && <button className="btn small danger-btn btn-ico" title="Eliminar" aria-label="Eliminar marcación" onClick={() => removeEv(e)}>
                                     <Icon name="trash" size={14} />
-                                  </button>
+                                  </button>}
                                   </>)}
                                   {/* Detalle de la ubicación (distancia, precisión, mapa): se abre aquí. */}
                                   {e.lat != null && e.lon != null && (
@@ -5387,7 +5722,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                           {/* Alta manual: el formulario aparece bajo el botón, dentro del día */}
                           {evForm?.mode === 'add' && !evForm.conFecha && evForm.fecha === d.fecha
                             ? formularioEv
-                            : permisos.corregir && (
+                            : permisos.corregir && puedeInv('marcaciones:crear') && (
                               <button className="btn small block" onClick={() => setEvForm({ mode: 'add', fecha: d.fecha, type: d.evs.length % 2 === 0 ? 'in' : 'out', time: '08:00', reason: '' })}>
                                 Agregar marcación
                               </button>
@@ -5475,7 +5810,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         tenía un día en la lista, solo se pintaba dentro de su
                         acordeón (cerrado) y parecía que el botón no hacía nada. */}
                     {evForm?.mode === 'add' && evForm.conFecha ? formularioEv : null}
-                    {!evForm && permisos.corregir && (
+                    {!evForm && permisos.corregir && puedeInv('marcaciones:crear') && (
                       <button className="btn block" onClick={() => setEvForm({ mode: 'add', conFecha: true, fecha: drawer.hasta, type: 'in', time: '08:00', reason: '' })}>
                         Agregar marcación en otro día
                       </button>
@@ -5542,7 +5877,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   value={horForm.nombre} onChange={(e) => setHorForm({ ...horForm, nombre: e.target.value })}
                 />
               </div>
-              <EditorDias dias={horForm.dias} onChange={(dias) => setHorForm({ ...horForm, dias })} />
+              <EditorDias dias={horForm.dias} onChange={(dias) => setHorForm({ ...horForm, dias })} descansoMin={descansoEmpresa(cfg.descansoMin)} />
               <div className="hd-resumen">
                 <span>Horas por semana</span>
                 <b>{fmtHM(horasSemanaDias(horForm.dias))}</b>
@@ -6026,6 +6361,20 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         </div>
       )}
 
+      {colillaDe && (
+        <ColillaPago
+          persona={colillaDe} desde={colillaDe.desde ?? repFrom} hasta={colillaDe.hasta ?? repTo} empresa={sesion?.empresa}
+          onCerrar={() => setColillaDe(null)} avisar={showToast}
+        />
+      )}
+
+      {datosPermisosInv && (
+        <PermisosInvitadoModal
+          persona={personaPermisosInv} datos={datosPermisosInv} guardando={guardandoInv}
+          onCancelar={cerrarPermisosInv} onGuardar={guardarPermisosInv} Ayuda={Q}
+        />
+      )}
+
       {/* Guía "¿Cómo empezar?": los pasos que dejan la empresa funcionando. */}
       {guiaAbierta && (
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setGuiaAbierta(false)}>
@@ -6080,6 +6429,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         </div>
       )}
 
+      {permisoPersona && <PermisosColaborador persona={permisoPersona} onClose={() => setPermisoPersona(null)} onSaved={async () => { setPermisoPersona(null); await refresh(); setRepRecarga(n => n + 1); showToast('Novedad guardada.'); }} />}
       {toast && <div className="toast show" role="status">{toast}</div>}
     </div>
   );
@@ -6373,8 +6723,10 @@ const CSS = `
 @media (prefers-reduced-motion: reduce) { .btn.girando svg { animation: none; } }
 .rep-periodo { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
 .rep-periodo .sede-select { width: 100%; }
-.fchips.rep-quincena { grid-template-columns: 1fr 1fr 1.25fr; border-radius: 10px; border-color: var(--border); }
-.fchips.rep-quincena .fchip { padding: 8px 6px; font-size: 13px; }
+.rep-periodo-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rep-periodo-acciones .val-total { margin-bottom: 0; white-space: nowrap; }
+.fchips.rep-quincena { grid-template-columns: 1fr 1fr 1.25fr; border-radius: 10px; border-color: var(--border); flex: 0 0 auto; min-height: 44px; }
+.fchips.rep-quincena .fchip { padding: 10px 12px; font-size: 14px; }
 /* Sin datos: un recuadro tenue con el período, no una línea suelta. */
 .rep-vacio { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 24px 12px; border: 1px dashed var(--border); border-radius: 10px; text-align: center; }
 .rep-vacio b { font-size: 14px; font-weight: 700; color: var(--ink-2); }
@@ -6394,7 +6746,7 @@ const CSS = `
 .rep-row.foot .val-money { color: var(--accent-2); font-size: 14px; }
 .rep-sin-extra { font-size: 12.5px; color: var(--muted); padding: 10px 6px 0; }
 .rep-sin-extra .costo-link { font-size: 12.5px; }
-.col-pago { text-align: center; }
+.col-pago { text-align: center; display: inline-flex; gap: 6px; justify-content: center; align-items: center; }
 
 /* Sub-pantallas de Ajustes */
 .back-btn { align-self: flex-start; margin-bottom: 8px; }
@@ -7365,7 +7717,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   .fchips .fchip { padding: 6px 12px; }
   .rep-table { display: flex; }
   .rep-periodo { grid-template-columns: 230px auto; justify-content: start; }
-  .fchips.rep-quincena .fchip { padding: 0 14px; }
+  .fchips.rep-quincena .fchip { padding: 0 18px; }
   .solo-pc { display: inline-flex; }
   .solo-movil { display: none; }
   .acc { display: none; }
@@ -7541,6 +7893,7 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
    no se pierden: aparecen en el detalle al expandir el caso. */
 @media (max-width: 899px) {
   .caso-nom small { display: none; }
+  .caso-nom small.horas-incompletas-detalle { display: block; white-space: normal; }
   .caso-nom b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
   .caso-cab { gap: 8px; padding: 7px 4px; }
   .caso-cab .av-tabla { width: 28px; height: 28px; font-size: 11px; }
@@ -7722,6 +8075,8 @@ input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
   border: 6px solid transparent; border-top-color: var(--btn-primary);
 }
 .q-ico:hover .q-tip, .q-ico:focus-visible .q-tip { display: block; }
+/* El globo fijo (Q) cambia de lado según el espacio: sin flecha. */
+.q-tip-fijo::after { display: none; }
 /* Variante hacia ABAJO: para encabezados pegados al borde superior de un
    contenedor con scroll (hacia arriba el globo quedaba recortado/tapado). */
 .q-tip.abajo { bottom: auto; top: calc(100% + 8px); }

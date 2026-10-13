@@ -30,8 +30,9 @@ export const ANTI_BOUNCE_MS = 3 * 60 * 1000;      // 3 minutos
 export const NIGHT_WINDOW_MS = 12 * 60 * 60 * 1000; // 12 horas
 export const LATE_ENTRY_HOUR = 12;                 // mediodía (fallback sin horario)
 export const LATE_TOLERANCE_MIN = 180;             // 3 h después del horario esperado
-// Salir antes o después de la hora NUNCA es anomalía: alargarse se cuenta
-// como horas extra, e irse antes se ve en la cuenta de horas, no como incidencia.
+// El kiosco no marca bandera por la hora de salida. Pasada la tolerancia, el
+// panel deriva la anomalía «Salida tardía» (lib/salidaTardia.js), que es solo
+// un aviso: el cálculo de horas extra no depende de ella.
 
 const hasLS = typeof localStorage !== 'undefined';
 const load = () => {

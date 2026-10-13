@@ -15,7 +15,7 @@ import { firmarEnlacePrueba, VIGENCIA_PRUEBA_H } from '../../../lib/pruebaRecono
 export const runtime = 'nodejs'
 
 export async function GET() {
-  const acceso = await estadoAcceso('empleados')
+  const acceso = await estadoAcceso('empleados', { permisoInvitado: 'colaboradores:ver' })
   if (acceso.estado !== 'OK') {
     return NextResponse.json({ ok: false, error: estadoAMensaje(acceso.estado) }, { status: estadoAHttp(acceso.estado) })
   }
