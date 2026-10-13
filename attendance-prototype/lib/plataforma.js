@@ -37,6 +37,7 @@ export async function listarEmpresas() {
             -- esta consola no la miraba: se veía el plan y no si estaba
             -- vigente, que es la pregunta que uno se hace de verdad.
             e.plan_id as "planId", e.vence_en as "venceEn", e.cortesia,
+            e.laboratorio_facial as "laboratorioFacial",
             e.prueba_hasta as "pruebaHasta", e.bienvenida_en as "bienvenidaEn",
             (select count(*)::int from control."user" u where u.empresa_id = e.id and u.activo) as usuarios,
             (select count(*)::int from control.invitaciones i
@@ -200,6 +201,8 @@ export async function eliminarEmpresa(id, confirmacion) {
  *                   (null = los del plan)
  *   plan            'gratis' | 'pago' — la marca vieja; se conserva porque
  *                   el panel de la empresa todavía la mira.
+ *   laboratorioFacial  boolean — habilita la evaluación de modelos faciales
+ *                   (SFace / AuraFace) para esa empresa.
  *
  * Las fechas se reciben como DÍA y se guardan al final de ese día en hora
  * de Colombia: «vence el 30» significa que el 30 todavía se puede usar.
@@ -267,13 +270,19 @@ export async function actualizarEmpresa(id, cambios) {
     else campos.push(`${columna} = (($${args.push(r.valor)}::date + 1) - interval '1 second') at time zone 'America/Bogota'`)
   }
 
+  if ('laboratorioFacial' in cambios) {
+    if (typeof cambios.laboratorioFacial !== 'boolean') return { error: 'laboratorioFacial debe ser verdadero o falso.' }
+    poner('laboratorio_facial', cambios.laboratorioFacial)
+  }
+
   if (campos.length === 0) return { error: 'Nada que cambiar.' }
 
   const { rows } = await control(
     `update control.empresas set ${campos.join(', ')} where id = $1
      returning id, nombre, esquema, plan, estado, plan_id as "planId",
                limite_empleados as "limiteEmpleados", limite_usuarios as "limiteUsuarios",
-               vence_en as "venceEn", prueba_hasta as "pruebaHasta"`,
+               vence_en as "venceEn", prueba_hasta as "pruebaHasta",
+               laboratorio_facial as "laboratorioFacial"`,
     args,
   )
   if (rows.length === 0) return { error: 'Esa empresa no existe.' }

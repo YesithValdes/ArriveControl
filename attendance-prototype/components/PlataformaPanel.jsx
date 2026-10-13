@@ -314,6 +314,7 @@ export default function PlataformaPanel({ sesion }) {
     pruebaHasta: aDia(e.pruebaHasta),
     limiteEmpleados: e.limiteEmpleados ?? '',
     limiteUsuarios: e.limiteUsuarios ?? '',
+    laboratorioFacial: e.laboratorioFacial === true,
   });
 
   /** Manda SOLO lo que cambió: así un ajuste no pisa lo que no se tocó. */
@@ -326,6 +327,7 @@ export default function PlataformaPanel({ sesion }) {
     if (v.pruebaHasta !== aDia(e.pruebaHasta)) cambios.pruebaHasta = v.pruebaHasta || null;
     if (String(v.limiteEmpleados) !== String(e.limiteEmpleados ?? '')) cambios.limiteEmpleados = v.limiteEmpleados === '' ? null : Number(v.limiteEmpleados);
     if (String(v.limiteUsuarios) !== String(e.limiteUsuarios ?? '')) cambios.limiteUsuarios = v.limiteUsuarios === '' ? null : Number(v.limiteUsuarios);
+    if (v.laboratorioFacial !== (e.laboratorioFacial === true)) cambios.laboratorioFacial = v.laboratorioFacial;
     if (Object.keys(cambios).length === 0) { setEditando(null); return; }
     setGuardando(true);
     const ok = await cambiar(e, cambios);
@@ -905,6 +907,21 @@ export default function PlataformaPanel({ sesion }) {
                 />
               </div>
             </div>
+            {/* Laboratorio SFace / AuraFace: lo habilita SOLO el superadmin.
+                No toca la asistencia; la empresa luego decide si lo activa. */}
+            <label className="sub-field" style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 12, cursor: 'pointer' }}>
+              <input
+                type="checkbox" style={{ marginTop: 3 }}
+                checked={editando.laboratorioFacial}
+                onChange={(ev) => setEditando({ ...editando, laboratorioFacial: ev.target.checked })}
+              />
+              <span>
+                Evaluación de modelos faciales
+                <small style={{ display: 'block', opacity: 0.7, fontWeight: 400 }}>
+                  Permite a esta empresa probar SFace y AuraFace en paralelo. No cambia el reconocimiento ni la asistencia.
+                </small>
+              </span>
+            </label>
             <div className="dialog-actions">
               <button className="btn" onClick={() => setEditando(null)} disabled={guardando}>Cancelar</button>
               <button className="btn primary" onClick={guardarAjustes} disabled={guardando}>

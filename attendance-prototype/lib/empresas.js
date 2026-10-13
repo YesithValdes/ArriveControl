@@ -21,7 +21,14 @@ import { planPorId, DIAS_PRUEBA } from './planes.js'
 const sha256 = (s) => createHash('sha256').update(s).digest('hex')
 
 /** Columnas que necesita cualquiera que resuelva una empresa. */
-const CAMPOS = `id, nombre, nit, esquema, plan, limite_empleados, limite_usuarios, estado, api_key, dominio, vence_en, prueba_hasta, plan_id, bienvenida_en, cortesia`
+const CAMPOS = `id, nombre, nit, esquema, plan, limite_empleados, limite_usuarios, estado, api_key, dominio, vence_en, prueba_hasta, plan_id, bienvenida_en, cortesia, laboratorio_facial`
+
+/**
+ * ¿El superadmin le habilitó a esta empresa la evaluación de modelos
+ * faciales (laboratorio SFace / AuraFace)? Sin esto, el laboratorio no se ve
+ * y sus rutas rechazan las pruebas. No afecta la asistencia.
+ */
+export const laboratorioHabilitado = (empresa) => empresa?.laboratorio_facial === true
 
 
 // Caché corta: son pocas filas, cambian casi nunca y se consultan en CADA
