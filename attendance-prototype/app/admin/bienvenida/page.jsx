@@ -15,15 +15,16 @@ import { redirect } from 'next/navigation'
 import { estadoAcceso } from '../../../lib/sesion'
 import { estadoDelPlan } from '../../../lib/empresas.js'
 import { catalogoPara } from '../../../lib/planes.js'
-import { boldActivo } from '../../../lib/bold.js'
-import { control, conEmpresa } from '../../../lib/db.js'
+import { mpActivo } from '../../../lib/mercadopago.js'
+import { conEmpresa } from '../../../lib/db.js'
+import { yaPagoAlgunaVez, preciosEnPesos } from '../../../lib/suscripciones.js'
 import Bienvenida from '../../../components/Bienvenida.jsx'
 
 export const metadata = { title: 'Tu plan — AsistencIA', robots: { index: false, follow: false } }
 export const dynamic = 'force-dynamic'
 
 export default async function BienvenidaPage() {
-  const { estado, empresa } = await estadoAcceso('ver')
+  const { estado, empresa, usuario } = await estadoAcceso('ver')
   if (estado === 'SIN_SESION') redirect('/login?destino=/admin/bienvenida')
   if (estado === 'SIN_EMPRESA') redirect('/admin')
   if (estado !== 'OK') redirect('/admin')
@@ -32,17 +33,20 @@ export default async function BienvenidaPage() {
   if (empresa.bienvenida_en) redirect('/admin')
 
   const [yaPago, empleados] = await Promise.all([
-    control(`select 1 from control.pagos where empresa_id = $1 and estado = 'APROBADA' limit 1`, [empresa.id])
-      .then((r) => r.rows.length > 0),
+    yaPagoAlgunaVez(empresa.id),
     conEmpresa(empresa.esquema, async (db) =>
       Number((await db.query(`select count(*)::int as n from empleados where activo`)).rows[0].n)),
   ])
+  const catalogo = catalogoPara({ yaPago, empleados })
+  // Precios en pesos con la TRM del día; sin TRM no se ofrece pagar.
+  const pesos = await preciosEnPesos(catalogo.planes, { conEntrada: catalogo.conEntrada }).catch(() => null)
 
   return (
     <Bienvenida
       empresa={empresa.nombre}
       plan={estadoDelPlan(empresa)}
-      catalogo={{ ...catalogoPara({ yaPago, empleados }), empleados, disponible: boldActivo() }}
+      correo={usuario?.email ?? ''}
+      catalogo={{ ...catalogo, pesos, empleados, disponible: mpActivo() && pesos !== null }}
     />
   )
 }

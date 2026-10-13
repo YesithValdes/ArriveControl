@@ -19,6 +19,7 @@ import DefinirContrasena from '../../../components/DefinirContrasena.jsx';
 import { estadoAcceso, tienePermiso } from '../../../lib/sesion';
 import { tabDeSegmentos } from '../../../lib/rutasPanel.js';
 import { estadoDelPlan } from '../../../lib/empresas.js';
+import { configMp } from '../../../lib/mercadopago.js';
 
 export const metadata = {
   title: 'Panel del administrador',
@@ -93,7 +94,8 @@ export default async function AdminPage({ params }) {
         planEstado: estadoDelPlan(empresa),
         // Cobro en PRUEBAS: el panel lo advierte, para que nadie active un
         // plan creyendo que pagó ni espere que le hayan cobrado de verdad.
-        pagoDePrueba: (process.env.BOLD_ENTORNO ?? 'test') !== 'prod',
+        // Con el Access Token de PRUEBAS de Mercado Pago (TEST-…) no hay cobro real.
+        pagoDePrueba: configMp()?.entorno === 'test',
       }}
       permisos={permisos}
     />

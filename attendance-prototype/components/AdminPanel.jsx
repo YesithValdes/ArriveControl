@@ -1043,70 +1043,56 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // ── Rostros del empleado abierto en la ficha ────────────────────────
   // Agregar una foto no debe obligar a registrar de nuevo a la persona.
-  // ── Contratar el plan ────────────────────────────────────────────────
-  // El servidor arma y FIRMA la configuración del checkout (el monto va
-  // firmado para que nadie lo cambie por el camino); aquí solo se abre la
-  // pasarela de Bold con esos datos.
+  // ── Contratar el plan (suscripción de Mercado Pago) ─────────────────
+  // El servidor crea la suscripción con su propio precio y devuelve la página
+  // de Mercado Pago donde se autoriza el débito automático; aquí solo se
+  // redirige. El plan lo activa el aviso de Mercado Pago, no este regreso.
   const [pagando, setPagando] = useState(false);
-  // El catálogo resuelto para ESTA empresa: qué planes hay, cuál le queda
-  // corto según su gente y si todavía le toca el precio de entrada. Lo decide
-  // el servidor; aquí solo se pinta.
+  // El catálogo resuelto para ESTA empresa: planes en dólares y en pesos (TRM
+  // del día), cuál le queda corto, si le toca la entrada y cómo va su
+  // suscripción. Lo decide el servidor; aquí solo se pinta.
   const [catalogo, setCatalogo] = useState(null);
-  const [mesesPlan, setMesesPlan] = useState(1);
-  // La opción de entrada elegida, tal como la cotizó el servidor.
-  const entradaElegida = catalogo?.opcionesEntrada?.find((o) => o.meses === mesesPlan)
-    ?? { meses: 1, porMes: catalogo?.precioEntrada ?? 1, total: catalogo?.precioEntrada ?? 1 };
-  // Se pide al ABRIR la pantalla, no con cada `tick`: el catálogo cambia una
-  // vez al mes, y colgarlo del reloj del panel lo hacía pedirse cada diez
-  // segundos indefinidamente.
+  const [correoPago, setCorreoPago] = useState('');
+  const cargarCatalogo = useCallback(() => fetch('/api/pago/planes', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then((d) => {
+      if (!d?.ok) return;
+      setCatalogo(d);
+      setCorreoPago((c) => c || d.suscripcion?.email || sesion?.email || '');
+    })
+    .catch(() => { /* sin catálogo no se ofrecen botones */ }), [sesion?.email]);
+  // Se pide al ABRIR la pantalla, no con cada `tick`: el catálogo cambia poco,
+  // y colgarlo del reloj del panel lo hacía pedirse cada diez segundos.
   useEffect(() => {
-    if (tab !== 'cfg-plan') return;
-    let vigente = true;
-    fetch('/api/pago/planes')
-      .then((r) => r.json())
-      .then((d) => { if (vigente && d?.ok) setCatalogo(d); })
-      .catch(() => { /* sin catálogo no se ofrecen botones */ });
-    return () => { vigente = false; };
-  }, [tab]);
+    if (tab === 'cfg-plan') cargarCatalogo();
+  }, [tab, cargarCatalogo]);
 
-  /**
-   * Carga la librería de Bold una sola vez, bajo demanda: son unos kilobytes
-   * que no tienen por qué pesar en cada visita al panel de quien ya pagó.
-   */
-  const cargarBold = () => new Promise((resolver, rechazar) => {
-    if (window.BoldCheckout) { resolver(); return; }
-    const yaEsta = document.querySelector('script[data-bold-lib]');
-    if (yaEsta) {
-      yaEsta.addEventListener('load', () => resolver());
-      yaEsta.addEventListener('error', () => rechazar(new Error('no se pudo cargar la pasarela')));
-      return;
-    }
-    const s = document.createElement('script');
-    s.src = 'https://checkout.bold.co/library/boldPaymentButton.js';
-    s.async = true;
-    s.dataset.boldLib = '1';
-    s.onload = () => resolver();
-    s.onerror = () => rechazar(new Error('no se pudo cargar la pasarela'));
-    document.head.appendChild(s);
-  });
-
-  const irAPagar = async (planId, meses = 1) => {
+  const irAPagar = async (planId) => {
     setPagando(true);
     try {
-      const r = await fetch('/api/pago/iniciar', {
+      const r = await fetch('/api/pago/suscribir', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan: planId, meses }),
+        body: JSON.stringify({ plan: planId, email: correoPago }),
       });
       const d = await r.json().catch(() => null);
-      if (!r.ok || !d?.ok) { showToast(d?.error || 'No se pudo iniciar el pago.'); return; }
-      await cargarBold();
-      if (!window.BoldCheckout) throw new Error('la pasarela no quedó disponible');
-      // `d.checkout` viene tal cual lo espera Bold, con la firma ya calculada
-      // en el servidor: aquí no se arma ni se altera ningún dato del cobro.
-      new window.BoldCheckout(d.checkout).open();
+      if (!r.ok || !d?.ok) { showToast(d?.error || 'No se pudo iniciar el pago.'); setPagando(false); return; }
+      // El servidor ya verificó que es una página de Mercado Pago.
+      window.location.href = d.initPoint;
     } catch (e) {
       showToast(`No se pudo abrir el pago: ${e.message}`);
+      setPagando(false);
+    }
+  };
+
+  const cancelarDebito = async () => {
+    if (!confirm('¿Cancelar el débito automático? No se harán más cobros; tu plan sigue activo hasta su vencimiento.')) return;
+    setPagando(true);
+    try {
+      const r = await fetch('/api/pago/cancelar', { method: 'POST' });
+      const d = await r.json().catch(() => null);
+      showToast(r.ok && d?.ok ? 'Débito automático cancelado' : (d?.error || 'No se pudo cancelar.'));
+      await cargarCatalogo();
     } finally {
       setPagando(false);
     }
@@ -4129,62 +4115,68 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             )}
 
             {/* Con cortesía no hay nada que comprar: ofrecer pagar sería invitar a un error. */}
-            {catalogo?.disponible && !sesion?.planEstado?.cortesia && (
+            {/* Débito automático de Mercado Pago: cómo va y cómo cancelarlo. */}
+            {catalogo?.suscripcion && ['pendiente', 'autorizada', 'pausada'].includes(catalogo.suscripcion.estado) && (
+              <div className={`plan-estado ${catalogo.suscripcion.estado === 'autorizada' ? 'activa' : 'prueba'}`}>
+                <div>
+                  <b>
+                    {catalogo.suscripcion.estado === 'autorizada' && 'Débito automático activo'}
+                    {catalogo.suscripcion.estado === 'pendiente' && 'Falta autorizar el pago en Mercado Pago'}
+                    {catalogo.suscripcion.estado === 'pausada' && 'Débito automático en pausa'}
+                    {' · plan '}{catalogo.planes?.find((p) => p.id === catalogo.suscripcion.plan)?.nombre ?? catalogo.suscripcion.plan}
+                  </b>
+                  <small>
+                    ${Number(catalogo.suscripcion.montoCop).toLocaleString('es-CO')} COP
+                    {catalogo.suscripcion.entradaPendiente ? ' el primer mes (oferta de entrada); luego el precio del plan' : ` al mes (US$${catalogo.suscripcion.usdMensual})`}
+                    {catalogo.suscripcion.proximoCobro && ` · próximo cobro el ${new Date(catalogo.suscripcion.proximoCobro).toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })}`}
+                    {catalogo.suscripcion.estado === 'pendiente' && '. Si cerraste la página de Mercado Pago, vuelve a elegir el plan.'}
+                  </small>
+                </div>
+                <button className="btn" disabled={pagando} onClick={cancelarDebito}>Cancelar débito</button>
+              </div>
+            )}
+
+            {catalogo?.disponible && !sesion?.planEstado?.cortesia
+              && !['autorizada', 'pausada'].includes(catalogo.suscripcion?.estado) && (
               <>
-                {/* Oferta de entrada: el precio de cada mes depende de cuántos
-                    se compren (1 → US$1, 2 → US$2 c/u, 3 → US$3 c/u) y no del
-                    plan. Las opciones llegan resueltas del servidor. */}
+                {/* Oferta de entrada: el PRIMER cobro es de US$1, a quien nunca
+                    ha pagado. Lo decide el servidor. */}
                 {catalogo.conEntrada && (
                   <div className="entrada">
-                    <b className="entrada-titulo">Oferta de entrada: ¿cuántos meses quieres pagar?</b>
-                    <div className="meses-sel" role="group" aria-label="Meses a pagar">
-                      {catalogo.opcionesEntrada.map((o) => (
-                        <button
-                          key={o.meses}
-                          className="fchip mes-op"
-                          aria-pressed={mesesPlan === o.meses}
-                          onClick={() => setMesesPlan(o.meses)}
-                        >
-                          <span>{o.meses} mes{o.meses === 1 ? '' : 'es'} · US${o.porMes} c/u</span>
-                          <small>Total US${o.total}</small>
-                        </button>
-                      ))}
-                    </div>
-                    <span className="entrada-resumen">
-                      Pagas <b>US${entradaElegida.total}</b> hoy
-                      {entradaElegida.meses > 1 ? ` (US$${entradaElegida.porMes} × ${entradaElegida.meses} meses)` : ''}.
-                      {' '}Desde el mes {entradaElegida.meses + 1}, el precio normal del plan.
-                    </span>
+                    <b className="entrada-titulo">Oferta de entrada: tu primer mes a US${catalogo.precioEntrada}{catalogo.pesos?.entrada ? ` (≈ $${catalogo.pesos.entrada.cop.toLocaleString('es-CO')})` : ''}</b>
+                    <span className="entrada-resumen">Desde el segundo mes, el precio del plan, con débito automático. Cancelas cuando quieras.</span>
                   </div>
                 )}
 
+                <label className="sub-field" style={{ display: 'block', margin: '0 0 14px' }}>
+                  Correo de tu cuenta de Mercado Pago
+                  <input type="email" value={correoPago} onChange={(ev) => setCorreoPago(ev.target.value)} autoComplete="email" disabled={pagando} />
+                </label>
+
                 <div className="planes-lista">
                   {catalogo.planes.map((p) => {
-                    const meses = catalogo.conEntrada ? entradaElegida.meses : 1
-                    const total = catalogo.conEntrada ? entradaElegida.total : p.precio
+                    const cop = catalogo.pesos?.planes?.[p.id]?.cop
                     return (
                       <div key={p.id} className={`plan-tarjeta${p.sugerido ? ' sugerido' : ''}${!p.alcanza ? ' corto' : ''}`}>
                         {p.sugerido && <span className="plan-etiqueta">Para tu tamaño</span>}
                         <h3>{p.nombre}</h3>
                         <div className="plan-precio">
-                          <b>US${catalogo.conEntrada ? entradaElegida.porMes : p.precio}</b>
+                          <b>US${p.precio}</b>
                           <em>/mes</em>
                         </div>
-                        {catalogo.conEntrada && (
-                          <span className="plan-luego">Luego US${p.precio}/mes</span>
-                        )}
+                        {cop && <span className="plan-luego">≈ ${cop.toLocaleString('es-CO')} COP al mes</span>}
                         <span className="plan-tope">
                           Hasta {p.empleados} colaboradores · {p.usuarios} acceso{p.usuarios === 1 ? '' : 's'} al panel
                         </span>
                         <button
                           className={`btn ${p.sugerido ? 'primary' : ''} block`}
                           disabled={pagando || !p.alcanza}
-                          onClick={() => irAPagar(p.id, meses)}
+                          onClick={() => irAPagar(p.id)}
                           title={!p.alcanza ? `Tienes ${catalogo.empleados} empleados y este plan cubre ${p.empleados}` : undefined}
                         >
                           {!p.alcanza
                             ? `Tienes ${catalogo.empleados} colaboradores`
-                            : pagando ? 'Abriendo…' : `Pagar US$${total}`}
+                            : pagando ? 'Abriendo Mercado Pago…' : 'Suscribirme'}
                         </button>
                       </div>
                     )
@@ -4192,8 +4184,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 </div>
 
                 <p className="cfg-note" style={{ marginTop: 14 }}>
-                  {catalogo.conEntrada ? '' : 'Mensual, sin permanencia. '}
-                  Pago con tarjeta, en dólares. ¿Más de {catalogo.contactoDesde} colaboradores? <b>Escríbenos</b>.
+                  Débito automático mensual con Mercado Pago, sin permanencia. Precios en dólares; se cobran en pesos con la TRM
+                  oficial del día{catalogo.pesos?.trm ? ` (hoy $${Number(catalogo.pesos.trm).toLocaleString('es-CO')} por dólar)` : ''}.
+                  ¿Más de {catalogo.contactoDesde} colaboradores? <b>Escríbenos</b>.
                 </p>
                 {sesion?.pagoDePrueba && (
                   <p className="cfg-note" style={{ color: 'var(--warn-text)' }}>

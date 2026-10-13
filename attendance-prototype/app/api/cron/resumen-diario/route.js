@@ -38,6 +38,7 @@ import { enviarResumenesDelDia, ayerEnBogota } from '../../../../lib/enviosDiari
 import { control } from '../../../../lib/db.js'
 import { tieneAcceso } from '../../../../lib/empresas.js'
 import { cerrarSalidasFaltantes } from '../../../../lib/salidasAutomaticas.js'
+import { ajustarPorTrm } from '../../../../lib/suscripciones.js'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -85,7 +86,10 @@ export async function GET(req) {
     }
   }
   try {
-    r = { ...(await enviarResumenesDelDia(fecha)), salidasAutomaticas: salidas }
+    // Suscripciones de Mercado Pago: el monto en pesos sigue a la TRM. Un
+    // fallo aquí se anota y no impide el resumen.
+    const trm = await ajustarPorTrm().catch((e) => ({ error: e?.message || String(e) }))
+    r = { ...(await enviarResumenesDelDia(fecha)), salidasAutomaticas: salidas, suscripcionesTrm: trm }
   } catch (e) {
     fallo = e?.message || String(e)
   }

@@ -637,15 +637,13 @@
         registrar y cuántas personas entran al panel.</p>
     </div>
 
-    <!-- PRECIO: oferta de entrada. Debe coincidir con lib/planes.js:
-         cada mes vale tantos dólares como meses se compren (1 → US$1;
-         2 → US$2 c/u; 3 → US$3 c/u), una sola vez, en cualquier plan. -->
+    <!-- PRECIO: oferta de entrada. Debe coincidir con lib/planes.js
+         (PRECIO_ENTRADA): el PRIMER mes a US$1, una sola vez, en cualquier
+         plan; desde el segundo, el precio del plan con débito automático. -->
     <div class="entrada revela">
       <div class="entrada-cab"><b>🎁 Oferta de entrada, una sola vez</b><span>en cualquier plan · luego, el precio normal</span></div>
       <div class="opciones">
-        <div class="opcion"><div class="m">1 mes</div><div class="p">US$1 <small>/mes</small></div><div class="t">Pagas US$1</div></div>
-        <div class="opcion"><div class="m">2 meses</div><div class="p">US$2 <small>/mes</small></div><div class="t">Pagas US$4 en total</div></div>
-        <div class="opcion"><div class="m">3 meses</div><div class="p">US$3 <small>/mes</small></div><div class="t">Pagas US$9 en total</div></div>
+        <div class="opcion"><div class="m">Primer mes</div><div class="p">US$1</div><div class="t">Desde el segundo mes, el precio de tu plan</div></div>
       </div>
     </div>
 
@@ -689,7 +687,8 @@
     <p class="incluye revela">
       <b>Todos incluyen:</b> marcación facial ilimitada, prueba de vida, varias sedes, GPS,
       resumen diario por correo, horas extra según la ley, reportes para nómina y API para
-      conectar tu software. Se cobra en dólares con tarjeta, sin permanencia.
+      conectar tu software. Débito automático mensual con Mercado Pago: precios en dólares,
+      cobrados en pesos con la TRM del día. Sin permanencia: cancelas cuando quieras.
       ¿Más de 100 colaboradores? <a href="#contacto">Escríbenos</a> y armamos un plan.
     </p>
   </div>
@@ -712,9 +711,8 @@
         <summary>¿Por qué tan barato al principio?</summary>
         <p>Porque una demostración no dice nada: el sistema hay que probarlo con tu gente y tus
           horarios reales. Los tres días son para verlo por dentro, y la oferta de entrada es para
-          que lo uses en serio sin arriesgar plata: un mes por US$1, dos meses a US$2 cada uno o
-          tres meses a US$3 cada uno. Después vale el precio del plan que te corresponda, y
-          renuevas solo si te sirvió.</p>
+          que lo uses en serio sin arriesgar plata: tu primer mes cuesta US$1. Después se cobra
+          el precio de tu plan cada mes, con débito automático, y lo cancelas cuando quieras.</p>
       </details>
       <details>
         <summary>¿Qué pasa si se cae el internet?</summary>

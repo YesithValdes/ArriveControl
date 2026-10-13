@@ -1907,20 +1907,74 @@ await test('la API (X-API-Key) es solo para quien tiene un plan pago vigente', a
   const emp = leerCss(new URL('../app/api/empresa/route.js', import.meta.url), 'utf8');
   assert.match(emp, /apiKey: apiHabilitada\(empresa\) \? empresa\.api_key : null/);
 });
-await test('precio de entrada: cada mes vale tantos dólares como meses se compren', () => {
-  const esperado = { 1: [1, 1], 2: [2, 4], 3: [3, 9] }; // meses: [por mes, total]
-  for (const [m, [porMes, total]] of Object.entries(esperado)) {
-    for (const plan of Object.values(PLANES)) {
-      assert.deepEqual(cotizar(plan, Number(m), true), { meses: Number(m), porMes, total }, `${plan.nombre} ${m} meses`);
-    }
+await test('precio de entrada: el PRIMER mes a US$1 y luego el precio del plan', () => {
+  for (const plan of Object.values(PLANES)) {
+    assert.deepEqual(cotizar(plan, true), { primerMes: 1, mensual: plan.precio }, `${plan.nombre} con entrada`);
+    assert.deepEqual(cotizar(plan, false), { primerMes: plan.precio, mensual: plan.precio }, `${plan.nombre} sin entrada`);
   }
-  assert.equal(cotizar(PLANES.equipo, 9, true).meses, 3, 'la entrada no pasa de 3 meses');
-  assert.deepEqual(cotizar(PLANES.equipo, 2, false), { meses: 2, porMes: 29, total: 58 }, 'sin entrada: precio del plan');
-  assert.deepEqual(
-    catalogoPara({ yaPago: false, empleados: 5 }).opcionesEntrada,
-    [{ meses: 1, porMes: 1, total: 1 }, { meses: 2, porMes: 2, total: 4 }, { meses: 3, porMes: 3, total: 9 }],
-    'la pantalla recibe lo mismo que se cobra',
-  );
+  assert.equal(catalogoPara({ yaPago: false, empleados: 5 }).conEntrada, true);
+  assert.equal(catalogoPara({ yaPago: true, empleados: 5 }).conEntrada, false, 'quien ya pagó no repite la oferta');
+});
+
+// ── Mercado Pago ───────────────────────────────────────────────────────
+console.log('\n💳 Mercado Pago');
+await test('firma de los avisos: HMAC del manifiesto id/request-id/ts, en tiempo constante', async () => {
+  const { firmaValida } = await import('../lib/mercadopago.js');
+  const { createHmac } = await import('node:crypto');
+  const secreto = 'secreto-de-prueba';
+  const firmar = (id, req, ts, s = secreto) => `ts=${ts},v1=${createHmac('sha256', s).update(`id:${id};request-id:${req};ts:${ts};`).digest('hex')}`;
+  const ok = { xSignature: firmar('123456', 'req-1', '1700000000'), xRequestId: 'req-1', dataId: '123456', secreto };
+  assert.ok(firmaValida(ok), 'firma correcta');
+  assert.ok(!firmaValida({ ...ok, dataId: '999999' }), 'otro id: no');
+  assert.ok(!firmaValida({ ...ok, xRequestId: 'req-2' }), 'otro request-id: no');
+  assert.ok(!firmaValida({ ...ok, secreto: 'otra' }), 'otra clave: no');
+  assert.ok(!firmaValida({ ...ok, secreto: null }), 'sin clave configurada: no');
+  assert.ok(!firmaValida({ ...ok, xSignature: 'ts=1700000000' }), 'sin v1: no');
+  assert.ok(!firmaValida({ ...ok, xSignature: null }), 'sin encabezado: no');
+  // Ids alfanuméricos se firman en minúsculas.
+  assert.ok(firmaValida({ xSignature: firmar('2c9380848a', 'r', '1'), xRequestId: 'r', dataId: '2C9380848A', secreto }));
+});
+await test('dólares → pesos con la TRM, redondeando hacia arriba a la centena', async () => {
+  process.env.DATABASE_URL ??= 'postgresql://pruebas:x@localhost:5432/pruebas';
+  const { aPesos } = await import('../lib/trm.js');
+  assert.equal(aPesos(15, 3194.44), 48000);
+  assert.equal(aPesos(1, 3194.44), 3200);
+  assert.equal(aPesos(29, 4000), 116000, 'exacto no se redondea');
+  assert.throws(() => aPesos(0, 4000));
+});
+await test('meses de calendario: el 31 de enero + 1 mes es fin de febrero', async () => {
+  const { sumarMeses } = await import('../lib/suscripciones.js');
+  assert.equal(sumarMeses('2027-01-31T15:00:00Z', 1).toISOString(), '2027-02-28T15:00:00.000Z');
+  assert.equal(sumarMeses('2028-01-31T15:00:00Z', 1).toISOString(), '2028-02-29T15:00:00.000Z', 'bisiesto');
+  assert.equal(sumarMeses('2026-10-13T10:00:00Z', 1).toISOString(), '2026-11-13T10:00:00.000Z');
+});
+await test('solo se redirige a páginas de Mercado Pago', async () => {
+  const { esUrlDeMercadoPago } = await import('../lib/mercadopago.js');
+  assert.ok(esUrlDeMercadoPago('https://www.mercadopago.com.co/subscriptions/checkout?preapproval_id=x'));
+  assert.ok(esUrlDeMercadoPago('https://sandbox.mercadopago.com.co/subscriptions/checkout'));
+  assert.ok(!esUrlDeMercadoPago('https://mercadopago.com.co.evil.com/x'));
+  assert.ok(!esUrlDeMercadoPago('http://www.mercadopago.com.co/x'), 'sin https: no');
+  assert.ok(!esUrlDeMercadoPago('javascript:alert(1)'));
+});
+await test('rutas de pago: solo el dueño, mismo origen, y el aviso usa solo el id firmado', () => {
+  const leer = (p) => leerCss(new URL(`../${p}`, import.meta.url), 'utf8');
+  for (const r of ['app/api/pago/suscribir/route.js', 'app/api/pago/cancelar/route.js']) {
+    const s = leer(r);
+    assert.match(s, /estadoAcceso\('cuenta'\)/, `${r} exige ser dueño`);
+    assert.match(s, /if \(!mismoOrigen\(req\)\)/, `${r} revisa el origen`);
+  }
+  const w = leer('app/api/pago/mercadopago/route.js');
+  assert.match(w, /const dataId = url\.searchParams\.get\('data\.id'\)/, 'el id sale de la URL firmada');
+  assert.doesNotMatch(w, /cuerpo\?\.data\?\.id/, 'nunca el id del cuerpo');
+  assert.match(w, /if \(!cfg\?\.secretoWebhook\)/, 'sin clave secreta no se acepta nada');
+  // El aviso no decide: se relee el recurso en la API.
+  const s = leer('lib/suscripciones.js');
+  assert.match(s, /await leerPagoAutorizado\(apId\)/);
+  assert.match(s, /on conflict do nothing returning id/, 'un cobro se registra una sola vez');
+  assert.match(leer('db/migrations/control/018_mercadopago.sql'), /suscripciones_una_viva/, 'una suscripción viva por empresa');
+  for (const viejo of ['lib/bold.js', 'app/api/pago/iniciar/route.js', 'app/api/pago/webhook/route.js']) {
+    assert.ok(!hay(new URL(`../${viejo}`, import.meta.url)), `Bold retirado: ${viejo}`);
+  }
 });
 await test('el dueño puede todo; el administrador todo menos la cuenta y la gente; consulta solo ve', () => {
   for (const a of ACCIONES) assert.ok(puede('empresa', a), `dueño: ${a}`);
@@ -1941,7 +1995,7 @@ await test('cada plan dice cuántos accesos al panel incluye (es lo que se vende
 await test('las rutas de la cuenta exigen «cuenta» y las de gente «usuarios»', () => {
   const emp = leerCss(new URL('../app/api/empresa/route.js', import.meta.url), 'utf8');
   assert.equal((emp.match(/estadoAcceso\('cuenta'\)/g) ?? []).length, 2, 'GET y PATCH de /api/empresa');
-  const pago = leerCss(new URL('../app/api/pago/iniciar/route.js', import.meta.url), 'utf8');
+  const pago = leerCss(new URL('../app/api/pago/suscribir/route.js', import.meta.url), 'utf8');
   assert.match(pago, /estadoAcceso\('cuenta'\)/);
   const usr = leerCss(new URL('../app/api/usuarios/route.js', import.meta.url), 'utf8');
   assert.match(usr, /cabeOtroUsuario\(empresa\)/, 'invitar respeta el cupo del plan');

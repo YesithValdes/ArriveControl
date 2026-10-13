@@ -8,17 +8,20 @@
  * la derecha, «Omitir» — visible, porque quien todavía no sabe si le sirve
  * tiene derecho a mirar primero.
  *
- * El precio y los planes vienen del SERVIDOR ya resueltos para esta empresa;
- * aquí no se calcula nada de dinero.
+ * El precio y los planes vienen del SERVIDOR ya resueltos para esta empresa
+ * (dólares y su equivalente en pesos con la TRM del día); aquí no se calcula
+ * nada de dinero. El pago es una suscripción de Mercado Pago con débito
+ * automático: se autoriza en la página de Mercado Pago.
  */
 
 import { useState } from 'react';
 
-export default function Bienvenida({ empresa, plan, catalogo }) {
+const cop = (n) => `$${Number(n).toLocaleString('es-CO')}`;
+
+export default function Bienvenida({ empresa, plan, catalogo, correo = '' }) {
   const [ocupado, setOcupado] = useState(false);
   const [error, setError] = useState('');
-  // Cuántos meses adelantar al precio de entrada.
-  const [meses, setMeses] = useState(catalogo?.maxMesesEntrada ?? 1);
+  const [email, setEmail] = useState(correo);
 
   const alPanel = () => { window.location.href = '/admin'; };
 
@@ -30,35 +33,22 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
     alPanel();
   };
 
-  /** Carga la librería de Bold una sola vez, cuando de verdad hace falta. */
-  const cargarBold = () => new Promise((resolver, rechazar) => {
-    if (window.BoldCheckout) { resolver(); return; }
-    const s = document.createElement('script');
-    s.src = 'https://checkout.bold.co/library/boldPaymentButton.js';
-    s.async = true;
-    s.onload = () => resolver();
-    s.onerror = () => rechazar(new Error('no se pudo cargar la pasarela'));
-    document.head.appendChild(s);
-  });
-
-  const pagar = async (planId) => {
+  const suscribir = async (planId) => {
     setError('');
     setOcupado(true);
     try {
-      const r = await fetch('/api/pago/iniciar', {
+      const r = await fetch('/api/pago/suscribir', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan: planId, meses: catalogo.conEntrada ? meses : 1 }),
+        body: JSON.stringify({ plan: planId, email }),
       });
       const d = await r.json().catch(() => null);
       if (!r.ok || !d?.ok) { setError(d?.error || 'No se pudo iniciar el pago.'); setOcupado(false); return; }
-      // La pantalla queda resuelta pase lo que pase en la pasarela: si vuelve
-      // sin pagar, entra al panel con su prueba en vez de toparse otra vez
-      // con esto.
+      // La pantalla queda resuelta pase lo que pase en Mercado Pago: si vuelve
+      // sin autorizar, entra al panel con su prueba.
       await fetch('/api/pago/omitir', { method: 'POST' }).catch(() => {});
-      await cargarBold();
-      if (!window.BoldCheckout) throw new Error('la pasarela no quedó disponible');
-      new window.BoldCheckout(d.checkout).open();
+      // El servidor ya verificó que es una página de Mercado Pago.
+      window.location.href = d.initPoint;
     } catch (e) {
       setError(`No se pudo abrir el pago: ${e.message}`);
       setOcupado(false);
@@ -66,7 +56,8 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
   };
 
   const dias = plan?.diasPrueba ?? 0;
-  const hayPlanes = catalogo?.disponible && catalogo.planes?.length > 0;
+  const pesos = catalogo?.pesos;
+  const hayPlanes = catalogo?.disponible && catalogo.planes?.length > 0 && pesos;
 
   return (
     <main className="bv-page">
@@ -81,7 +72,7 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
         <section className="bv-izq">
           <h1>
             {catalogo?.conEntrada
-              ? <>Empieza gratis,<br />sigue por US${catalogo.precioEntrada}</>
+              ? <>Empieza gratis,<br />tu primer mes a US${catalogo.precioEntrada}</>
               : <>Elige tu plan</>}
           </h1>
 
@@ -92,10 +83,14 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
             </div>
             {catalogo?.conEntrada && (
               <div>
-                <dt>Al terminar</dt>
-                <dd>Desde US${catalogo.precioEntrada} al mes, de 1 a {catalogo.maxMesesEntrada} meses</dd>
+                <dt>Primer mes</dt>
+                <dd>US${catalogo.precioEntrada}{pesos?.entrada ? ` (≈ ${cop(pesos.entrada.cop)})` : ''}</dd>
               </div>
             )}
+            <div>
+              <dt>Después</dt>
+              <dd>Débito automático cada mes</dd>
+            </div>
             <div>
               <dt>Siempre</dt>
               <dd>Cancela cuando quieras</dd>
@@ -118,52 +113,41 @@ export default function Bienvenida({ empresa, plan, catalogo }) {
                 Tienes {catalogo.empleados} empleado{catalogo.empleados === 1 ? '' : 's'} registrado{catalogo.empleados === 1 ? '' : 's'}
               </p>
 
-              {catalogo.conEntrada && (
-                <div className="bv-meses" role="group" aria-label="Meses">
-                  {catalogo.opcionesEntrada.map((o) => (
-                    <button
-                      key={o.meses}
-                      className={`bv-mes${meses === o.meses ? ' on' : ''}`}
-                      onClick={() => setMeses(o.meses)}
-                      disabled={ocupado}
-                    >
-                      {o.meses} mes{o.meses === 1 ? '' : 'es'} · US${o.porMes} c/u
-                      <em>Total US${o.total}</em>
-                    </button>
-                  ))}
-                </div>
-              )}
+              <label className="bv-correo">
+                Correo de tu cuenta de Mercado Pago
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={ocupado} autoComplete="email" />
+              </label>
 
               <div className="bv-planes">
-                {catalogo.planes.map((p) => (
-                  <div key={p.id} className={`bv-plan${p.sugerido ? ' sugerido' : ''}${!p.alcanza ? ' corto' : ''}`}>
-                    <div className="bv-plan-datos">
-                      <b>{p.nombre}</b>
-                      <span>Hasta {p.empleados} empleados</span>
+                {catalogo.planes.map((p) => {
+                  const enPesos = pesos.planes[p.id]?.cop;
+                  return (
+                    <div key={p.id} className={`bv-plan${p.sugerido ? ' sugerido' : ''}${!p.alcanza ? ' corto' : ''}`}>
+                      <div className="bv-plan-datos">
+                        <b>{p.nombre}</b>
+                        <span>Hasta {p.empleados} empleados · US${p.precio}/mes (≈ {cop(enPesos)})</span>
+                      </div>
+                      <button
+                        className={`bv-btn${p.sugerido ? ' primario' : ''}`}
+                        disabled={ocupado || !p.alcanza}
+                        onClick={() => suscribir(p.id)}
+                        title={!p.alcanza ? `Tienes ${catalogo.empleados} empleados y este plan cubre ${p.empleados}` : undefined}
+                      >
+                        {!p.alcanza ? 'No alcanza' : 'Suscribirme'}
+                      </button>
                     </div>
-                    <button
-                      className={`bv-btn${p.sugerido ? ' primario' : ''}`}
-                      disabled={ocupado || !p.alcanza}
-                      onClick={() => pagar(p.id)}
-                      title={!p.alcanza ? `Tienes ${catalogo.empleados} empleados y este plan cubre ${p.empleados}` : undefined}
-                    >
-                      {!p.alcanza
-                        ? 'No alcanza'
-                        : `US$${catalogo.conEntrada
-                          ? catalogo.opcionesEntrada.find((o) => o.meses === meses)?.total
-                          : p.precio}`}
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {error && <p className="bv-error" role="alert">{error}</p>}
 
               <p className="bv-pie">
                 {catalogo.conEntrada
-                  ? 'Después de esos meses se renueva al precio del plan. '
-                  : 'Se cobra por mes. '}
-                Se paga en dólares con tarjeta. Sin permanencia.
+                  ? `El primer cobro es de US$${catalogo.precioEntrada}; desde el segundo mes, el precio del plan. `
+                  : 'Se cobra cada mes. '}
+                Precios en dólares; Mercado Pago cobra en pesos con la TRM del día
+                ({cop(pesos.trm)} por dólar). Sin permanencia.
               </p>
             </>
           )}
@@ -213,15 +197,8 @@ const CSS = `
 .bv-titulo { margin: 0 0 16px; font-size: 13.5px; color: #7b8ca0; }
 .bv-vacio { margin: 0 0 20px; font-size: 14px; line-height: 1.6; color: #46586a; }
 
-.bv-meses { display: flex; gap: 8px; margin-bottom: 20px; }
-.bv-mes {
-  flex: 1; font: inherit; cursor: pointer; padding: 10px 6px; border-radius: 10px;
-  background: #f7fafd; border: 1px solid #d8e2ee; color: #46586a;
-  display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12.5px; font-weight: 600;
-}
-.bv-mes em { font-style: normal; font-size: 15px; font-weight: 800; color: #233240; }
-.bv-mes.on { border-color: #1e3a5f; background: #eaf1f8; }
-.bv-mes:disabled { opacity: .6; cursor: default; }
+.bv-correo { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: #46586a; margin-bottom: 16px; }
+.bv-correo input { font: inherit; font-size: 14px; padding: 9px 11px; border: 1px solid #d8e2ee; border-radius: 9px; color: #233240; }
 
 .bv-planes { display: flex; flex-direction: column; gap: 10px; }
 .bv-plan {

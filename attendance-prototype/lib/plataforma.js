@@ -53,6 +53,11 @@ export async function listarEmpresas() {
               where p.empresa_id = e.id and p.estado = 'PENDIENTE') as "pagosPendientes",
             (select coalesce(sum(p.monto), 0)::float from control.pagos p
               where p.empresa_id = e.id and p.estado = 'APROBADA') as "totalPagado",
+            -- Por MONEDA: Bold cobraba en dólares y Mercado Pago en pesos;
+            -- sumarlos juntos daría un número sin sentido.
+            (select coalesce(jsonb_object_agg(t.moneda, t.total), '{}') from (
+               select p.moneda, sum(p.monto)::float as total from control.pagos p
+                where p.empresa_id = e.id and p.estado = 'APROBADA' group by p.moneda) t) as "pagadoPorMoneda",
             (select p.moneda from control.pagos p
               where p.empresa_id = e.id and p.estado = 'APROBADA'
               order by p.creado_en desc limit 1) as moneda,

@@ -39,6 +39,11 @@ const aDia = (iso) => (iso ? new Date(iso).toLocaleDateString('en-CA', { timeZon
 
 const fmtDinero = (monto, moneda) =>
   `${moneda === 'USD' ? 'US$' : '$'}${nf.format(Math.round(monto))}${moneda && moneda !== 'USD' ? ` ${moneda}` : ''}`;
+/** Totales de varias monedas, sin mezclarlas: «US$12 + $64.000 COP». */
+const fmtTotales = (porMoneda) => {
+  const partes = Object.entries(porMoneda ?? {}).filter(([, v]) => v > 0).map(([m, v]) => fmtDinero(v, m));
+  return partes.length ? partes.join(' + ') : fmtDinero(0, MONEDA);
+};
 
 const iniciales = (texto) =>
   String(texto ?? '').split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
@@ -388,8 +393,7 @@ export default function PlataformaPanel({ sesion }) {
     let enPruebaN = 0;
     let vencidas = 0;
     let pendientesN = 0;
-    let ingresos = 0;
-    let moneda = '';
+    const ingresos = {};
     const atencion = [];
     for (const e of empresas) {
       cuenta[salud(e).clave]++;
@@ -401,13 +405,12 @@ export default function PlataformaPanel({ sesion }) {
       else if (s === 'prueba') enPruebaN++;
       else vencidas++;
       pendientesN += e.pagosPendientes ?? 0;
-      ingresos += e.totalPagado ?? 0;
-      if (e.moneda) moneda = e.moneda;
+      for (const [m, v] of Object.entries(e.pagadoPorMoneda ?? {})) ingresos[m] = (ingresos[m] ?? 0) + v;
       for (const p of pendientes(e)) atencion.push({ empresa: e, ...p });
     }
     const peso = { crit: 0, warn: 1, info: 2 };
     atencion.sort((a, b) => peso[a.tono] - peso[b.tono]);
-    return { total: empresas.length, ...cuenta, empleados, marcaciones, kioscos, pagando, enPrueba: enPruebaN, vencidas, pendientes: pendientesN, ingresos, moneda, atencion };
+    return { total: empresas.length, ...cuenta, empleados, marcaciones, kioscos, pagando, enPrueba: enPruebaN, vencidas, pendientes: pendientesN, ingresos, atencion };
   }, [empresas]);
 
   const lista = useMemo(() => {
@@ -563,7 +566,7 @@ export default function PlataformaPanel({ sesion }) {
               <div className="tile"><span className="label">Pagando</span><span className="value">{nf.format(resumen.pagando)}</span></div>
               <div className="tile"><span className="label">En prueba</span><span className="value">{nf.format(resumen.enPrueba)}</span></div>
               <div className={`tile${resumen.vencidas > 0 ? ' alerta' : ''}`}><span className="label">Sin acceso</span><span className="value">{nf.format(resumen.vencidas)}</span></div>
-              <div className="tile"><span className="label">Recaudado</span><span className="value">{fmtDinero(resumen.ingresos, resumen.moneda || MONEDA)}</span></div>
+              <div className="tile"><span className="label">Recaudado</span><span className="value">{fmtTotales(resumen.ingresos)}</span></div>
             </div>
             <p className="totales">
               {nf.format(resumen.empleados)} colaboradores · {nf.format(resumen.marcaciones)} marcaciones · {nf.format(resumen.kioscos)} kioscos en toda la plataforma
@@ -679,7 +682,7 @@ export default function PlataformaPanel({ sesion }) {
                             <td className="num">
                               {e.pagosOk > 0 ? (
                                 <>
-                                  <span className="att-name">{fmtDinero(e.totalPagado ?? 0, e.moneda || MONEDA)}</span>
+                                  <span className="att-name">{fmtTotales(e.pagadoPorMoneda)}</span>
                                   <span className="sub">{e.pagosOk} pago{e.pagosOk === 1 ? '' : 's'} · {fmtFecha(e.ultimoPago)}</span>
                                 </>
                               ) : <span className="libre">—</span>}
@@ -721,7 +724,7 @@ export default function PlataformaPanel({ sesion }) {
                             </span>
                             <span className="acc-linea"><Icono name="clock" size={14} />{sus.detalle}</span>
                             <span className="acc-linea"><Icono name="receipt" size={14} />
-                              {e.pagosOk > 0 ? `${fmtDinero(e.totalPagado ?? 0, e.moneda || MONEDA)} · ${e.pagosOk} pago${e.pagosOk === 1 ? '' : 's'} · último el ${fmtFecha(e.ultimoPago)}` : 'Nunca ha pagado'}
+                              {e.pagosOk > 0 ? `${fmtTotales(e.pagadoPorMoneda)} · ${e.pagosOk} pago${e.pagosOk === 1 ? '' : 's'} · último el ${fmtFecha(e.ultimoPago)}` : 'Nunca ha pagado'}
                               {e.pagosPendientes > 0 ? ` · ${e.pagosPendientes} sin resolver` : ''}
                             </span>
                             <span className="acc-linea"><Icono name="user" size={14} />{e.dueno ?? 'sin dueño activo'}</span>
@@ -746,7 +749,7 @@ export default function PlataformaPanel({ sesion }) {
           <>
             {resumen && (
               <div className="tiles">
-                <div className="tile"><span className="label">Recaudado</span><span className="value">{fmtDinero(resumen.ingresos, resumen.moneda || MONEDA)}</span></div>
+                <div className="tile"><span className="label">Recaudado</span><span className="value">{fmtTotales(resumen.ingresos)}</span></div>
                 <div className="tile"><span className="label">Aprobados</span><span className="value">{nf.format(pagos ? pagos.filter((p) => p.estado === 'APROBADA').length : 0)}</span></div>
                 <div className={`tile${resumen.pendientes > 0 ? ' alerta' : ''}`}><span className="label">Sin resolver</span><span className="value">{nf.format(resumen.pendientes)}</span></div>
                 <div className="tile"><span className="label">Empresas pagando</span><span className="value">{nf.format(resumen.pagando)}</span></div>
