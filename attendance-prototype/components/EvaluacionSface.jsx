@@ -3,7 +3,9 @@
  * components/EvaluacionSface.jsx — Pantalla de la evaluación de modelos
  * faciales (SFace y, si se elige, AuraFace).
  *
- * El administrador decide CUÁNDO y CON QUÉ modelos se evalúa: nada corre solo.
+ * La maneja el SUPERADMIN, empresa por empresa (/plataforma/evaluacion/[id]):
+ * decide si la empresa está habilitada, CUÁNDO y CON QUÉ modelos se evalúa.
+ * Nada corre solo.
  *   · Inscripción: cada marcación confirmada en el kiosco web guarda vectores
  *     de cada modelo activo (hasta 3 por modelo). Basta con marcar 2 veces.
  *   · Medición: cada marcación se compara también con cada modelo activo.
@@ -23,14 +25,14 @@ const finDeDia = (dias) => {
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T23:59`;
 };
 
-export default function EvaluacionSface() {
+export default function EvaluacionSface({ api, volver = '/plataforma' }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState(null);
   const [ocupado, setOcupado] = useState(false);
   const [hasta, setHasta] = useState(finDeDia(0));
 
   const cargar = useCallback(async () => {
-    const r = await fetch('/api/evaluacion-sface');
+    const r = await fetch(api, { cache: 'no-store' });
     const j = await r.json().catch(() => null);
     if (!r.ok || !j?.ok) { setError(j?.error || `Error ${r.status}`); return; }
     setError(null);
@@ -40,7 +42,7 @@ export default function EvaluacionSface() {
 
   const patch = async (cuerpo) => {
     setOcupado(true);
-    const r = await fetch('/api/evaluacion-sface', {
+    const r = await fetch(api, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo),
     });
     const j = await r.json().catch(() => null);
@@ -69,7 +71,7 @@ export default function EvaluacionSface() {
       : `¿Borrar las inscripciones de ${nombre} en todos los modelos?`;
     if (!confirm(msg)) return;
     const q = todo ? 'todo=1' : `empleado_id=${encodeURIComponent(empleadoId)}`;
-    const r = await fetch(`/api/evaluacion-sface?${q}`, { method: 'DELETE' });
+    const r = await fetch(`${api}?${q}`, { method: 'DELETE' });
     if (!r.ok) alert('No se pudo borrar.');
     cargar();
   };
@@ -77,7 +79,7 @@ export default function EvaluacionSface() {
   if (error) {
     return (
       <main className="ev"><style>{CSS}</style>
-        <a href="/admin/ajustes" className="ev-volver">← Volver al panel</a>
+        <a href={volver} className="ev-volver">← Volver a la consola</a>
         <h1>Evaluación de modelos faciales</h1>
         <p className="ev-error">{error}</p>
       </main>
@@ -85,7 +87,7 @@ export default function EvaluacionSface() {
   }
   if (!d) return <main className="ev"><style>{CSS}</style><p>Cargando…</p></main>;
 
-  const { config, personas, reportes } = d;
+  const { config, personas, reportes, empresa } = d;
   const fase = config.fase;
   const activos = config.modelos ?? ['sface'];
   const contar = (m, min) => personas.filter((p) => (p.vectores?.[m] ?? 0) >= min).length;
@@ -95,8 +97,18 @@ export default function EvaluacionSface() {
   return (
     <main className="ev">
       <style>{CSS}</style>
-      <a href="/admin/ajustes" className="ev-volver">← Volver al panel</a>
-      <h1>Evaluación de modelos faciales</h1>
+      <a href={volver} className="ev-volver">← Volver a la consola</a>
+      <h1>Evaluación de modelos · {empresa.nombre}</h1>
+      <section className={empresa.habilitada ? 'ev-card' : 'ev-card ev-off'}>
+        <h2>{empresa.habilitada ? 'Habilitada para esta empresa' : 'No habilitada para esta empresa'}</h2>
+        <p className="ev-nota">{empresa.habilitada
+          ? 'Sus kioscos web consultan la evaluación cada 2 minutos. Si quitas el permiso, la evaluación se apaga.'
+          : 'Mientras no esté habilitada, sus kioscos no descargan nada y no se inscribe ni se mide a nadie.'}</p>
+        <button className={empresa.habilitada ? 'ev-btn ev-apagar' : 'ev-btn'} disabled={ocupado}
+          onClick={() => patch({ habilitada: !empresa.habilitada })}>
+          {empresa.habilitada ? 'Quitar el permiso' : 'Habilitar para esta empresa'}
+        </button>
+      </section>
       <p className="ev-nota">
         Los modelos se miden <b>en sombra</b> en el kiosco web: el modelo actual sigue decidiendo quién marca, y nada
         de esto toca los rostros ni las marcaciones. Los vectores son datos biométricos: inscribe solo a personas que
@@ -129,8 +141,8 @@ export default function EvaluacionSface() {
           <button className="ev-sec" disabled={ocupado} onClick={() => setHasta(finDeDia(7))}>7 días</button>
         </div>
         <div className="ev-fila">
-          <button className="ev-btn" disabled={ocupado || fase === 'inscripcion'} onClick={() => cambiarFase('inscripcion')}>Iniciar inscripción</button>
-          <button className="ev-btn" disabled={ocupado || fase === 'medicion' || !puedeMedir} onClick={() => cambiarFase('medicion')}
+          <button className="ev-btn" disabled={ocupado || !empresa.habilitada || fase === 'inscripcion'} onClick={() => cambiarFase('inscripcion')}>Iniciar inscripción</button>
+          <button className="ev-btn" disabled={ocupado || !empresa.habilitada || fase === 'medicion' || !puedeMedir} onClick={() => cambiarFase('medicion')}
             title={!puedeMedir ? 'Cada modelo activo necesita al menos 2 personas inscritas' : ''}>Iniciar medición</button>
           <button className="ev-btn ev-apagar" disabled={ocupado || fase === 'apagada'} onClick={() => cambiarFase('apagada')}>Apagar</button>
         </div>
@@ -211,6 +223,7 @@ const CSS = `
 .ev-volver { color: #2b6cb0; text-decoration: none; font-size: 14px; }
 .ev-nota { color: #45566c; font-size: 14px; line-height: 1.5; }
 .ev-error { color: #b3403a; font-weight: 600; }
+.ev-off { border-color: #e7c9a5; background: #fffaf3; }
 .ev-card { background: #fff; border: 1px solid #dde6f1; border-radius: 12px; padding: 16px; margin: 14px 0; }
 .ev-modelo { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; cursor: pointer; font-size: 15px; }
 .ev-modelo input { margin-top: 4px; }

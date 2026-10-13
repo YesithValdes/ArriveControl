@@ -12,22 +12,18 @@
  *   POST { tipo: 'inscripcion', modelo, empleado_id, vector }   solo en inscripción
  *   POST { tipo: 'intento', modelo, ... }                        solo en medición
  *
- * PANEL (sesión con `empleados`):
- *   GET            → fase, modelos, inscritos por persona y reporte por modelo
- *   PATCH { estado, hasta?, modelos? } → cambia de fase y/o de modelos
- *   DELETE ?empleado_id=… | ?todo=1 → borra inscripciones (y con todo=1, también
- *                    los intentos): los vectores son datos biométricos.
+ * La ADMINISTRACIÓN (fases, modelos, reporte, borrar) la hace el superadmin,
+ * empresa por empresa: app/api/plataforma/empresas/[id]/evaluacion
+ * (lib/evaluacionModelos.js).
  *
  * Nada de esto toca `rostros` ni `marcaciones`: el modelo actual sigue
  * decidiendo quién marca.
  */
 import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../lib/db.js'
-import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
+import { empresaDeLaPeticion } from '../../../lib/sesion'
 import { laboratorioHabilitado } from '../../../lib/empresas.js'
-import {
-  FASES, IDS_MODELOS, SFACE_MAX_POR_PERSONA, esVector, faseVigente, resumir, acepta, modelosValidos,
-} from '../../../utils/evaluacionSface.js'
+import { SFACE_MAX_POR_PERSONA, esVector, faseVigente } from '../../../utils/evaluacionSface.js'
 
 export const runtime = 'nodejs'
 
@@ -63,76 +59,9 @@ export async function GET(req) {
     return json({ ok: true, ...r })
   }
 
-  const { estado, esquema, empresa } = await estadoAcceso('empleados')
-  if (estado !== 'OK') return json({ ok: false, error: estadoAMensaje(estado) }, estadoAHttp(estado))
-  if (!laboratorioHabilitado(empresa)) return json({ ok: false, error: NO_HABILITADA }, 403)
-  const r = await conEmpresa(esquema, async (db) => {
-    const config = await leerConfig(db)
-    const { rows: personas } = await db.query(
-      `select e.id, e.nombre,
-              coalesce(jsonb_object_agg(r.modelo, r.n) filter (where r.modelo is not null), '{}') as vectores
-         from empleados e
-         left join (select empleado_id, modelo, count(*)::int as n from eval_sface_rostros group by empleado_id, modelo) r
-           on r.empleado_id = e.id
-        where e.activo group by e.id, e.nombre order by e.nombre`,
-    )
-    const { rows: intentos } = await db.query(
-      `select i.*, a.nombre as referencia_nombre, s.nombre as sface_nombre
-         from eval_sface_intentos i
-         left join empleados a on a.id = i.referencia_id
-         left join empleados s on s.id = i.sface_top1
-        order by i.ts desc limit 4000`,
-    )
-    // Un reporte por modelo, con los desacuerdos para revisar a mano.
-    const reportes = {}
-    for (const m of IDS_MODELOS) {
-      const delModelo = intentos.filter((i) => i.modelo === m)
-      if (delModelo.length === 0 && !config.modelos.includes(m)) continue
-      reportes[m] = {
-        resumen: resumir(delModelo, m),
-        desacuerdos: delModelo.filter((i) => !i.error && (
-          (i.aceptado_actual && (!acepta(m, i.sface_sim1, i.sface_sim2) || i.sface_top1 !== i.referencia_id))
-          || (!i.aceptado_actual && acepta(m, i.sface_sim1, i.sface_sim2))
-        )).slice(0, 50),
-      }
-    }
-    return { config: { ...config, fase: faseVigente(config) }, personas, reportes }
-  })
-  return json({ ok: true, ...r })
-}
-
-export async function PATCH(req) {
-  const { estado, esquema, empresa, usuario } = await estadoAcceso('empleados')
-  if (estado !== 'OK') return json({ ok: false, error: estadoAMensaje(estado) }, estadoAHttp(estado))
-  if (!laboratorioHabilitado(empresa)) return json({ ok: false, error: NO_HABILITADA }, 403)
-  let c
-  try { c = await req.json() } catch { return json({ ok: false, error: 'JSON inválido.' }, 400) }
-  if (c?.estado !== undefined && !FASES.includes(c.estado)) return json({ ok: false, error: 'Fase inválida.' }, 400)
-  let modelos = null
-  if (c?.modelos !== undefined) {
-    modelos = modelosValidos(c.modelos)
-    if (!modelos) return json({ ok: false, error: 'Elige al menos un modelo válido.' }, 400)
-  }
-  if (c?.estado === undefined && !modelos) return json({ ok: false, error: 'Nada que cambiar.' }, 400)
-  let hasta = null
-  if (c.hasta != null && c.hasta !== '') {
-    const d = new Date(c.hasta)
-    if (Number.isNaN(d.getTime()) || d <= new Date()) return json({ ok: false, error: 'La fecha de fin debe ser futura.' }, 400)
-    hasta = d.toISOString()
-  }
-  const config = await conEmpresa(esquema, async (db) => {
-    if (c.estado !== undefined) {
-      await db.query(
-        `update eval_sface_config set estado = $1, hasta = $2, actualizado_en = now(), actualizado_por = $3 where id`,
-        [c.estado, c.estado === 'apagada' ? null : hasta, usuario.email],
-      )
-    }
-    if (modelos) {
-      await db.query(`update eval_sface_config set modelos = $1, actualizado_en = now(), actualizado_por = $2 where id`, [modelos, usuario.email])
-    }
-    return leerConfig(db)
-  })
-  return json({ ok: true, config: { ...config, fase: faseVigente(config) } })
+  // La administración (fases, modelos, reporte) la hace el SUPERADMIN desde
+  // la consola de plataforma: app/api/plataforma/empresas/[id]/evaluacion.
+  return json({ ok: false, error: 'La evaluación se administra desde la consola de plataforma.' }, 403)
 }
 
 export async function POST(req) {
@@ -186,23 +115,4 @@ export async function POST(req) {
 
     return json({ ok: false, error: 'tipo debe ser inscripcion o intento.' }, 400)
   })
-}
-
-export async function DELETE(req) {
-  const { estado, esquema, empresa } = await estadoAcceso('empleados')
-  if (estado !== 'OK') return json({ ok: false, error: estadoAMensaje(estado) }, estadoAHttp(estado))
-  if (!laboratorioHabilitado(empresa)) return json({ ok: false, error: NO_HABILITADA }, 403)
-  const { searchParams } = new URL(req.url)
-  const empleado = searchParams.get('empleado_id')
-  const todo = searchParams.get('todo') === '1'
-  if (!empleado && !todo) return json({ ok: false, error: 'Indica empleado_id o todo=1.' }, 400)
-  const borrados = await conEmpresa(esquema, async (db) => {
-    if (todo) {
-      const r = await db.query('delete from eval_sface_rostros')
-      await db.query('delete from eval_sface_intentos')
-      return r.rowCount
-    }
-    return (await db.query('delete from eval_sface_rostros where empleado_id = $1', [empleado])).rowCount
-  })
-  return json({ ok: true, borrados })
 }

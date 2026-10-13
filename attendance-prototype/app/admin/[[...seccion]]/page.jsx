@@ -94,8 +94,6 @@ export default async function AdminPage({ params }) {
         // Cobro en PRUEBAS: el panel lo advierte, para que nadie active un
         // plan creyendo que pagó ni espere que le hayan cobrado de verdad.
         pagoDePrueba: (process.env.BOLD_ENTORNO ?? 'test') !== 'prod',
-        // Evaluación de modelos faciales: la habilita el superadmin.
-        laboratorioFacial: empresa?.laboratorio_facial === true,
       }}
       permisos={permisos}
     />

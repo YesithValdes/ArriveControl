@@ -182,6 +182,7 @@ function Icono({ name, size = 17 }) {
     file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></>,
     clock: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
     alert: <><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></>,
+    cara: <><circle cx="12" cy="12" r="9" /><circle cx="9" cy="10" r="1" /><circle cx="15" cy="10" r="1" /><path d="M8.5 15c1 1 2.2 1.5 3.5 1.5s2.5-.5 3.5-1.5" /></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -458,12 +459,14 @@ export default function PlataformaPanel({ sesion }) {
         : e.horarios === 0 ? 'Sin horarios: no se calculan horas'
           : e.kioscos === 0 ? 'Sin kiosco vinculado' : null);
 
-  /** Los cuatro botones de una empresa, iguales en la tabla y en el acordeón. */
+  /** Los botones de una empresa, iguales en la tabla y en el acordeón. */
   const accionesDe = (e) => (
     <>
       <button className="btn btn-ico" title="Ajustes: plan, estado, fechas y topes" aria-label="Ajustes" onClick={() => abrirAjustes(e)}><Icono name="sliders" size={16} /></button>
       <button className="btn btn-ico" title="Regalar días de prueba o de suscripción" aria-label="Regalar días" onClick={() => setRegalando({ empresa: e, dias: 7, que: 'suscripcion' })}><Icono name="calendarPlus" size={16} /></button>
       <button className="btn btn-ico" title="Compras: cada pago y su desenlace" aria-label="Compras" onClick={() => verCompras(e)}><Icono name="receipt" size={16} /></button>
+      <a className={`btn btn-ico${e.laboratorioFacial ? ' eval-on' : ''}`} href={`/plataforma/evaluacion/${e.id}`}
+        title={`Evaluación de modelos faciales${e.laboratorioFacial ? ' (habilitada)' : ''}`} aria-label="Evaluación de modelos"><Icono name="cara" size={16} /></a>
       <button className="btn btn-ico danger-btn" title="Eliminar la empresa y su esquema" aria-label="Eliminar" onClick={() => setBorrando({ empresa: e, confirmacion: '' })}><Icono name="trash" size={16} /></button>
     </>
   );
@@ -1297,6 +1300,8 @@ img.sesion-avatar { object-fit: cover; display: block; }
 .btn.small.block { display: block; width: 100%; text-align: center; }
 .btn.btn-ico { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 9px; min-width: 36px; line-height: 1; }
 .btn.danger-btn:hover { border-color: var(--crit); color: var(--crit-text); background: var(--crit-soft); }
+/* Evaluación de modelos habilitada: el botón se ve verde. */
+.btn.eval-on { color: #1b6b4f; border-color: #1b6b4f; }
 .btn.primary { background: var(--btn-primary); border-color: var(--btn-primary); color: var(--accent-ink); }
 .btn.primary:hover { background: var(--btn-primary-hover); border-color: var(--btn-primary-hover); color: var(--accent-ink); }
 .btn.primary.danger { background: var(--crit); border-color: var(--crit); }

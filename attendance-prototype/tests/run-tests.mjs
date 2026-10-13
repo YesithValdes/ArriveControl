@@ -1686,11 +1686,18 @@ await test('evaluación SFace: reglas de vectores, ranking, fases y reporte', as
   assert.match(ev.MODELOS.auraface.sha256, /^[0-9a-f]{64}$/);
   assert.match(ev.MODELOS.auraface.url, /\/resolve\/[0-9a-f]{40}\//, 'fijado a una revisión exacta');
 });
-await test('evaluación SFace: la habilita el superadmin, arranca apagada y el kiosco nunca decide con ella', () => {
+await test('evaluación de modelos: la administra el superadmin, arranca apagada y el kiosco nunca decide con ella', () => {
   const leer = (p) => leerCss(new URL(`../${p}`, import.meta.url), 'utf8');
   const api = leer('app/api/evaluacion-sface/route.js');
-  // Cada método revisa el permiso del superadmin.
-  assert.equal((api.match(/laboratorioHabilitado\(/g) ?? []).length, 5);
+  // Lo del kiosco (bajar vectores, inscribir, medir) revisa el permiso de la empresa…
+  assert.equal((api.match(/laboratorioHabilitado\(/g) ?? []).length, 2);
+  // …y la administración ya no es de la empresa: la hace el superadmin.
+  assert.match(api, /se administra desde la consola de plataforma/);
+  assert.doesNotMatch(api, /export async function (PATCH|DELETE)/);
+  const sa = leer('app/api/plataforma/empresas/[id]/evaluacion/route.js');
+  assert.equal((sa.match(/await soloSuperadmin\(\)/g) ?? []).length, 3, 'GET, PATCH y DELETE solo para el superadmin');
+  assert.match(leer('app/plataforma/evaluacion/[id]/page.jsx'), /esSuperadmin\(usuario\)/);
+  assert.match(leer('components/PlataformaPanel.jsx'), /href=\{`\/plataforma\/evaluacion\/\$\{e\.id\}`\}/);
   assert.match(leer('db/migrations/control/017_laboratorio_facial.sql'), /laboratorio_facial boolean not null default false/);
   assert.match(leer('db/migrations/empresa/025_evaluacion_sface.sql'), /estado\s+text not null default 'apagada'/);
   const k = leer('components/KioskMode.jsx');
@@ -1700,7 +1707,8 @@ await test('evaluación SFace: la habilita el superadmin, arranca apagada y el k
   // Los modelos evaluados no entran en la decisión: solo los llama la evaluación en sombra.
   assert.equal((k.match(/vectorDe\(/g) ?? []).length, 1);
   assert.match(leer('db/migrations/empresa/026_evaluacion_modelos.sql'), /modelos text\[\] not null default array\['sface'\]/);
-  assert.match(leer('components/AdminPanel.jsx'), /sesion\?\.laboratorioFacial && \(/);
+  // El panel de la empresa ya no la ofrece.
+  assert.doesNotMatch(leer('components/AdminPanel.jsx'), /evaluacion-modelos/);
 });
 await test('el rol consulta no marca ni baja rostros por la API (solo un kiosco o quien tenga permiso)', () => {
   const leer = (p) => leerCss(new URL(`../${p}`, import.meta.url), 'utf8');
