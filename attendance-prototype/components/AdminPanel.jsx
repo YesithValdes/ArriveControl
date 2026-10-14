@@ -861,6 +861,57 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     if (par) set({ ...obj, lat: par[1], lon: par[2] });
     else set({ ...obj, [campo]: texto.replace(',', '.').replace(/[^0-9.\-]/g, '') });
   };
+  /**
+   * «Usar mi ubicación actual»: mismo método que el kiosco
+   * (navigator.geolocation), pero con alta precisión y sin caché, porque
+   * aquí se fija el centro de la sede. Llena lat/lon (siguen editables) y
+   * deja en `gpsSede` la precisión para mostrarla. Se avisa si la precisión
+   * es peor que el radio de la sede (o de 50 m): con ese error el punto
+   * podría quedar fuera del sitio real.
+   */
+  const [gpsSede, setGpsSede] = useState(null); // { form, estado: 'buscando'|'ok'|'baja'|'error', precision?, msg? }
+  const usarMiUbicacion = (form, set, radio) => {
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      setGpsSede({ form, estado: 'error', msg: 'Este navegador no permite obtener la ubicación.' });
+      return;
+    }
+    setGpsSede({ form, estado: 'buscando' });
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        set((prev) => ({ ...prev, lat: latitude.toFixed(6), lon: longitude.toFixed(6) }));
+        const precision = Math.round(accuracy);
+        setGpsSede({ form, estado: precision > Math.min(radio, 50) ? 'baja' : 'ok', precision });
+      },
+      (err) => {
+        const msg = err?.code === 1
+          ? 'Permiso de ubicación denegado. Actívalo en la configuración del navegador para este sitio, o escribe las coordenadas a mano.'
+          : err?.code === 3
+            ? 'Se agotó el tiempo esperando la señal GPS. Intenta de nuevo, idealmente cerca de una ventana o al aire libre.'
+            : 'No se pudo obtener la ubicación. Intenta de nuevo o escribe las coordenadas a mano.';
+        setGpsSede({ form, estado: 'error', msg });
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
+    );
+  };
+  // Función que devuelve JSX (no componente) para no remontar en cada render.
+  const botonMiUbicacion = (form, set, radius) => {
+    const g = gpsSede?.form === form ? gpsSede : null;
+    return (
+      <div className="field">
+        <button type="button" className="btn" disabled={g?.estado === 'buscando'} onClick={() => usarMiUbicacion(form, set, Number(radius) || 50)}>
+          {g?.estado === 'buscando' ? 'Obteniendo ubicación…' : 'Usar mi ubicación actual'}
+        </button>
+        {g?.estado === 'ok' && <p className="hint">Ubicación obtenida · precisión ±{g.precision} m. Puedes ajustar los valores.</p>}
+        {g?.estado === 'baja' && (
+          <p className="hint" style={{ color: 'var(--warn, #b45309)' }}>
+            Precisión baja (±{g.precision} m): el punto puede estar desplazado. Intenta de nuevo al aire libre, o corrige las coordenadas con Google Maps.
+          </p>
+        )}
+        {g?.estado === 'error' && <p className="hint" style={{ color: 'var(--danger, #b91c1c)' }}>{g.msg}</p>}
+      </div>
+    );
+  };
   const [newSedeOpen, setNewSedeOpen] = useState(false); // drawer de "Nueva sede"
   const [newHoliday, setNewHoliday] = useState('');
   // Año que se ve en la lista de festivos (se navega con ‹ ›).
@@ -2832,7 +2883,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 <h4>Cuenta y acceso</h4>
                 {permisos.cuenta && (
                   <button className={`cfg-item${tab === 'cfg-plan' ? ' on' : ''}`} onClick={() => setTab('cfg-plan')}>
-                    <span className="cfg-ico"><Icon name="file" size={16} /></span> Plan
+                    <span className="cfg-ico"><Icon name="file" size={16} /></span> Suscripción
                     {/* El punto avisa sin gritar cuando hay algo que atender. */}
                     {sesion?.planEstado && !sesion.planEstado.pagada && <span className="cfg-punto" />}
                   </button>
@@ -4376,7 +4427,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         {tab === 'cfg-plan' && (
           <section className="card grow">
             <button className="btn back-btn" onClick={() => setTab('ajustes')}>‹ Ajustes</button>
-            <h2>Plan</h2>
+            <h2>Suscripción</h2>
             <div className="scrollable">
             {/* Lo primero es en qué situación está: se paga distinto según
                 si está probando, al día o vencida. */}
@@ -4560,12 +4611,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
                 {/* El plan entero es el acceso a su pantalla (detalle y pago). */}
                 <div
-                  className="cfg-group cfg-group-btn" role="button" tabIndex={0} title="Ver planes"
+                  className="cfg-group cfg-group-btn" role="button" tabIndex={0} title="Ver suscripción"
                   onClick={() => setTab('cfg-plan')}
                   onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); setTab('cfg-plan'); } }}
                 >
                   <div className="cfg-group-head">
-                    <h3>Plan</h3>
+                    <h3>Suscripción</h3>
                     <span className="cfg-chev"><Icon name="chevronRight" size={16} /></span>
                   </div>
                   <div className="emp-plan">
@@ -5478,7 +5529,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
             </div>
             <div className="scrollable">
               {(() => {
-                const openEdit = (o) => setEditSede({ original: o.name, name: o.name, lat: String(o.lat), lon: String(o.lon), radius: String(o.radius) });
+                const openEdit = (o) => setGpsSede(null) || setEditSede({ original: o.name, name: o.name, lat: String(o.lat), lon: String(o.lon), radius: String(o.radius) });
                 return (
                   <>
                     <div className="att-tablewrap">
@@ -5975,11 +6026,12 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <button className="btn" onClick={() => setNewSedeOpen(false)}>Cerrar</button>
             </div>
             <div className="drawer-body">
-              <p className="hint">En Google Maps: clic derecho sobre el punto → copiar coordenadas.</p>
+              <p className="hint">En Google Maps: clic derecho sobre el punto → copiar coordenadas. O, si estás en la sede, usa tu ubicación actual.</p>
               <div className="field">
                 <label htmlFor="n-nombre">Nombre</label>
                 <input id="n-nombre" type="text" placeholder="Ej.: Bodega Norte" value={newSede.name} onChange={(e) => setNewSede({ ...newSede, name: e.target.value })} />
               </div>
+              {botonMiUbicacion('new', setNewSede, newSede.radius)}
               <div className="field">
                 <label htmlFor="n-lat">Latitud</label>
                 <input id="n-lat" type="number" step="0.000001" placeholder="1.212981" value={newSede.lat}
@@ -6040,6 +6092,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               <label htmlFor="s-nombre">Nombre</label>
               <input id="s-nombre" type="text" value={editSede.name} onChange={(e) => setEditSede({ ...editSede, name: e.target.value })} />
             </div>
+            {botonMiUbicacion('edit', setEditSede, editSede.radius)}
             <div className="field">
               <label htmlFor="s-lat">Latitud</label>
               <input id="s-lat" type="number" step="0.000001" value={editSede.lat}
@@ -7342,7 +7395,32 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .entrada-mes strong { font-size: 26px; }
 .entrada-mes small { color: #a2dfce; font-size: 13px; line-height: 1.6; font-weight: 700; }
 @media (max-width: 1000px) { .planes-lista { gap: 14px; } .plan-tarjeta { padding: 26px 16px 20px; } .plan-precio b { font-size: 30px; } }
-@media (max-width: 680px) { .planes-lista { grid-template-columns: 1fr; gap: 26px; } .entrada { padding: 20px; } }
+@media (max-width: 680px) {
+  .planes-lista { grid-template-columns: 1fr; gap: 12px; margin: 16px 0; }
+  .plan-tarjeta { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 10px; padding: 16px; border-radius: 14px; }
+  .plan-tarjeta.sugerido { box-shadow: none; }
+  .plan-tarjeta h3 { font-size: 17px; }
+  .plan-precio { margin: 0; gap: 4px; justify-self: end; }
+  .plan-precio b { font-size: 25px; }
+  .plan-precio em { font-size: 12px; }
+  .plan-etiqueta { position: static; grid-column: 1 / -1; justify-self: start; font-size: 9px; padding: 3px 8px; margin-bottom: 2px; }
+  .plan-luego { grid-column: 1 / -1; margin: 0; font-size: 12px; }
+  .plan-descripcion { grid-column: 1 / -1; font-size: 12px; margin: 0; }
+  .plan-beneficios { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; margin: 4px 0 8px; }
+  .plan-beneficios li { margin: 0; }
+  .plan-beneficios li::before { margin-right: 5px; }
+  .plan-tarjeta .btn { grid-column: 1 / -1; min-height: 44px; margin: 0; font-size: 13px; border-radius: 9px; white-space: normal; }
+  .entrada { padding: 14px 16px; margin: 12px 0; border-radius: 12px; background: var(--accent-soft); color: var(--ink-2); gap: 8px; }
+  .entrada::after { display: none; }
+  .entrada-cab { gap: 4px; }
+  .entrada-cab b { font-size: 14px; }
+  .entrada-cab > span { color: var(--muted); font-size: 12px; }
+  .entrada-mes { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; max-width: none; padding: 0; margin: 0; border: 0; background: transparent; }
+  .entrada-mes > span { color: var(--ink-2); font-size: 12px; }
+  .entrada-mes strong { font-size: 20px; }
+  .entrada-mes small { flex-basis: 100%; color: var(--muted); font-size: 12px; font-weight: 500; }
+  .plan-estado { flex-wrap: wrap; padding: 12px; gap: 8px; }
+}
 
 /* Banner de suscripción vencida */
 .banner-vencida { background: var(--crit-soft); color: var(--crit-text); border: 1px solid var(--crit, #fca5a5); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; }
