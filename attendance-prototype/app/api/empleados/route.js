@@ -34,7 +34,7 @@ async function contextoDelRoster(req) {
     return { empresa, esquema: empresa.esquema, dispositivo: null }
   }
   // Por sesión, los rostros solo para quien gestiona colaboradores (no `consulta`).
-  return empresaDeLaPeticion(req, 'empleados')
+  return empresaDeLaPeticion(req, 'empleados', 'panel:ver')
 }
 
 export async function GET(req) {
@@ -79,7 +79,7 @@ export async function GET(req) {
     })
   }
 
-  const { estado, esquema } = await estadoAcceso('ver')
+  const { estado, esquema } = await estadoAcceso('ver', { permisoInvitado: 'panel:ver' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const { searchParams } = new URL(req.url)
@@ -99,7 +99,7 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
-  const { estado, esquema, empresa } = await estadoAcceso('empleados')
+  const { estado, esquema, empresa } = await estadoAcceso('empleados', { permisoInvitado: 'colaboradores:crear' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   // Tope del plan gratuito. Se comprueba en el SERVIDOR, no en la pantalla, y
@@ -168,13 +168,16 @@ export async function POST(req) {
 
   try {
     const empleado = await conEmpresa(esquema, async (db) => {
+      // Sin almuerzo explícito, el descanso de la empresa (Ajustes →
+      // Reglamento), no un 60 fijo.
+      const descanso = c.almuerzo_min ?? (await db.query(`select descanso_min from config_laboral where id`)).rows[0]?.descanso_min ?? 60
       const { rows } = await db.query(
         `insert into empleados
            (nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, descriptor_facial)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          returning id, nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo, creado_en`,
         [nombre, cedula, correo, c.sede_id ?? null, c.validar_sede === true, c.validar_ubicacion === true, c.entrada_esperada ?? null, c.salida_esperada ?? null,
-         c.almuerzo_min ?? 60, jornadaDias == null ? null : JSON.stringify(jornadaDias), jornada, salario, principal],
+         descanso, jornadaDias == null ? null : JSON.stringify(jornadaDias), jornada, salario, principal],
       )
       // Misma transacción: un empleado sin sus rostros no podría marcar.
       for (let i = 0; i < listaRostros.length; i++) {

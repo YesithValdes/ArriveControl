@@ -28,6 +28,7 @@ export const RUTAS_PANEL = {
   // El plan tiene pantalla propia: es a donde llega quien vuelve de pagar.
   'cfg-plan': 'ajustes/plan',
   'cfg-usuarios': 'ajustes/usuarios',
+  'cfg-seguridad': 'ajustes/seguridad',
   'cfg-sedes': 'ajustes/sedes',
   'cfg-dispositivos': 'ajustes/dispositivos',
   'cfg-reglamento': 'ajustes/reglamento',
@@ -67,13 +68,25 @@ export const tabDeSegmentos = (segmentos) =>
 export const tabDeRuta = (pathname) =>
   tabDeSegmentos(String(pathname ?? '').replace(/^\/admin\/?/, '').split('/').filter(Boolean))
 
+/** Vistas que un Invitado puede tener apagadas (modulo:accion). */
+const VISTA_INVITADO = {
+  dashboard: 'asistencia:ver',
+  asistencia: 'asistencia:historial',
+  historial: 'asistencia:historial',
+  anomalias: 'asistencia:anomalias',
+  reportes: 'asistencia:reportes',
+}
+
 /** Misma autorización para el menú, la URL directa y el historial del navegador. */
 export function puedeAbrirSeccion(tab, permisos = {}) {
+  // Invitado: su lista fina manda sobre las vistas. Los demás roles no tienen lista.
+  if (Array.isArray(permisos.lista) && VISTA_INVITADO[tab] && !permisos.lista.includes(VISTA_INVITADO[tab])) return false
   if (['dashboard', 'asistencia', 'anomalias', 'reportes', 'historial'].includes(tab)) return true
   if (tab === 'empleados') return permisos.empleados === true
   if (['cfg-empresa', 'cfg-plan'].includes(tab)) return permisos.cuenta === true
   if (tab === 'cfg-usuarios') return permisos.usuarios === true
-  if (tab === 'ajustes') return Boolean(permisos.config || permisos.usuarios || permisos.cuenta)
+  if (tab === 'cfg-seguridad') return permisos.seguridad === true
+  if (tab === 'ajustes') return Boolean(permisos.config || permisos.usuarios || permisos.cuenta || permisos.seguridad)
   if (['horarios', 'cfg-sedes', 'cfg-dispositivos', 'cfg-reglamento', 'cfg-resumen', 'cfg-nomina', 'cfg-simulador', 'cfg-gps'].includes(tab)) return permisos.config === true
   return false
 }

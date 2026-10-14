@@ -11,7 +11,7 @@ import { estadoAcceso } from '../../../../lib/sesion'
 export const runtime = 'nodejs'
 
 export async function POST(req) {
-  const { estado, usuario, esquema } = await estadoAcceso('corregir')
+  const { estado, usuario, esquema } = await estadoAcceso('corregir', { permisoInvitado: 'marcaciones:crear' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   let c

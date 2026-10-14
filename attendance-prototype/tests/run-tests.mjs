@@ -299,7 +299,7 @@ await test('la cantidad de extra es la MISMA que muestra el panel (lib/semanaLab
   ];
   const regs = calcularRegistros(unEmpleado(marcas), CERRADA);
   const horasPorDia = new Map([[SEMANA.lun, 9], [SEMANA.mar, 9], [SEMANA.mie, 9], [SEMANA.jue, 9], [SEMANA.vie, 7], [SEMANA.sab, 1]]);
-  const panel = resumenSemana({ lunes: SEMANA.lun, horasPorDia, festivos: SIN_FESTIVOS, horasHorario: () => null, hoy: '2026-08-10' });
+  const panel = resumenSemana({ lunes: SEMANA.lun, horasPorDia, festivos: SIN_FESTIVOS, hoy: '2026-08-10' });
   assert.equal(totalExtra(regs), panel.extra);
   assert.equal(panel.extra, 2);
 });
@@ -1639,8 +1639,8 @@ await test('panel: salida olvidada en un día pasado se cierra con el horario, n
   const src = leerCss(new URL('../components/AdminPanel.jsx', import.meta.url), 'utf8');
   const fn = src.slice(src.indexOf('function paresDe('), src.indexOf('function pairedHours('));
   const dayKey = (iso) => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
-  const paresDe = new Function('dayKey', 'todayKey', 'finJornadaMs', 'NIGHT_WINDOW_MS', `${fn}; return paresDe;`)(
-    dayKey, () => '2099-01-01', ps.finJornadaMs, ps.NIGHT_WINDOW_MS);
+  const paresDe = new Function('dayKey', 'todayKey', 'finJornadaMs', 'NIGHT_WINDOW_MS', 'permisoDelDia', `${fn}; return paresDe;`)(
+    dayKey, () => '2099-01-01', ps.finJornadaMs, ps.NIGHT_WINDOW_MS, (await import('../lib/permisos.js')).permisoDelDia);
   const ev = (f, hhmm, type) => ({ ts: new Date(`${f}T${hhmm}:00-05:00`).toISOString(), type });
   const jd = { jornadaDias: { 1: { entrada: '09:00', salida: '18:00', almuerzoDesde: '12:00', almuerzoHasta: '14:00' }, 2: { entrada: '09:00', salida: '18:00' } } };
   const horas = (p) => Math.round(p.reduce((s, x) => s + x.horas, 0) * 100) / 100;
@@ -1712,12 +1712,12 @@ await test('evaluación de modelos: la administra el superadmin, arranca apagada
 });
 await test('el rol consulta no marca ni baja rostros por la API (solo un kiosco o quien tenga permiso)', () => {
   const leer = (p) => leerCss(new URL(`../${p}`, import.meta.url), 'utf8');
-  assert.match(leer('app/api/marcaciones/route.js'), /empresaDeLaPeticion\(req, 'corregir'\)/);
-  assert.match(leer('app/api/intentos/route.js'), /empresaDeLaPeticion\(req, 'corregir'\)/);
-  assert.match(leer('app/api/marcaciones/[id]/ubicacion/route.js'), /empresaDeLaPeticion\(req, 'corregir'\)/);
-  assert.match(leer('app/api/empleados/route.js'), /empresaDeLaPeticion\(req, 'empleados'\)/);
-  assert.match(leer('app/api/dispositivos/vincular/route.js'), /GET[\s\S]{0,200}estadoAcceso\('config'\)/);
-  assert.match(leer('app/api/prueba-reconocimiento/route.js'), /estadoAcceso\('empleados'\)/);
+  assert.match(leer('app/api/marcaciones/route.js'), /empresaDeLaPeticion\(req, 'corregir'(?:, '[^']+')?\)/);
+  assert.match(leer('app/api/intentos/route.js'), /empresaDeLaPeticion\(req, 'corregir'(?:, '[^']+')?\)/);
+  assert.match(leer('app/api/marcaciones/[id]/ubicacion/route.js'), /empresaDeLaPeticion\(req, 'corregir'(?:, '[^']+')?\)/);
+  assert.match(leer('app/api/empleados/route.js'), /empresaDeLaPeticion\(req, 'empleados'(?:, '[^']+')?\)/);
+  assert.match(leer('app/api/dispositivos/vincular/route.js'), /GET[\s\S]{0,200}estadoAcceso\('config'[,)]/);
+  assert.match(leer('app/api/prueba-reconocimiento/route.js'), /estadoAcceso\('empleados'(?:, \{ permisoInvitado: '[^']+' \})?\)/);
 });
 await test('Excel de varias hojas: una por colaborador, nombres válidos y sin repetir', async () => {
   const { crearLibro } = await import('../lib/xlsx.js');
@@ -1839,7 +1839,7 @@ await test('el período se pide por mes y quincena, o por desde/hasta', async ()
 await test('las rutas de /api/horas entran con la clave de API (accesoHoras)', () => {
   for (const ruta of ['../app/api/horas/route.js', '../app/api/horas/resumen/route.js', '../app/api/horas/pagadas/route.js', '../app/api/horas/cierre/route.js']) {
     const fuente = leerCss(new URL(ruta, import.meta.url), 'utf8');
-    assert.match(fuente, /accesoHoras\(req, '(ver|liquidar)'\)/, `${ruta} no pasa por accesoHoras`);
+    assert.match(fuente, /accesoHoras\(req, '(ver|liquidar)'(, '[a-z_]+:[a-z_]+')?\)/, `${ruta} no pasa por accesoHoras`);
   }
 });
 
@@ -1877,7 +1877,7 @@ await test('la ruta del avatar acepta id interno o cédula y guarda solo JPEG no
 
 // ── Roles dentro de la empresa ─────────────────────────────────────────
 console.log('\n🔐 Roles');
-const { puede, listaRoles, esRolDeEmpresa, ACCIONES } = await import('../lib/roles.js');
+const { puede, listaRoles, esRolDeEmpresa, ACCIONES, normalizarPermisosInvitado, PERFILES_INVITADO, PERMISOS_INVITADO, VISTAS_INVITADO } = await import('../lib/roles.js');
 const { PLANES, cotizar, catalogoPara } = await import('../lib/planes.js');
 await test('la API (X-API-Key) es solo para quien tiene un plan pago vigente', async () => {
   // empresas.js importa db.js, que exige la variable aunque no se conecte.
@@ -1984,9 +1984,82 @@ await test('el dueño puede todo; el administrador todo menos la cuenta y la gen
   for (const a of ACCIONES.filter((x) => x !== 'ver')) assert.ok(!puede('consulta', a), `consulta NO: ${a}`);
   assert.ok(!puede('superadmin', 'ver'), 'el superadmin no entra al panel de una empresa');
 });
-await test('solo los tres roles de empresa se pueden dar; el superadmin no', () => {
-  assert.deepEqual(listaRoles().map((r) => r.clave), ['empresa', 'admin', 'consulta']);
-  assert.ok(esRolDeEmpresa('admin') && !esRolDeEmpresa('superadmin') && !esRolDeEmpresa('dueno'));
+await test('solo los cuatro roles de empresa se pueden dar; el superadmin no', () => {
+  assert.deepEqual(listaRoles().map((r) => r.clave), ['empresa', 'admin', 'consulta', 'invitado']);
+  assert.ok(esRolDeEmpresa('admin') && esRolDeEmpresa('invitado') && !esRolDeEmpresa('superadmin') && !esRolDeEmpresa('dueno'));
+});
+await test('invitado: de fábrica puede lo mismo que el administrador', () => {
+  for (const a of ACCIONES) assert.equal(puede('invitado', a), puede('admin', a), `invitado sin configurar: ${a}`);
+  for (const a of ACCIONES) assert.equal(puede('invitado', a, { permisos_invitado: null }), puede('admin', a), `empresa sin lista: ${a}`);
+});
+await test('invitado: cada persona tiene su lista; las acciones son independientes', () => {
+  const persona = { permisos_invitado: ['sedes:crear', 'colaboradores:editar', 'cierres:reabrir'] };
+  assert.ok(puede('invitado', 'config', null, 'sedes:crear', persona));
+  assert.ok(puede('invitado', 'ver', null, 'sedes:ver', persona), 'crear enciende ver');
+  assert.ok(!puede('invitado', 'config', null, 'sedes:editar', persona));
+  assert.ok(!puede('invitado', 'config', null, 'sedes:eliminar', persona));
+  assert.ok(puede('invitado', 'empleados', null, 'colaboradores:editar', persona));
+  assert.ok(!puede('invitado', 'empleados', null, 'colaboradores:crear', persona));
+  assert.ok(puede('invitado', 'liquidar', null, 'cierres:reabrir', persona));
+  assert.ok(!puede('invitado', 'liquidar', null, 'cierres:cerrar', persona));
+  assert.ok(!puede('invitado', 'config', null, 'sedes:crear', { permisos_invitado: [] }), 'otra persona, otra lista');
+  assert.ok(puede('admin', 'config', null, 'sedes:eliminar', persona), 'a los demás roles no les afecta');
+});
+await test('invitado: las vistas del panel se apagan, pero siempre queda una', () => {
+  // Solo reportes: el dashboard, anomalías y el detalle quedan apagados.
+  const soloReportes = normalizarPermisosInvitado(['asistencia:reportes']);
+  assert.deepEqual(soloReportes, ['asistencia:reportes']);
+  const persona = { permisos_invitado: soloReportes };
+  assert.ok(!puede('invitado', 'ver', null, 'asistencia:ver', persona), 'dashboard apagado');
+  assert.ok(!puede('invitado', 'ver', null, 'marcaciones:ver', persona), 'detalle de marcaciones apagado');
+  // La carga base (panel:ver) y la entrada al panel siguen funcionando.
+  assert.ok(puede('invitado', 'ver', null, 'panel:ver', persona), 'el panel no se le cae');
+  assert.ok(puede('invitado', 'ver', null, null, persona), 'puede entrar');
+  // Sin ninguna vista se deja el dashboard: si no, no podría entrar.
+  assert.deepEqual(normalizarPermisosInvitado([]), ['asistencia:ver']);
+  assert.ok(puede('invitado', 'ver', null, 'panel:ver', { permisos_invitado: [] }));
+});
+await test('invitado: exportar reportes enciende «Ver reportes», no el dashboard', () => {
+  const n = normalizarPermisosInvitado(['asistencia:exportar']);
+  assert.ok(n.includes('asistencia:reportes'));
+  assert.ok(!n.includes('asistencia:ver'));
+});
+await test('invitado: cualquier acción enciende el «ver» de su módulo', () => {
+  const n = normalizarPermisosInvitado(['dispositivos:eliminar', 'novedades:soportes', 'horarios:asignar']);
+  assert.ok(n.includes('dispositivos:ver') && n.includes('novedades:ver') && n.includes('horarios:ver'));
+});
+await test('invitado: lo exclusivo del Propietario nunca se le da', () => {
+  const n = normalizarPermisosInvitado(['seguridad:llave', 'seguridad:soporte', 'usuarios', 'cuenta', 'inventado']);
+  assert.ok(!n.includes('seguridad:llave') && !n.includes('seguridad:soporte') && !n.includes('usuarios') && !n.includes('inventado'));
+  // Aunque llegara guardado a mano en la base, puede() lo niega.
+  const colado = { permisos_invitado: ['seguridad:llave', 'seguridad:soporte', 'seguridad:ver'] };
+  assert.ok(!puede('invitado', 'cuenta', null, 'seguridad:llave', colado));
+  assert.ok(!puede('invitado', 'cuenta', null, 'seguridad:soporte', colado));
+  assert.ok(!puede('invitado', 'cuenta', null, null, colado), 'sin clave no entra al área del dueño');
+  assert.ok(!puede('invitado', 'usuarios', null, null, colado), 'nunca administra el acceso (ni sus propios permisos)');
+  assert.ok(!puede('invitado', 'usuarios', null, 'dispositivos:crear', colado), 'una clave no salta el tope');
+  // Leer la seguridad sí, si se lo dieron.
+  assert.ok(puede('invitado', 'cuenta', null, 'seguridad:ver', colado));
+  assert.ok(!puede('invitado', 'cuenta', null, 'seguridad:ver', { permisos_invitado: [] }));
+  assert.ok(puede('empresa', 'cuenta', null, 'seguridad:llave'), 'el dueño sí');
+});
+await test('invitado: una ruta puede aceptar cualquiera de varias claves (asignar horario)', () => {
+  const supervisor = { permisos_invitado: ['horarios:asignar'] };
+  assert.ok(puede('invitado', 'empleados', null, ['colaboradores:editar', 'horarios:asignar'], supervisor));
+  assert.ok(!puede('invitado', 'empleados', null, 'colaboradores:editar', supervisor), 'no edita el resto del colaborador');
+});
+await test('invitado: perfiles rápidos', () => {
+  const perfil = (c) => normalizarPermisosInvitado(PERFILES_INVITADO.find((p) => p.clave === c).permisos);
+  assert.deepEqual(perfil('admin'), PERMISOS_INVITADO, 'administrador completo = todo lo asignable');
+  const sup = perfil('supervisor');
+  for (const k of ['marcaciones:crear', 'marcaciones:editar', 'marcaciones:ver_foto', 'horarios:asignar', 'novedades:crear', 'novedades:soportes', 'novedades:descontar', 'colaboradores:ver', 'sedes:ver', 'dispositivos:ver']) {
+    assert.ok(sup.includes(k), `supervisor: ${k}`);
+  }
+  assert.ok(!sup.some((k) => k.endsWith(':eliminar')), 'supervisor no elimina');
+  assert.ok(!sup.some((k) => /^(reglamento|cierres|seguridad):/.test(k)), 'supervisor sin configuración, cierres ni seguridad');
+  const lectura = perfil('lectura');
+  assert.ok(lectura.every((k) => k.endsWith(':ver') || VISTAS_INVITADO.includes(k)), 'solo lectura no escribe');
+  assert.ok(VISTAS_INVITADO.every((k) => lectura.includes(k) && sup.includes(k)), 'ambos ven todas las vistas');
 });
 await test('cada plan dice cuántos accesos al panel incluye (es lo que se vende)', () => {
   for (const [id, p] of Object.entries(PLANES)) assert.ok(Number.isInteger(p.usuarios) && p.usuarios >= 1, `${id} sin usuarios`);
@@ -1994,7 +2067,10 @@ await test('cada plan dice cuántos accesos al panel incluye (es lo que se vende
 });
 await test('las rutas de la cuenta exigen «cuenta» y las de gente «usuarios»', () => {
   const emp = leerCss(new URL('../app/api/empresa/route.js', import.meta.url), 'utf8');
-  assert.equal((emp.match(/estadoAcceso\('cuenta'\)/g) ?? []).length, 2, 'GET y PATCH de /api/empresa');
+  assert.equal((emp.match(/estadoAcceso\('cuenta'[,)]/g) ?? []).length, 2, 'GET y PATCH de /api/empresa');
+  // El GET lo puede leer un Invitado con seguridad:ver; el PATCH, solo el dueño.
+  assert.match(emp, /estadoAcceso\('cuenta', \{ permisoInvitado: 'seguridad:ver' \}\)/);
+  assert.equal((emp.match(/estadoAcceso\('cuenta'\)/g) ?? []).length, 1, 'PATCH sin excepción para el Invitado');
   const pago = leerCss(new URL('../app/api/pago/suscribir/route.js', import.meta.url), 'utf8');
   assert.match(pago, /estadoAcceso\('cuenta'\)/);
   const usr = leerCss(new URL('../app/api/usuarios/route.js', import.meta.url), 'utf8');
@@ -2022,7 +2098,7 @@ await test('la migración 018 crea los dos interruptores y /api/config los lee y
   assert.match(mig, /resumen_correo boolean not null default true/);
   assert.match(mig, /resumen_api boolean not null default true/);
   const cfg = leerCss(new URL('../app/api/config/route.js', import.meta.url), 'utf8');
-  assert.match(cfg, /select gracia_min, resumen_correo, resumen_api from config_laboral/);
+  assert.match(cfg, /select gracia_min, resumen_correo, resumen_api, salida_tarde_min, descanso_min, descanso_tolerancia_min from config_laboral/);
   assert.match(cfg, /for \(const campo of \['resumen_correo', 'resumen_api'\]\)/);
   assert.ok(cfg.includes("typeof c[campo] !== 'boolean'"), 'solo acepta booleanos');
   const ps = leerCss(new URL('../services/panelStore.js', import.meta.url), 'utf8');
@@ -2095,14 +2171,14 @@ await test('la consola usa el diseño del panel de empresa: tabla en PC, acorde�
   assert.match(c, /\.tiles \{ grid-template-columns: repeat\(4, 1fr\)/, 'tiles de 4 en PC, como el dashboard');
   for (const k of ['planId', 'limiteUsuarios', 'venceEn', 'pruebaHasta']) assert.ok(c.includes(`cambios.${k}`), `el diálogo manda ${k}`);
 });
-await test('la consola tiene el mismo armazón que el panel de empresa: barra, menú lateral que se encoge, y cuatro pantallas', () => {
+await test('la consola tiene el mismo armazón que el panel de empresa: barra, menú lateral que se encoge, y cinco pantallas', () => {
   const c = leerCss(new URL('../components/PlataformaPanel.jsx', import.meta.url), 'utf8');
   assert.match(c, /<header className="app-header">/);
   assert.match(c, /<nav className="tabbar"/);
   assert.match(c, /nav-collapsed/);
   assert.match(c, /window\.matchMedia\('\(min-width: 900px\)'\)/, 'las tres líneas encogen en PC y abren en móvil');
   const ids = [...c.matchAll(/\{ id: '(\w+)', label:/g)].map((m) => m[1]);
-  assert.deepEqual(ids, ['resumen', 'empresas', 'pagos', 'envios']);
+  assert.deepEqual(ids, ['resumen', 'empresas', 'pagos', 'soporte', 'envios']);
   assert.match(c, /grid-template-columns: 240px minmax\(0, 1fr\)/, 'misma medida de menú que AdminPanel');
   assert.match(c, /\.nav-collapsed \{ grid-template-columns: 74px/, 'mismo riel de iconos que AdminPanel');
   const r = leerCss(new URL('../app/api/plataforma/pagos/route.js', import.meta.url), 'utf8');
@@ -2138,5 +2214,286 @@ console.log('\n🔄 Sincronización incremental del panel (fusionarMarcaciones)'
     assert.ok(r.find((x) => x.id === 'b') === b, 'la fila sin cambios debe ser el MISMO objeto');
   });
 }
+
+console.log('\n🕔 Salida tardía (anomalía, independiente de las extras)');
+{
+  const { minutosDespuesDelHorario, toleranciaSalida, esSalidaTardia, TOLERANCIA_SALIDA_DEFECTO_MIN } = await import('../lib/salidaTardia.js');
+  const franja = { entrada: '08:00', salida: '17:00' };
+  const tarde = (hora) => minutosDespuesDelHorario({ fechaEntrada: '2026-09-14', salidaMs: Date.parse(`2026-09-14T${hora}:00-05:00`), franja });
+
+  await test('minutos después del horario, también en turno que cruza medianoche', () => {
+    assert.equal(tarde('18:00'), 60);
+    assert.equal(minutosDespuesDelHorario({ fechaEntrada: '2026-09-14', salidaMs: Date.parse('2026-09-15T07:00:00-05:00'), franja: { entrada: '22:00', salida: '06:00' } }), 60);
+    assert.equal(minutosDespuesDelHorario({ fechaEntrada: '2026-09-14', salidaMs: 0, franja: null }), null, 'sin horario no hay anomalía');
+  });
+  await test('solo es anomalía si sale DESPUÉS del horario permitido (fin + tolerancia)', () => {
+    assert.equal(esSalidaTardia(tarde('17:00'), 15), false, 'a la hora: no');
+    assert.equal(esSalidaTardia(tarde('16:00'), 15), false, 'antes: no');
+    assert.equal(esSalidaTardia(tarde('17:15'), 15), false, 'dentro de la tolerancia: no');
+    assert.equal(esSalidaTardia(tarde('17:16'), 15), true);
+    assert.equal(esSalidaTardia(tarde('17:01'), 0), true, 'sin tolerancia, un minuto basta');
+    assert.equal(esSalidaTardia(null, 15), false, 'sin horario: no');
+  });
+  await test('tolerancia propia, sin depender de la extra mínima', () => {
+    assert.equal(toleranciaSalida(null), TOLERANCIA_SALIDA_DEFECTO_MIN);
+    assert.equal(toleranciaSalida(10), 10);
+    assert.equal(toleranciaSalida(0), 0);
+  });
+  await test('el cálculo de horas extra no importa ni lee nada de la anomalía', () => {
+    for (const f of ['calculoHoras.js', 'semanaLaboral.js', 'nomina.js', 'configLaboral.js', 'tiposHora.js']) {
+      const src = leerCss(new URL(`../lib/${f}`, import.meta.url), 'utf8');
+      assert.ok(!/salidaTardia|salida_tarde|late-exit|descanso\.js|descanso_tolerancia|long-break/.test(src), `${f} no debe depender de las anomalías`);
+    }
+    for (const f of ['salidaTardia.js', 'descanso.js']) {
+      const lib = leerCss(new URL(`../lib/${f}`, import.meta.url), 'utf8');
+      assert.ok(!/^import /m.test(lib), `${f} tampoco importa el motor de horas`);
+    }
+  });
+}
+
+console.log('\n☕ Descanso excedido (anomalía, independiente de las extras)');
+{
+  const { descansosExcedidos, descansoDelHorario, descansoEmpresa, toleranciaDescanso } = await import('../lib/descanso.js');
+  const ev = (type, hora) => ({ type, ts: `2026-09-14T${hora}:00-05:00` });
+  const franja = { entrada: '08:00', salida: '17:00', almuerzoDesde: '12:00', almuerzoHasta: '13:00', almuerzoMin: 60 };
+  const dia = (sale, vuelve) => [ev('in', '08:00'), ev('out', sale), ev('in', vuelve), ev('out', '17:00')];
+
+  await test('el descanso permitido sale del horario (rango, o minutos en horarios viejos)', () => {
+    assert.equal(descansoDelHorario(franja), 60);
+    assert.equal(descansoDelHorario({ almuerzo_desde: '12:00', almuerzo_hasta: '12:45' }), 45);
+    assert.equal(descansoDelHorario({ almuerzoMin: 30 }), 30);
+    assert.equal(descansoDelHorario({ entrada: '08:00', salida: '12:00' }), 0, 'día corrido: sin descanso');
+  });
+  await test('solo es anomalía si la pausa pasa del descanso + la tolerancia', () => {
+    assert.equal(descansosExcedidos({ eventos: dia('12:00', '13:10'), franja, tolerancia: 10 }).length, 0, 'justo en el límite: no');
+    const [c] = descansosExcedidos({ eventos: dia('12:00', '13:25'), franja, tolerancia: 10 });
+    assert.equal(c.minutos, 85);
+    assert.equal(c.permitido, 60);
+    assert.equal(c.exceso, 25);
+    assert.equal(c.regreso.ts, '2026-09-14T13:25:00-05:00', 'el caso apunta al regreso');
+  });
+  await test('sin descanso en el horario o sin pausa marcada, no hay anomalía', () => {
+    assert.equal(descansosExcedidos({ eventos: dia('12:00', '15:00'), franja: { entrada: '08:00', salida: '17:00' }, tolerancia: 10 }).length, 0);
+    assert.equal(descansosExcedidos({ eventos: [ev('in', '08:00'), ev('out', '17:00')], franja, tolerancia: 0 }).length, 0);
+  });
+  await test('descanso y tolerancia de la empresa: valores de fábrica y propios', () => {
+    assert.equal(descansoEmpresa(null), 60);
+    assert.equal(descansoEmpresa(45), 45);
+    assert.equal(descansoEmpresa(0), 0);
+    assert.equal(toleranciaDescanso(undefined), 10);
+    assert.equal(toleranciaDescanso(5), 5);
+  });
+  await test('el horario nuevo ya no trae 60 min fijos: usa el descanso de la empresa', () => {
+    const panel = leerCss(new URL('../components/AdminPanel.jsx', import.meta.url), 'utf8');
+    assert.ok(!/almuerzoMin: 60/.test(panel), 'sin almuerzo fijo en 60');
+    assert.match(panel, /diasLunesAViernes\(descansoEmpresa\(cfg\.descansoMin\)\)/);
+    const emp = leerCss(new URL('../app/api/empleados/route.js', import.meta.url), 'utf8');
+    assert.ok(!/almuerzo_min \?\? 60/.test(emp), 'el alta de empleado tampoco fija 60');
+  });
+}
+
+
+console.log('\n⏱️ Horas incompletas');
+{
+  const { horasIncompletas, textoHorasIncompletas } = await import('../lib/horasIncompletas.js');
+  const fecha = '2026-10-07';
+  const franja = { entrada: '08:00', salida: '17:00', almuerzoDesde: '12:00', almuerzoHasta: '13:00' };
+  const ev = (type, hora, dia = fecha) => ({ id: type + dia + hora, type, ts: dia + 'T' + hora + ':00-05:00' });
+  const marcas = horas => horas.map((h, i) => ev(i % 2 ? 'out' : 'in', h));
+  const detectar = (eventos, f = franja, ahora = '2026-10-09T00:00:00-05:00') =>
+    horasIncompletas({ eventos, franjaDe: () => f, nowMs: Date.parse(ahora) });
+  await test('6 h 30 registradas de 8 previstas: faltan 90 min y texto legible', () => {
+    const [a] = detectar(marcas(['08:00', '12:00', '13:00', '15:30']));
+    assert.equal(a.trabajadoMin, 390);
+    assert.equal(a.previstoMin, 480);
+    assert.equal(a.faltanteMin, 90);
+    assert.equal(textoHorasIncompletas(a), 'Trabajó 6 h 30 min de 8 h (faltan 1 h 30 min)');
+  });
+  await test('jornada completa o con más horas no genera aviso', () => {
+    assert.equal(detectar(marcas(['08:00', '12:00', '13:00', '17:00'])).length, 0);
+    assert.equal(detectar(marcas(['08:00', '18:00'])).length, 0);
+  });
+  await test('no inventa pausas: 08–17 sin pausa marcada son 9 h', () => {
+    assert.equal(detectar(marcas(['08:00', '17:00'])).length, 0);
+  });
+  await test('entrada abierta, falta intermedia y salida huérfana excluyen el día', () => {
+    assert.equal(detectar(marcas(['08:00'])).length, 0);
+    assert.equal(detectar(marcas(['08:00', '12:00', '13:00'])).length, 0);
+    assert.equal(detectar([ev('in', '08:00'), ev('in', '13:00'), ev('out', '15:00')]).length, 0);
+    assert.equal(detectar([ev('out', '07:00'), ev('in', '08:00'), ev('out', '15:00')]).length, 0);
+  });
+  await test('día en curso no genera aviso aunque tenga un par cerrado', () => {
+    assert.equal(detectar(marcas(['08:00', '12:00']), franja, '2026-10-07T18:00:00-05:00').length, 0);
+  });
+  await test('sin horario y día libre no generan aviso', () => {
+    assert.equal(detectar(marcas(['08:00', '12:00']), null).length, 0);
+  });
+  await test('usa horario específico del día, incluido descanso antiguo en minutos', () => {
+    const [a] = detectar(marcas(['09:00', '12:00']), { entrada: '09:00', salida: '13:00', almuerzo_min: 0 });
+    assert.equal(a.faltanteMin, 60);
+    assert.equal(detectar(marcas(['08:00', '16:00']), { entrada: '08:00', salida: '17:00', almuerzoMin: 60 }).length, 0);
+  });
+  await test('turno nocturno se atribuye al día de entrada y espera al fin del turno', () => {
+    const f = { entrada: '22:00', salida: '06:00', almuerzoMin: 0 };
+    const e = [ev('in', '22:00'), ev('out', '04:00', '2026-10-08')];
+    assert.equal(detectar(e, f, '2026-10-08T05:00:00-05:00').length, 0);
+    const [a] = detectar(e, f);
+    assert.equal(a.fecha, fecha);
+    assert.equal(a.faltanteMin, 120);
+  });
+  await test('una salida de otro día no cierra un turno diurno incompleto', () => {
+    assert.equal(detectar([ev('in', '08:00'), ev('out', '12:00', '2026-10-08')]).length, 0);
+  });
+  await test('corregir las horas completas elimina el aviso y respeta segundos reales', () => {
+    const e = marcas(['08:00', '12:00', '13:00', '15:30']);
+    e[3].ts = fecha + 'T17:00:00-05:00';
+    assert.equal(detectar(e).length, 0);
+    e[3].ts = fecha + 'T16:59:59-05:00';
+    assert.match(textoHorasIncompletas(detectar(e)[0]), /faltan 1 s/);
+  });
+}
+
+
+console.log('\n🗓️ Permisos e incapacidades');
+{
+ const { validarPermiso, cruzanFechas, diasEntre, permisoDelDia, horasReconocidas, validarSoporte } = await import('../lib/permisos.js');
+ const base = { tipo:'permiso', inicio:'2026-09-28', fin:'2026-10-03', motivo:'Prueba', descontar:false };
+ const dias = Object.fromEntries([1,2,3,4,5,6].map(d=>[d,{entrada:'08:00',salida:'15:00',almuerzo_min:0}]));
+ const persona = { jornadaDias:dias, permisos:[base] };
+ await test('reporte filtra por período, conserva anulaciones y protege texto en CSV',async()=>{
+  const {filasReportePermisos,csvPermisos,historialPermisos}=await import('../lib/permisos.js');
+  const registro={...base,id:'permiso-1',empleado_id:'p',empleado_nombre:'PRUEBA',creado_en:'2026-09-28T12:00:00Z',creado_por:'admin',anulado_en:'2026-09-29T12:00:00Z',anulado_por:'admin',motivo:'=1+1'};
+  const filas=filasReportePermisos([registro],()=>persona,'2026-09-29','2026-09-30');
+  assert.equal(filas[1][4],2);
+  assert.equal(filas[1][8],'Anulado');
+  assert.ok(csvPermisos(filas).includes("'=1+1"));
+  assert.equal(filasReportePermisos([registro],()=>persona,'2026-10-04','2026-10-05').length,1);
+  assert.equal(historialPermisos([registro]).length,2);
+ });
+ await test('resumen diario no emite anomalías ni cierres ficticios en un día autorizado',async()=>{
+  const {resumenDelDia}=await import('../lib/resumenDiario.js');
+  const e={jornada_dias:{'1':{entrada:'08:00',salida:'17:00',almuerzo_min:60}},permisos:[base]};
+  const r=resumenDelDia(e,[{tipo:'entrada',minutos:690},{tipo:'salida',minutos:900}],1,'2026-09-28');
+  assert.equal(r.trabajadoSeg,210*60);
+  assert.equal(r.computableSeg,8*3600);
+  assert.deepEqual(r.avisos.map(a=>a.clase),['permiso']);
+  const abierta=resumenDelDia(e,[{tipo:'entrada',minutos:480}],1,'2026-09-28');
+  assert.ok(!abierta.marcas.some(m=>m.automatica));
+  assert.deepEqual(abierta.avisos.map(a=>a.clase),['permiso']);
+ });
+ await test('horas de turno nocturno no se reconocen antes de finalizarlo',async()=>{
+  const {turnoPermisoTerminado}=await import('../lib/permisos.js');
+  const e={expectedEntry:'22:00',expectedExit:'06:00'};
+  assert.equal(turnoPermisoTerminado(e,'2026-09-28',Date.parse('2026-09-29T05:00:00-05:00')),false);
+  assert.equal(turnoPermisoTerminado(e,'2026-09-28',Date.parse('2026-09-29T06:00:00-05:00')),true);
+ });
+ await test('valida calendario real, orden de fechas, tipo, motivo y descuento explícito',()=>{
+  assert.equal(validarPermiso(base),null);
+  for(const cambio of [{inicio:'2026-02-30'},{fin:'2026-09-27'},{tipo:'otro'},{motivo:' '},{descontar:'false'}]) assert.ok(validarPermiso({...base,...cambio}));
+  assert.equal(diasEntre('2026-02-28','2026-03-01').length,2);
+ });
+ await test('incapacidad requiere soporte y se valida formato y tamaño del archivo',()=>{
+  assert.ok(validarPermiso({...base,tipo:'incapacidad'}));
+  assert.equal(validarPermiso({...base,tipo:'incapacidad',soporte:true}),null);
+  assert.equal(validarSoporte(new TextEncoder().encode('%PDF-1.7\nprueba'),'application/pdf'),null);
+  assert.ok(validarSoporte(new TextEncoder().encode('ejecutable'),'application/pdf'));
+  assert.ok(validarSoporte(new Uint8Array(8*1024*1024+1),'application/pdf'));
+ });
+ await test('cruces incluyen inicio y fin; períodos adyacentes no se cruzan',()=>{
+  assert.ok(cruzanFechas(base,{inicio:'2026-10-03',fin:'2026-10-06'}));
+  assert.ok(cruzanFechas(base,{inicio:'2026-09-29',fin:'2026-09-30'}));
+  assert.ok(!cruzanFechas(base,{inicio:'2026-10-04',fin:'2026-10-06'}));
+ });
+ await test('solo cubre días con turno y excluye novedades anuladas',()=>{
+  assert.ok(permisoDelDia(persona,'2026-09-28'));
+  assert.equal(permisoDelDia({...persona,permisos:[{...base,fin:'2026-10-04'}]},'2026-10-04'),null);
+  assert.equal(permisoDelDia({...persona,permisos:[{...base,anulado_en:'2026-10-01'}]},'2026-09-28'),null);
+ });
+ await test('sin descuento reconoce solo el faltante, nunca duplica horas trabajadas',()=>{
+  assert.equal(horasReconocidas(persona,'2026-09-28',0),7);
+  assert.equal(horasReconocidas(persona,'2026-09-28',4),3);
+  assert.equal(horasReconocidas(persona,'2026-09-28',9),0);
+  assert.equal(horasReconocidas({...persona,permisos:[{...base,descontar:true}]},'2026-09-28',4),0);
+ });
+ await test('respeta descanso, horario uniforme y turno nocturno',()=>{
+  assert.equal(horasReconocidas({expectedEntry:'08:00',expectedExit:'17:00',breakMinutes:60,permisos:[base]},'2026-09-28'),8);
+  assert.equal(horasReconocidas({jornadaDias:{'1':{entrada:'22:00',salida:'06:00',almuerzo_min:0}},permisos:[base]},'2026-09-28'),8);
+ });
+ await test('semana sin descuento completa jornada y con descuento conserva faltante',()=>{
+  const horasPorDia=new Map([['2026-09-28',4]]);
+  const resumen = p => resumenSemana({lunes:'2026-09-28',horasPorDia,festivos:new Set(),hoy:'2026-10-05',horasJustificadas:(f,h)=>horasReconocidas(p,f,h)});
+  assert.equal(resumen(persona).cuenta,42);
+  assert.equal(resumen(persona).extra,0);
+  assert.equal(resumen(persona).faltante,0);
+  assert.equal(resumen({...persona,permisos:[{...base,descontar:true}]}).faltante,38);
+ });
+ await test('festivo con permiso sin descuento: el festivo no suma horas (solo los días hábiles del permiso)',()=>{
+  const r=resumenSemana({lunes:'2026-09-28',horasPorDia:new Map(),festivos:new Set(['2026-09-28']),hoy:'2026-10-05',horasJustificadas:(f,h)=>horasReconocidas(persona,f,h)});
+  assert.equal(r.cuenta,35);
+  assert.equal(r.faltante,7);
+ });
+ await test('novedad no inventa pares ni recargos y elimina el cierre automático de una entrada',async()=>{
+  const { emparejarMarcas, calcularRegistros }=await import('../lib/calculoHoras.js');
+  const e={...persona,cedula:'prueba',marcas:[{tipo:'entrada',fecha:'2026-09-28',minutos:480,epoch:Date.parse('2026-09-28T08:00:00-05:00')/1000,dow:1}]};
+  assert.equal(emparejarMarcas(e,{festivos:new Set(),hoy:'2026-10-05'}).length,0);
+  assert.equal(calcularRegistros(new Map([['prueba',e]]),{festivos:new Set(),vigencias:[{desde:'2020-01-01',horas:42}],hoy:'2026-10-05'}).length,0);
+ });
+ await test('sin descuento puede compensar semana; extras se atribuyen solo a pares reales',async()=>{
+  const { calcularRegistros }=await import('../lib/calculoHoras.js');
+  const e={jornadaDias:dias,cedula:'prueba',permisos:[{...base,fin:'2026-10-01'}],marcas:[]};
+  for(const [fecha,dow,hasta] of [['2026-10-02',5,960],['2026-10-03',6,900]]) {
+   for(const [tipo,minutos] of [['entrada',480],['salida',hasta]])e.marcas.push({tipo,fecha,minutos,dow,epoch:Date.parse(fecha+'T00:00:00-05:00')/1000+minutos*60});
+  }
+  // 28 h reconocidas y 15 h reales = 43 h: solo la última hora es extra.
+  const reg=calcularRegistros(new Map([['prueba',e]]),{festivos:new Set(),vigencias:[{desde:'2020-01-01',horas:42}],hoy:'2026-10-05'});
+  assert.equal(reg.reduce((s,r)=>s+r.horas,0),1);
+  assert.equal(reg[0].fecha,'2026-10-03');
+ });
+}
+
+
+await test('permisos por horas: valida límites, cruces, créditos y trabajo simultáneo',async()=>{
+ const {validarPermiso,cruzanFechas,horasPermiso,horasReconocidas,permisoCubreTramo,filasReportePermisos}=await import('../lib/permisos.js');
+ const p={tipo:'permiso',inicio:'2026-09-28',fin:'2026-09-28',hora_inicio:'13:00',hora_fin:'15:00',motivo:'Cita',descontar:false};
+ const e={jornadaDias:{'1':{entrada:'08:00',salida:'17:00',almuerzo_desde:'12:00',almuerzo_hasta:'13:00'}},permisos:[p]};
+ assert.equal(validarPermiso(p),null);
+ assert.ok(validarPermiso({...p,hora_fin:''}));
+ assert.ok(validarPermiso({...p,hora_fin:'13:00'}));
+ assert.equal(validarPermiso({...p,fin:'2026-09-29',hora_fin:'09:00'}),null);
+ assert.equal(cruzanFechas(p,{...p,hora_inicio:'15:00',hora_fin:'16:00'}),false);
+ assert.equal(cruzanFechas(p,{...p,hora_inicio:'14:00',hora_fin:'16:00'}),true);
+ assert.equal(cruzanFechas(p,{...p,hora_inicio:null,hora_fin:null}),true);
+ assert.equal(horasPermiso(e,p.inicio,p),2);
+ assert.equal(horasPermiso(e,p.inicio,{...p,hora_inicio:'12:00',hora_fin:'13:00'}),0);
+ assert.equal(horasReconocidas(e,p.inicio,6),2);
+ assert.equal(horasReconocidas(e,p.inicio,6,[{fecha:p.inicio,desde:780,hasta:840}]),1);
+ assert.equal(horasReconocidas({...e,permisos:[{...p,descontar:true}]},p.inicio,6),0);
+ assert.equal(permisoCubreTramo(e,p.inicio,Date.parse(p.inicio+'T13:00:00-05:00'),Date.parse(p.inicio+'T15:00:00-05:00')),true);
+ assert.deepEqual(filasReportePermisos([p],()=>e)[1].slice(-2),['13:00','15:00']);
+ const nocturno={jornadaDias:{'1':{entrada:'22:00',salida:'06:00'}}};
+ assert.equal(horasPermiso(nocturno,p.inicio,{...p,inicio:'2026-09-29',fin:'2026-09-29',hora_inicio:'02:00',hora_fin:'04:00'}),2);
+});
+
+await test('asistencia muestra incapacidad sin marcaciones y en días libres; excluye anuladas',async()=>{
+ const {registroPermisoDelDia,permisoDelDia}=await import('../lib/permisos.js');
+ const registro={tipo:'incapacidad',inicio:'2026-10-09',fin:'2026-10-21'};
+ const persona={jornadaDias:{},permisos:[registro]};
+ assert.equal(registroPermisoDelDia(persona,'2026-10-09'),registro);
+ assert.equal(registroPermisoDelDia(persona,'2026-10-21'),registro);
+ assert.equal(permisoDelDia(persona,'2026-10-09'),null);
+ assert.equal(registroPermisoDelDia(persona,'2026-10-22'),null);
+ assert.equal(registroPermisoDelDia({...persona,permisos:[{...registro,anulado_en:'2026-10-10'}]},'2026-10-10'),null);
+});
+
+await test('cancelar API por empresa conserva el acceso y la cortesía de las demás funciones',async()=>{
+ const {apiHabilitada,tieneAcceso,puedeEscribir}=await import('../lib/empresas.js');
+ const empresa={estado:'activa',cortesia:true,api_suspendida:true};
+ assert.equal(apiHabilitada(empresa),false);
+ assert.equal(tieneAcceso(empresa),true);
+ assert.equal(puedeEscribir(empresa),true);
+ assert.equal(apiHabilitada({...empresa,api_suspendida:false}),true);
+});
+
+
 
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);

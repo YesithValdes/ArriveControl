@@ -17,7 +17,8 @@ import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../lib/sesion'
 export const runtime = 'nodejs'
 
 export async function GET() {
-  const { estado, empresa } = await estadoAcceso('cuenta')
+  // Leer los datos de la empresa: el dueño, o un Invitado con seguridad:ver.
+  const { estado, empresa } = await estadoAcceso('cuenta', { permisoInvitado: 'seguridad:ver' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   const { actuales, limite } = await cabeOtroEmpleado(empresa)

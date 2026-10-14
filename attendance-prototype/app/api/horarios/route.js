@@ -24,7 +24,7 @@ export async function GET(req) {
     if (!empresa) return NextResponse.json({ ok: false, error }, { status })
     ctx = { esquema: empresa.esquema }
   } else {
-    ctx = await empresaDeLaPeticion(req)
+    ctx = await empresaDeLaPeticion(req, 'ver', 'panel:ver')
   }
   if (!ctx) {
     return NextResponse.json({ ok: false, error: 'Sin acceso.' }, { status: 401 })
@@ -36,7 +36,7 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
-  const { estado, esquema } = await estadoAcceso('config')
+  const { estado, esquema } = await estadoAcceso('config', { permisoInvitado: 'horarios:crear' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   let c

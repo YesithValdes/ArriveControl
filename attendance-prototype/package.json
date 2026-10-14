@@ -5,9 +5,12 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "dev:https": "next dev --experimental-https -p 3001",
+    "dev:celular": "set NEXT_DIST_DIR=.next-celular&& next dev --experimental-https -H 0.0.0.0 -p 3002",
     "build": "next build",
+    "build:check": "node scripts/build-check.mjs",
     "start": "next start",
-    "test": "node tests/run-tests.mjs",
+    "test": "node tests/run-tests.mjs && node tests/cifrado.mjs",
+    "test:permisos-invitado": "node tests/permisos-invitado-individuales.mjs",
     "apk": "node scripts/empaquetar-modelos.mjs",
     "iconos": "node scripts/generar-iconos.mjs"
   },
@@ -21,7 +24,7 @@
     "colombian-holidays": "^5.0.11",
     "next": "^15.3.0",
     "nodemailer": "^9.0.5",
-    "onnxruntime-web": "^1.29.0",
+    "onnxruntime-web": "1.30.0",
     "pg": "^8.22.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

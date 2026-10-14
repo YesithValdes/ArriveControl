@@ -66,10 +66,10 @@ export async function POST(req) {
     return NextResponse.json({ ok: false, error: 'Correo inválido.' }, { status: 400 })
   }
   // Con qué rol entrará. Solo el dueño invita (permiso `usuarios`), y puede
-  // dar cualquiera de los tres roles de empresa.
+  // dar cualquiera de los cuatro roles de empresa.
   const rol = c?.rol ?? 'consulta'
   if (!esRolDeEmpresa(rol)) {
-    return NextResponse.json({ ok: false, error: 'El rol debe ser propietario, administrador o consulta.' }, { status: 400 })
+    return NextResponse.json({ ok: false, error: 'El rol debe ser propietario, administrador, consulta o invitado.' }, { status: 400 })
   }
   // Los accesos al panel se venden con el plan.
   const cupo = await cabeOtroUsuario(empresa)

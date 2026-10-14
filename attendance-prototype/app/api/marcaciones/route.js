@@ -31,7 +31,7 @@ export async function POST(req) {
   // De qué empresa es esta marcación. Sale de la clave del dispositivo, o de
   // la sesión cuando marca el administrador desde su celular. Sin empresa no
   // hay dónde escribirla: ya no existe una única tabla de marcaciones.
-  const ctx = await empresaDeLaPeticion(req, 'corregir')
+  const ctx = await empresaDeLaPeticion(req, 'corregir', 'marcaciones:crear')
   if (!ctx) {
     return NextResponse.json(
       { ok: false, error: 'DISPOSITIVO_NO_ACTIVADO', detalle: 'Este dispositivo no está activado. Actívalo desde la pantalla del kiosco con una sesión de administrador.' },
@@ -111,11 +111,16 @@ export async function POST(req) {
 }
 
 export async function GET(req) {
-  const { estado, esquema } = await estadoAcceso('ver')
+  const { searchParams } = new URL(req.url)
+  // Sin filtro es la carga base con la que se arma cualquier vista del panel
+  // (dashboard, asistencia, anomalías, reportes). Pedir las de UNA persona es
+  // ver su detalle: un Invitado necesita marcaciones:ver.
+  const { estado, esquema } = await estadoAcceso('ver', {
+    permisoInvitado: searchParams.get('empleado_id') ? 'marcaciones:ver' : 'panel:ver',
+  })
   if (estado !== 'OK') {
     return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
   }
-  const { searchParams } = new URL(req.url)
   // Sincronización incremental del panel: solo lo que cambió desde la última
   // vez (ver lib/marcaciones.js). Parámetro NUEVO y opcional — sin él, el
   // comportamiento de siempre (?desde=/?hasta=/?empleado_id=) no cambia.

@@ -29,13 +29,16 @@ const LATE_TOLERANCE_MIN = 180;        // 3 h después de su hora de entrada
 // ── Store en memoria ──────────────────────────────────────────────────
 const store = {
   events: [],       // forma journeyService: {id, personId, personName, sede, type, ts, flag, correctedBy}
+  permisos: [],
+  historialPermisos: [],
+  registrosPermisos: [],
   people: [],       // forma rosterService: {id, name, cedula, sede, expectedEntry, expectedExit, breakMinutes, createdAt, activo}
   sedes: [],        // forma sedesService: {id, name, lat, lon, radius}
   horarios: [],     // plantillas POR DÍAS: {id, nombre, dias: {"0".."6": {entrada, salida, almuerzoMin}}}
   cfg: {
     weeklyHours: 42, graceMinutes: 15, holidays: [],
     factores: FACTORES_DEFECTO, divisorHorasMes: DIVISOR_DEFECTO,
-    nocturnoInicio: '21:00', nocturnoFin: '06:00', modoExtra: 'semana', extraMinimaMin: 30, periodoPago: 'quincena',
+    nocturnoInicio: '21:00', nocturnoFin: '06:00', modoExtra: 'semana', extraMinimaMin: 30, salidaTardeMin: null, descansoMin: 60, descansoToleranciaMin: 10, periodoPago: 'quincena',
     resumenCorreo: true, resumenApi: true,
   },
   audit: [],        // correcciones crudas (para trazabilidad extendida)
@@ -300,12 +303,15 @@ export function marcarNovedades(eventos, personaPorId) {
  * `refrescarCatalogosSiVencio`). Reusada por `syncPanel` (carga inicial) y
  * por el refresco ligero.
  */
-function aplicarCatalogos({ emp, sed, cfg, corr, hor }) {
+function aplicarCatalogos({ emp, sed, cfg, corr, hor, per }) {
   store.sedes = sed.sedes.map((s) => ({ id: s.id, name: s.nombre, lat: s.lat, lon: s.lon, radius: s.radio_m }));
   store.horarios = hor.horarios.map((h) => ({
     id: h.id, nombre: h.nombre, dias: diasACliente(h.dias),
   }));
 
+  store.permisos = per.permisos;
+  store.historialPermisos = per.historial;
+  store.registrosPermisos = per.registros;
   store.people = emp.empleados.map((e) => ({
     id: e.id,
     name: e.nombre,
@@ -323,6 +329,8 @@ function aplicarCatalogos({ emp, sed, cfg, corr, hor }) {
     jornadaSemanal: e.jornada_semanal ?? null, // [lun..sáb] o null = estándar
     // numeric de Postgres viaja como texto; null = sin registrar (opcional).
     salarioMensual: e.salario_mensual == null ? null : Number(e.salario_mensual),
+    permisos: store.permisos.filter(p => p.empleado_id === e.id),
+    permisosHistorial: store.registrosPermisos.filter(p => p.empleado_id === e.id),
     createdAt: e.creado_en,
     activo: e.activo,
     tieneRostro: e.tiene_rostro,
@@ -340,6 +348,11 @@ function aplicarCatalogos({ emp, sed, cfg, corr, hor }) {
     // para que los cálculos del panel no se rompan.
     weeklyHours: cfg.config.horas_semana ?? 42,
     graceMinutes: cfg.config.gracia_min,
+    // Tolerancia de la anomalía «Salida tardía»; null = la de fábrica.
+    salidaTardeMin: cfg.config.salida_tarde_min ?? null,
+    // Descanso con que nace un horario nuevo, y su tolerancia (solo avisos).
+    descansoMin: cfg.config.descanso_min ?? 60,
+    descansoToleranciaMin: cfg.config.descanso_tolerancia_min ?? 10,
     holidays: (cfg.config.festivos ?? []).map((f) => String(f).slice(0, 10)),
     // Valorización: cómo se paga cada tipo de hora extra.
     factores: cfg.config.factores_hora ?? FACTORES_DEFECTO,
@@ -372,7 +385,7 @@ function aplicarMarcaciones(marcaciones, servidorEn) {
 export async function syncPanel() {
   // Rango: últimos 60 días — suficiente para dashboard, reportes y anomalías.
   const desde = bogotaDay(new Date(Date.now() - 60 * 24 * 3600000).toISOString());
-  const [marc, emp, sed, cfg, corr, hor] = await Promise.all([
+  const [marc, emp, sed, cfg, corr, hor, per] = await Promise.all([
     api(`/api/marcaciones?desde=${desde}`),
     // Con inactivos: los ARCHIVADOS también viajan al panel (para verlos y
     // reactivarlos). listPeople() sigue filtrando solo activos, así que el
@@ -382,9 +395,10 @@ export async function syncPanel() {
     api('/api/config'),
     api('/api/correcciones'),
     api('/api/horarios'),
+    api('/api/permisos'),
   ]);
 
-  aplicarCatalogos({ emp, sed, cfg, corr, hor });
+  aplicarCatalogos({ emp, sed, cfg, corr, hor, per });
   aplicarMarcaciones(marc.marcaciones, marc.servidorEn);
   store.cargado = true;
   return store;
@@ -397,14 +411,15 @@ export async function syncPanel() {
  * sede, horario…) que cambie alguno de estos catálogos.
  */
 export async function refrescarCatalogos() {
-  const [emp, sed, cfg, corr, hor] = await Promise.all([
+  const [emp, sed, cfg, corr, hor, per] = await Promise.all([
     api('/api/empleados?inactivos=1'),
     api('/api/sedes'),
     api('/api/config'),
     api('/api/correcciones'),
     api('/api/horarios'),
+    api('/api/permisos'),
   ]);
-  aplicarCatalogos({ emp, sed, cfg, corr, hor });
+  aplicarCatalogos({ emp, sed, cfg, corr, hor, per });
 }
 
 /**
@@ -477,8 +492,10 @@ export const panelCargado = () => store.cargado;
  * primero.
  */
 export function listCorrecciones() {
-  return [...store.audit].sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+  return [...store.audit, ...store.historialPermisos].sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
 }
+
+export const listPermisosHistorial = () => [...store.registrosPermisos];
 
 export function listJourneyEvents() {
   return [...store.events].sort((a, b) => b.ts.localeCompare(a.ts));
@@ -735,6 +752,9 @@ export function saveLaborConfig(partial, alFallar = null) {
   store.cfg = { ...store.cfg, ...partial };
   const body = {};
   if ('graceMinutes' in partial) body.gracia_min = partial.graceMinutes;
+  if ('descansoMin' in partial) body.descanso_min = Number(partial.descansoMin);
+  if ('descansoToleranciaMin' in partial) body.descanso_tolerancia_min = Number(partial.descansoToleranciaMin);
+  if ('salidaTardeMin' in partial) body.salida_tarde_min = partial.salidaTardeMin == null ? null : Number(partial.salidaTardeMin);
   if ('weeklyHours' in partial) body.horas_semana = partial.weeklyHours;
   if ('holidays' in partial) body.festivos = partial.holidays;
   if ('modoExtra' in partial) body.modo_extra = partial.modoExtra;
@@ -805,4 +825,18 @@ export async function marcarHorasPagadas(referencias, pagado) {
 export async function getEventosRango(desde, hasta) {
   const d = await api(`/api/marcaciones?desde=${desde}&hasta=${hasta}`);
   return construirEventos(d.marcaciones ?? []);
+}
+
+export async function guardarPermiso(empleadoId,datos,soporte) {
+ const body=new FormData()
+ body.set('empleado_id',empleadoId)
+ for(const [k,v] of Object.entries(datos)) body.set(k,String(v))
+ if(soporte) body.set('soporte',soporte)
+ const r=await fetch('/api/permisos',{method:'POST',body})
+ const j=await r.json()
+ if(!r.ok||!j.ok) throw new Error(j.error??'No se pudo guardar.')
+ return j.permiso
+}
+export async function anularPermiso(id) {
+ return api('/api/permisos/'+encodeURIComponent(id),{method:'DELETE'})
 }

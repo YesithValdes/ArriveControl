@@ -17,11 +17,12 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { control, conEmpresa, enTransaccion } from './db.js'
 import { planPorId, DIAS_PRUEBA } from './planes.js'
+import { cifradoConfigurado, crearLlaveEmpresa } from './llaves.js'
 
 const sha256 = (s) => createHash('sha256').update(s).digest('hex')
 
 /** Columnas que necesita cualquiera que resuelva una empresa. */
-const CAMPOS = `id, nombre, nit, esquema, plan, limite_empleados, limite_usuarios, estado, api_key, dominio, vence_en, prueba_hasta, plan_id, bienvenida_en, cortesia, laboratorio_facial`
+const CAMPOS = `id, nombre, nit, esquema, plan, limite_empleados, limite_usuarios, estado, api_key, api_suspendida, dominio, vence_en, prueba_hasta, plan_id, bienvenida_en, cortesia, laboratorio_facial, permisos_invitado`
 
 /**
  * ¿El superadmin le habilitó a esta empresa la evaluación de modelos
@@ -111,7 +112,7 @@ export const enPrueba = (empresa) =>
  * ¿Puede usar la API (X-API-Key)? Es un beneficio de los planes PAGOS: la
  * prueba no la incluye, y una suscripción vencida la pierde hasta renovar.
  */
-export const apiHabilitada = (empresa) => suscripcionVigente(empresa)
+export const apiHabilitada = (empresa) => empresa?.api_suspendida !== true && suscripcionVigente(empresa)
 
 export const MENSAJE_API_SIN_PLAN =
   'La API está incluida en los planes pagos. Suscríbete o renueva desde Ajustes → Plan para usarla.'
@@ -126,6 +127,7 @@ export const MENSAJE_API_SIN_PLAN =
 export async function empresaDeApiKey(clave) {
   const empresa = await empresaPorApiKey(clave)
   if (!empresa) return { empresa: null, status: 401, error: 'Clave de API inválida.' }
+  if (empresa.api_suspendida === true) return { empresa: null, status: 403, error: 'El acceso por API está cancelado para esta empresa.' }
   if (!apiHabilitada(empresa)) return { empresa: null, status: 402, error: MENSAJE_API_SIN_PLAN }
   return { empresa, status: 200, error: null }
 }
@@ -318,6 +320,16 @@ export async function crearEmpresa({ nombre, nit = null, dominio = null, esquema
       await db.query(
         `insert into ${elegido}._migraciones (archivo) values ($1)`, [m.archivo],
       )
+    }
+
+    // Su DEK nace con ella, en la misma transacción. Si el servidor todavía
+    // no tiene llave maestra, la empresa nace igual — un alta rota por una
+    // variable sin configurar sería peor — y la DEK se le crea en su primer
+    // uso (lib/llaves.js) o con `node db/llaves.mjs provisionar`.
+    if (cifradoConfigurado()) {
+      await crearLlaveEmpresa(db, rows[0].id)
+    } else {
+      console.warn(`Alta de empresa ${rows[0].id} sin DEK: falta ARRIVE_LLAVE_MAESTRA.`)
     }
     return rows[0]
   })

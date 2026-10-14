@@ -24,7 +24,7 @@ export const runtime = 'nodejs'
 const MAX_REFERENCIAS = 5000
 
 export async function POST(req) {
-  const { esquema, quien, error } = await accesoHoras(req, 'liquidar')
+  const { esquema, quien, error } = await accesoHoras(req, 'liquidar', 'cierres:pagos')
   if (error) return error
 
   let c
