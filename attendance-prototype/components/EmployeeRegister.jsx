@@ -93,6 +93,17 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
   // cargado): el formulario se pinta completo de una, y la red solo refresca.
   const [sedes, setSedes] = useState(() => getSedes());
   const [sede, setSede] = useState('');
+  // Áreas: solo aparecen si la empresa tiene y quien registra puede asignarlas.
+  const [areasDisp, setAreasDisp] = useState([]);
+  const [areas, setAreas] = useState([]);
+  useEffect(() => {
+    const abort = new AbortController();
+    fetch('/api/equipos', { signal: abort.signal, cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.ok && d.puedeAsignar) setAreasDisp(d.equipos.filter((a) => a.activa !== false)); })
+      .catch(() => {});
+    return () => abort.abort();
+  }, []);
   // Limitar: con sede, solo puede marcar en ella. Validar: sin sede, se
   // registra la ubicación GPS de cada marcación.
   const [validarSede, setValidarSede] = useState(false);
@@ -246,7 +257,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
       descriptoresV2: fotos.map((f) => f.descriptorV2 ?? null),
       cedula: cedulaLimpia,
       correo: correo.trim().toLowerCase() || null,
-      sede, validarSede, validarUbicacion, jornadaDias,
+      sede, validarSede, validarUbicacion, jornadaDias, areas,
       // Vacío o 0 = sin salario registrado, no un sueldo de cero.
       salarioMensual: Number(salarioMensual) > 0 ? Number(salarioMensual) : null,
     });
@@ -258,6 +269,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
     setCedula('');
     setCorreo('');
     setSalarioMensual('');
+    setAreas([]);
     fotos.forEach((f) => f.previewUrl && URL.revokeObjectURL(f.previewUrl));
     setFotos([]);
     setStatus('✅ Registrado. Puedes agregar otro.');
@@ -356,6 +368,27 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
             </div>
           </div>
         </div>
+
+        {areasDisp.length > 0 && (
+          <div className="regf-campo">
+            <span className="regf-etq" id="rf-areas">Áreas <small className="regf-hint">opcional · puede estar en varias</small></span>
+            <div className="regf-areas" role="group" aria-labelledby="rf-areas">
+              {areasDisp.map((a) => {
+                const elegida = areas.includes(a.id);
+                return (
+                  <button
+                    type="button" key={a.id} aria-pressed={elegida}
+                    className={`regf-area${elegida ? ' elegida' : ''}`}
+                    onClick={() => setAreas((prev) => (elegida ? prev.filter((id) => id !== a.id) : [...prev, a.id]))}
+                  >
+                    <span className="regf-area-punto" style={{ background: a.color }} aria-hidden="true" />
+                    {a.nombre}{elegida ? ' ✓' : ''}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="regf-campo">
           <label htmlFor="rf-horario">Horario</label>
@@ -560,7 +593,12 @@ const FORM_CSS = `
 .regf-fila.tres { grid-template-columns: 1fr 1fr .8fr; }
 
 .regf-campo { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.regf-campo > label { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.regf-campo > label, .regf-etq { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.regf-etq .regf-hint { display: inline; margin: 0 0 0 4px; font-weight: 400; }
+.regf-areas { display: flex; flex-wrap: wrap; gap: 6px; }
+.regf-area { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.regf-area.elegida { background: var(--accent-soft); border-color: var(--accent); font-weight: 600; }
+.regf-area-punto { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .regf-campo input, .regf-campo select {
   font: inherit; font-size: 14.5px; width: 100%;
   padding: 10px 12px; border-radius: 9px;

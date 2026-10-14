@@ -9,7 +9,7 @@
     "build": "next build",
     "build:check": "node scripts/build-check.mjs",
     "start": "next start",
-    "test": "node tests/run-tests.mjs && node tests/cifrado.mjs",
+    "test": "node tests/run-tests.mjs && node tests/cifrado.mjs && node tests/detalle-jornada.mjs && node tests/equipos.mjs",
     "test:permisos-invitado": "node tests/permisos-invitado-individuales.mjs",
     "apk": "node scripts/empaquetar-modelos.mjs",
     "iconos": "node scripts/generar-iconos.mjs"

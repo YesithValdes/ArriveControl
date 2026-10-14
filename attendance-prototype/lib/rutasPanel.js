@@ -30,6 +30,7 @@ export const RUTAS_PANEL = {
   'cfg-usuarios': 'ajustes/usuarios',
   'cfg-seguridad': 'ajustes/seguridad',
   'cfg-sedes': 'ajustes/sedes',
+  equipos: 'equipos',
   'cfg-dispositivos': 'ajustes/dispositivos',
   'cfg-reglamento': 'ajustes/reglamento',
   // Correo y/o API del resumen de cada noche (antes, dentro del reglamento).
@@ -86,6 +87,8 @@ export function puedeAbrirSeccion(tab, permisos = {}) {
   if (['cfg-empresa', 'cfg-plan'].includes(tab)) return permisos.cuenta === true
   if (tab === 'cfg-usuarios') return permisos.usuarios === true
   if (tab === 'cfg-seguridad') return permisos.seguridad === true
+  // Áreas: el Invitado según su lista; los demás roles, con permiso de configuración.
+  if (tab === 'equipos') return Array.isArray(permisos.lista) ? permisos.lista.includes('equipos:ver') : permisos.config === true
   if (tab === 'ajustes') return Boolean(permisos.config || permisos.usuarios || permisos.cuenta || permisos.seguridad)
   if (['horarios', 'cfg-sedes', 'cfg-dispositivos', 'cfg-reglamento', 'cfg-resumen', 'cfg-nomina', 'cfg-simulador', 'cfg-gps'].includes(tab)) return permisos.config === true
   return false

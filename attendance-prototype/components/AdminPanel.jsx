@@ -58,6 +58,7 @@ import { getDeviceKey } from '../services/kioskoApi.js';
 import PermisosInvitadoModal from './PermisosInvitadoModal.jsx';
 import ColillaPago from './ColillaPago.jsx';
 import DetalleJornada from './DetalleJornada.jsx';
+import EquiposPanel from './EquiposPanel.jsx';
 
 /** Iconos de línea (estilo Lucide, inline SVG): heredan el color del texto. */
 function Icon({ name, size = 17 }) {
@@ -1943,7 +1944,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       setRepRecarga((n) => n + 1);
     } finally { setCerrando(false); }
   };
-  // Comprobante de pago abierta: { name, cedula } de la fila, o null.
+  // Colilla de pago abierta: { name, cedula } de la fila, o null.
   const [colillaDe, setColillaDe] = useState(null);
   const puedeColillas = Boolean(permisos.liquidar) && puedeInv('cierres:colillas');
 
@@ -2578,6 +2579,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     // Infraestructura al PRIMER nivel: sedes y dispositivos se usan lo
     // suficiente como para no esconderlos dentro de Ajustes.
     { id: 'cfg-sedes', icon: 'pin', label: 'Sedes', grupo: 'Sedes y equipos' },
+    { id: 'equipos', icon: 'users', label: 'Áreas', grupo: 'Sedes y equipos' },
     { id: 'cfg-dispositivos', icon: 'monitor', label: 'Dispositivos', alAbrir: cargarDispositivos, grupo: 'Sedes y equipos' },
     { id: 'reportes', icon: 'file', label: 'Reportes', grupo: 'Informes' },
     { id: 'historial', icon: 'history', label: 'Historial', grupo: 'Informes' },
@@ -3970,8 +3972,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                 {puedeColillas && (
                                   <button
                                     className="btn small btn-ico rep-colilla"
-                                    title={`Comprobante de pago de ${nombreCorto(r.name)}: generar o consultar`}
-                                    aria-label={`Comprobante de pago de ${r.name}`}
+                                    title={`Colilla de pago de ${nombreCorto(r.name)}: generar o consultar`}
+                                    aria-label={`Colilla de pago de ${r.name}`}
                                     onClick={() => setColillaDe({ name: r.name, cedula: r.cedula })}
                                   >
                                     <Icon name="file" size={14} />
@@ -4066,8 +4068,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                   {puedeColillas && (
                                     <button
                                       className="btn small btn-ico rep-colilla"
-                                      title={`Comprobante de pago de ${nombreCorto(e.name)}: generar o consultar`}
-                                      aria-label={`Comprobante de pago de ${e.name}`}
+                                      title={`Colilla de pago de ${nombreCorto(e.name)}: generar o consultar`}
+                                      aria-label={`Colilla de pago de ${e.name}`}
                                       onClick={() => setColillaDe({ name: e.name, cedula: e.cedula, desde: p.desde, hasta: p.hasta })}
                                     >
                                       <Icon name="file" size={14} />
@@ -5525,6 +5527,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           </section>
         )}
 
+        {tab === 'equipos' && <EquiposPanel permisos={permisos} revision={tick} avisar={showToast} />}
         {/* ── Sub-pantalla: CRUD de sedes ── */}
         {tab === 'cfg-sedes' && (
           <section className="card grow">

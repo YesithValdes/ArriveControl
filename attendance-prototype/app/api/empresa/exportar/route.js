@@ -20,6 +20,8 @@ export const runtime = 'nodejs'
 /** Tablas que se exportan, con las columnas que salen (ninguna biométrica). */
 const TABLAS = {
   sedes: 'id, nombre, lat, lon, radio_m, creada_en',
+  equipos: 'id, nombre, descripcion, responsable_id, activa, color, creado_en',
+  equipo_miembros: 'equipo_id, empleado_id',
   empleados: `id, nombre, cedula, sede_id, entrada_esperada, salida_esperada,
               almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo, creado_en`,
   marcaciones: 'id, empleado_id, tipo, ts, sede_id, origen, eliminada, creada_en',

@@ -1,6 +1,6 @@
 'use client';
 /**
- * components/ColillaPago.jsx — Comprobante de pago (desprendible de HORAS) de un
+ * components/ColillaPago.jsx — Colilla de pago (desprendible de HORAS) de un
  * colaborador: generar la del período que se está viendo en Reportes y
  * consultar las guardadas. Las cifras las calcula y congela el servidor
  * (POST /api/colillas); aquí solo se muestran y se imprimen.
@@ -20,7 +20,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 function htmlColilla(c, empresa) {
   const d = c.datos;
   const filas = d.tipos.map((t) => `<tr><td>${esc(t.nombre)} <small>(${esc(t.codigo)})</small></td><td class="n">${fmtH(t.horas)}</td><td class="n">${t.horas > 0 ? fmtCOP(t.valor) : '—'}</td></tr>`).join('');
-  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Comprobante de pago ${esc(c.nombre)} ${c.desde} a ${c.hasta}</title>
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Colilla de pago ${esc(c.nombre)} ${c.desde} a ${c.hasta}</title>
 <style>
   body { font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #111; margin: 32px; }
   h1 { font-size: 16px; margin: 0 0 2px; } .sub { color: #555; margin: 0 0 16px; }
@@ -31,8 +31,8 @@ function htmlColilla(c, empresa) {
   tfoot td { font-weight: 700; border-top: 2px solid #111; border-bottom: 0; }
   small { color: #666; } .nota { color: #555; font-size: 11.5px; margin-top: 18px; }
 </style></head><body>
-<div class="cab"><div><h1>Comprobante de pago · horas</h1><p class="sub">${esc(empresa ?? '')}</p></div>
-<div style="text-align:right"><b>${fmtFecha(c.desde)} – ${fmtFecha(c.hasta)}</b><br><small>Generado el ${fmtMomento(c.generadaEn)}</small></div></div>
+<div class="cab"><div><h1>Colilla de pago · horas</h1><p class="sub">${esc(empresa ?? '')}</p></div>
+<div style="text-align:right"><b>${fmtFecha(c.desde)} – ${fmtFecha(c.hasta)}</b><br><small>Generada el ${fmtMomento(c.generadaEn)}</small></div></div>
 <p><b>${esc(c.nombre)}</b><br>CC ${esc(c.documento ?? '—')}${d.sede ? ` · ${esc(d.sede)}` : ''}</p>
 <table><tbody>
 <tr><td>Días trabajados</td><td class="n">${d.trabajado.dias}</td></tr>
@@ -84,8 +84,8 @@ export default function ColillaPago({ persona, desde, hasta, empresa, onCerrar, 
       if (!r.ok || !d.ok) throw new Error(d.error || `El servidor respondió ${r.status}`);
       setColillas((cs) => [d.colilla, ...(cs ?? [])]);
       setElegida(d.colilla);
-      avisar?.('Comprobante de pago generado y guardado');
-    } catch (e) { avisar?.('No se pudo generar el comprobante de pago: ' + e.message); }
+      avisar?.('Colilla de pago generada y guardada');
+    } catch (e) { avisar?.('No se pudo generar la colilla de pago: ' + e.message); }
     finally { setGenerando(false); }
   };
 
@@ -105,17 +105,17 @@ export default function ColillaPago({ persona, desde, hasta, empresa, onCerrar, 
     <div className="overlay" onClick={(e) => e.target === e.currentTarget && onCerrar()}>
       <div className="dialog colilla" role="dialog" aria-modal="true" aria-labelledby="colilla-titulo">
         <style>{CSS}</style>
-        <h3 id="colilla-titulo">Comprobante de pago · {persona.name}</h3>
-        <p className="hint">Comprobante de horas del colaborador. Al generarlo se guarda tal cual: después se consulta igual aunque cambien salarios o reglas.</p>
+        <h3 id="colilla-titulo">Colilla de pago · {persona.name}</h3>
+        <p className="hint">Comprobante de horas del colaborador. Al generarla se guarda tal cual: después se consulta igual aunque cambien salarios o reglas.</p>
 
         <div className="colilla-acciones">
           <button className="btn primary" onClick={generar} disabled={generando}>
             {generando ? 'Generando…' : `Generar ${fmtFecha(desde)} – ${fmtFecha(hasta)}`}
           </button>
           {colillas?.length > 0 && (
-            <select className="sede-select" aria-label="Comprobantes de pago guardados" value={elegida?.id ?? ''}
+            <select className="sede-select" aria-label="Colillas de pago guardadas" value={elegida?.id ?? ''}
               onChange={(e) => setElegida(colillas.find((c) => c.id === e.target.value) ?? null)}>
-              <option value="">Consultar uno guardado…</option>
+              <option value="">Consultar una guardada…</option>
               {colillas.map((c) => (
                 <option key={c.id} value={c.id}>{fmtFecha(c.desde)} – {fmtFecha(c.hasta)} · {fmtMomento(c.generadaEn)}</option>
               ))}
@@ -125,13 +125,13 @@ export default function ColillaPago({ persona, desde, hasta, empresa, onCerrar, 
 
         {colillas === null && <p className="empty">Cargando…</p>}
         {error && <p className="empty">⚠ {error}</p>}
-        {colillas?.length === 0 && !error && !elegida && <p className="empty">Todavía no hay comprobantes de pago guardados de esta persona.</p>}
+        {colillas?.length === 0 && !error && !elegida && <p className="empty">Todavía no hay colillas de pago guardadas de esta persona.</p>}
 
         {elegida && (
           <div className="colilla-doc">
             <div className="colilla-cab">
               <div><b>{elegida.nombre}</b><br /><small>CC {elegida.documento ?? '—'}{d.sede ? ` · ${d.sede}` : ''}</small></div>
-              <div className="colilla-periodo"><b>{fmtFecha(elegida.desde)} – {fmtFecha(elegida.hasta)}</b><br /><small>Generado el {fmtMomento(elegida.generadaEn)}</small></div>
+              <div className="colilla-periodo"><b>{fmtFecha(elegida.desde)} – {fmtFecha(elegida.hasta)}</b><br /><small>Generada el {fmtMomento(elegida.generadaEn)}</small></div>
             </div>
             <div className="colilla-resumen">
               <div><small>Días trabajados</small><b>{d.trabajado.dias}</b></div>
@@ -154,7 +154,7 @@ export default function ColillaPago({ persona, desde, hasta, empresa, onCerrar, 
             <p className="colilla-estado">
               {d.cierre
                 ? <span className="chip good">Cerrado{d.cierre.cerradoEn ? ` el ${fmtMomento(d.cierre.cerradoEn)}` : ''}</span>
-                : <span className="chip warn">Abierto al generarlo: cifras de ese momento</span>}
+                : <span className="chip warn">Abierto al generarla: cifras de ese momento</span>}
             </p>
           </div>
         )}

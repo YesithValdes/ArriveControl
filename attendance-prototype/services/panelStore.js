@@ -631,6 +631,7 @@ export async function addPerson(name, descriptor, extra = {}) {
         descriptores: extra.descriptores ?? undefined,
         descriptores_v2: extra.descriptoresV2 ?? undefined,
         autorizacion_datos: extra.autorizacionDatos,
+        areas: extra.areas?.length ? extra.areas : undefined,
       }),
     });
     return { id: d.empleado.id, name: d.empleado.nombre };

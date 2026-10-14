@@ -12,7 +12,7 @@
  */
 import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../lib/db.js'
-import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
+import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion, tienePermiso } from '../../../lib/sesion'
 import { cabeOtroEmpleado, empresaPorId, tieneAcceso } from '../../../lib/empresas.js'
 import { empresaDelEnlacePrueba } from '../../../lib/pruebaReconocimiento.js'
 import { validarDias } from '../../../lib/horariosDias.js'
@@ -99,7 +99,7 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
-  const { estado, esquema, empresa } = await estadoAcceso('empleados', { permisoInvitado: 'colaboradores:crear' })
+  const { estado, esquema, empresa, usuario } = await estadoAcceso('empleados', { permisoInvitado: 'colaboradores:crear' })
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
 
   // Tope del plan gratuito. Se comprueba en el SERVIDOR, no en la pantalla, y
@@ -166,6 +166,16 @@ export async function POST(req) {
     return NextResponse.json({ ok: false, error: 'El salario mensual debe ser un número mayor que cero, o quedar vacío.' }, { status: 400 })
   }
 
+  // Áreas (opcional): ponerlo en una o varias desde el mismo registro. Pide el
+  // mismo permiso que editar un área desde su pantalla.
+  if (c?.areas != null && (!Array.isArray(c.areas) || c.areas.length > 50 || c.areas.some((id) => typeof id !== 'string' || !id || id.length > 100))) {
+    return NextResponse.json({ ok: false, error: 'Selecciona áreas válidas.' }, { status: 400 })
+  }
+  const areas = [...new Set(c?.areas ?? [])]
+  if (areas.length && !tienePermiso(usuario, 'config', empresa, 'equipos:editar')) {
+    return NextResponse.json({ ok: false, error: 'No tienes permiso para asignar áreas.' }, { status: 403 })
+  }
+
   try {
     const empleado = await conEmpresa(esquema, async (db) => {
       // Sin almuerzo explícito, el descanso de la empresa (Ajustes →
@@ -186,10 +196,15 @@ export async function POST(req) {
           [rows[0].id, listaRostros[i], listaV2[i]],
         )
       }
-      return { ...rows[0], rostros: listaRostros.length }
+      if (areas.length) {
+        const r = await db.query('insert into equipo_miembros (equipo_id, empleado_id) select id, $2 from equipos where id = any($1::text[])', [areas, rows[0].id])
+        if (r.rowCount !== areas.length) throw Object.assign(new Error('Una de las áreas ya no existe.'), { status: 400 })
+      }
+      return { ...rows[0], rostros: listaRostros.length, areas }
     })
     return NextResponse.json({ ok: true, empleado })
   } catch (e) {
+    if (e.status === 400) return NextResponse.json({ ok: false, error: e.message }, { status: 400 })
     if (e.code === '23505') {
       return NextResponse.json({ ok: false, error: 'Ya hay un empleado con esa cédula.' }, { status: 409 })
     }

@@ -160,6 +160,16 @@ export const MODULOS_INVITADO = [
     ],
   },
   {
+    clave: 'equipos', seccion: 'personas', etiqueta: 'Áreas de colaboradores',
+    ayuda: 'Crear áreas de trabajo (Marketing, Ventas, Soporte…) y administrar sus integrantes. Una persona puede pertenecer a varias áreas.',
+    acciones: [
+      { clave: 'ver', etiqueta: 'Ver áreas' },
+      { clave: 'crear', etiqueta: 'Crear áreas' },
+      { clave: 'editar', etiqueta: 'Editar áreas y sus integrantes' },
+      { clave: 'eliminar', etiqueta: 'Eliminar áreas', sensible: true },
+    ],
+  },
+  {
     clave: 'sedes', seccion: 'personas', etiqueta: 'Sedes',
     ayuda: 'Ubicaciones de la empresa y el radio dentro del que se puede marcar.',
     acciones: [
@@ -274,7 +284,7 @@ const ACCION_A_INVITADO = {
   corregir: ['marcaciones:crear', 'marcaciones:editar', 'marcaciones:eliminar'],
   empleados: ['colaboradores:crear', 'colaboradores:editar', 'colaboradores:eliminar', 'novedades:crear', 'novedades:eliminar', 'horarios:asignar'],
   config: ['horarios:crear', 'horarios:editar', 'horarios:eliminar', 'sedes:crear', 'sedes:editar', 'sedes:eliminar',
-    'dispositivos:crear', 'dispositivos:editar', 'dispositivos:eliminar', 'reglamento:editar', 'seguridad:exportar'],
+    'dispositivos:crear', 'dispositivos:editar', 'dispositivos:eliminar', 'reglamento:editar', 'seguridad:exportar', 'equipos:crear', 'equipos:editar', 'equipos:eliminar'],
   liquidar: ['cierres:cerrar', 'cierres:pagos', 'cierres:reabrir'],
   usuarios: [],
   cuenta: [],
