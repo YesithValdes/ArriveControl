@@ -40,6 +40,10 @@ const store = {
   },
   audit: [],        // correcciones crudas (para trazabilidad extendida)
   cargado: false,
+  // ── Sincronización incremental (ver refrescarMarcaciones) ────────────
+  marcacionesCrudas: [],       // filas tal como las devuelve la API, por id (sin las eliminadas)
+  ultimaSincMarcaciones: null, // cursor `servidorEn`: lo que viene DESPUÉS de esto no se ha visto
+  catalogosEn: 0,              // Date.now() de la última vez que se pidieron empleados/sedes/config/horarios/correcciones
 };
 
 const hhmm = (t) => (t ? String(t).slice(0, 5) : '');
@@ -208,33 +212,32 @@ async function api(url, opts = {}) {
  * esas marcaciones EXACTAMENTE igual que el resto del panel: si un reporte
  * marcara las llegadas tarde con otro criterio, dos pantallas dirían cosas
  * distintas de la misma persona el mismo día.
+ *
+ * El correo de quien corrigió viaja YA en la fila (`corregida_por`, de
+ * lib/marcaciones.js), no se cruza aparte con `correcciones`: así la
+ * insignia «corregido» queda bien aunque la corrección la haya hecho otro
+ * navegador y el panel no haya vuelto a pedir /api/correcciones todavía.
  */
-function construirEventos(marcaciones, correcciones = []) {
-  const correccionPorMarcacion = new Map();
-  for (const c of correcciones) {
-    if (c.marcacion_id && !correccionPorMarcacion.has(c.marcacion_id)) correccionPorMarcacion.set(c.marcacion_id, c);
-  }
-
-  const eventos = marcaciones.map((m) => {
-    const corr = correccionPorMarcacion.get(m.id);
-    return {
-      id: m.id,
-      personId: m.empleado_id,
-      personName: m.empleado_nombre,
-      sede: m.sede_nombre || '',
-      type: m.tipo === 'entrada' ? 'in' : 'out',
-      ts: m.ts,
-      flag: m.origen === 'manual' ? 'manual' : corr ? 'corrected' : null,
-      correctedBy: m.origen === 'manual' || corr ? (corr?.admin_email || 'admin') : null,
-      // Desde DÓNDE se marcó. Solo viene cuando el empleado tiene activado
-      // «validar ubicación»; sin eso el kiosco no retiene el punto.
-      lat: m.lat ?? null,
-      lon: m.lon ?? null,
-      precision: m.precision_m ?? null,
-      direccion: m.direccion ?? null,
-      tieneFoto: m.tiene_foto === true || m.tiene_foto === 't' || m.tiene_foto === 1,
-    };
-  });
+function construirEventos(marcaciones) {
+  const eventos = marcaciones.map((m) => ({
+    id: m.id,
+    personId: m.empleado_id,
+    personName: m.empleado_nombre,
+    sede: m.sede_nombre || '',
+    type: m.tipo === 'entrada' ? 'in' : 'out',
+    ts: m.ts,
+    flag: m.origen === 'manual' ? 'manual' : m.corregida_por ? 'corrected' : null,
+    correctedBy: m.origen === 'manual' || m.corregida_por ? (m.corregida_por || 'admin') : null,
+    // Desde DÓNDE se marcó. Solo viene cuando el empleado tiene activado
+    // «validar ubicación»; sin eso el kiosco no retiene el punto.
+    lat: m.lat ?? null,
+    lon: m.lon ?? null,
+    precision: m.precision_m ?? null,
+    direccion: m.direccion ?? null,
+    // Postgres puede devolver 't'/1 en vez de un boolean estricto según el
+    // driver: no basta con Boolean(), que da true para cualquier string no vacía.
+    tieneFoto: m.tiene_foto === true || m.tiene_foto === 't' || m.tiene_foto === 1,
+  }));
 
   return marcarNovedades(eventos, new Map(store.people.map((p) => [p.id, p])));
 }
@@ -291,22 +294,13 @@ export function marcarNovedades(eventos, personaPorId) {
   return eventos;
 }
 
-/** Descarga todo del servidor. Llamar al montar el panel y tras cada mutación. */
-export async function syncPanel() {
-  // Rango: últimos 60 días — suficiente para dashboard, reportes y anomalías.
-  const desde = bogotaDay(new Date(Date.now() - 60 * 24 * 3600000).toISOString());
-  const [marc, emp, sed, cfg, corr, hor] = await Promise.all([
-    api(`/api/marcaciones?desde=${desde}`),
-    // Con inactivos: los ARCHIVADOS también viajan al panel (para verlos y
-    // reactivarlos). listPeople() sigue filtrando solo activos, así que el
-    // resto del panel no cambia.
-    api('/api/empleados?inactivos=1'),
-    api('/api/sedes'),
-    api('/api/config'),
-    api('/api/correcciones'),
-    api('/api/horarios'),
-  ]);
-
+/**
+ * Empleados, sedes, config, horarios y correcciones: cambian poco, así que se
+ * piden APARTE de las marcaciones y con mucha menos frecuencia (ver
+ * `refrescarCatalogosSiVencio`). Reusada por `syncPanel` (carga inicial) y
+ * por el refresco ligero.
+ */
+function aplicarCatalogos({ emp, sed, cfg, corr, hor }) {
   store.sedes = sed.sedes.map((s) => ({ id: s.id, name: s.nombre, lat: s.lat, lon: s.lon, radius: s.radio_m }));
   store.horarios = hor.horarios.map((h) => ({
     id: h.id, nombre: h.nombre, dias: diasACliente(h.dias),
@@ -364,10 +358,114 @@ export async function syncPanel() {
   };
 
   store.audit = corr.correcciones;
+  store.catalogosEn = Date.now();
+}
 
-  store.events = construirEventos(marc.marcaciones, corr.correcciones);
+/** Reemplaza `store.marcacionesCrudas`/`events` y guarda el cursor para el próximo refresco. */
+function aplicarMarcaciones(marcaciones, servidorEn) {
+  store.marcacionesCrudas = marcaciones;
+  store.events = construirEventos(marcaciones);
+  store.ultimaSincMarcaciones = servidorEn;
+}
+
+/** Descarga todo del servidor. Llamar al montar el panel y tras cada mutación. */
+export async function syncPanel() {
+  // Rango: últimos 60 días — suficiente para dashboard, reportes y anomalías.
+  const desde = bogotaDay(new Date(Date.now() - 60 * 24 * 3600000).toISOString());
+  const [marc, emp, sed, cfg, corr, hor] = await Promise.all([
+    api(`/api/marcaciones?desde=${desde}`),
+    // Con inactivos: los ARCHIVADOS también viajan al panel (para verlos y
+    // reactivarlos). listPeople() sigue filtrando solo activos, así que el
+    // resto del panel no cambia.
+    api('/api/empleados?inactivos=1'),
+    api('/api/sedes'),
+    api('/api/config'),
+    api('/api/correcciones'),
+    api('/api/horarios'),
+  ]);
+
+  aplicarCatalogos({ emp, sed, cfg, corr, hor });
+  aplicarMarcaciones(marc.marcaciones, marc.servidorEn);
   store.cargado = true;
   return store;
+}
+
+/**
+ * Vuelve a pedir empleados/sedes/config/horarios/correcciones — NUNCA
+ * marcaciones (eso lo hace `refrescarMarcaciones`, por separado e incremental).
+ * Llamar tras una acción propia del admin (crear/editar empleado, corrección,
+ * sede, horario…) que cambie alguno de estos catálogos.
+ */
+export async function refrescarCatalogos() {
+  const [emp, sed, cfg, corr, hor] = await Promise.all([
+    api('/api/empleados?inactivos=1'),
+    api('/api/sedes'),
+    api('/api/config'),
+    api('/api/correcciones'),
+    api('/api/horarios'),
+  ]);
+  aplicarCatalogos({ emp, sed, cfg, corr, hor });
+}
+
+/**
+ * Lo mismo que `refrescarCatalogos`, pero solo si pasaron más de
+ * `minutosMax` desde la última vez (techo: cada 5-10 min como mucho). Para el
+ * sondeo periódico y el regreso a la pestaña, que no deben volver a bajar
+ * estos catálogos en cada vuelta — casi nunca cambian.
+ * @returns {Promise<boolean>} si de verdad se refrescaron
+ */
+export async function refrescarCatalogosSiVencio(minutosMax = 7) {
+  if (Date.now() - store.catalogosEn < minutosMax * 60000) return false;
+  await refrescarCatalogos();
+  return true;
+}
+
+/**
+ * Fusiona por `id`: inserta o actualiza cada cambio, y QUITA los que llegan
+ * con `eliminada`. Pura (no toca `store`) para poder probarla sin red.
+ * @param {Array} crudasActuales  lo que ya se tenía
+ * @param {Array} cambios         lo que devolvió `?cambiosDesde=...`
+ */
+export function fusionarMarcaciones(crudasActuales, cambios) {
+  const porId = new Map(crudasActuales.map((m) => [m.id, m]));
+  for (const m of cambios) {
+    if (m.eliminada) porId.delete(m.id);
+    else porId.set(m.id, m);
+  }
+  return [...porId.values()];
+}
+
+/**
+ * Sincronización INCREMENTAL de marcaciones: solo lo que cambió desde el
+ * último cursor (`store.ultimaSincMarcaciones`). Sin sincronización previa,
+ * no hay cursor del que partir — hace una carga completa (`syncPanel`).
+ *
+ * Fusiona por `id` en `store.marcacionesCrudas` (ver `fusionarMarcaciones`) y
+ * reconstruye `store.events` desde esa copia ya fusionada; nunca vuelve a
+ * descargar lo que no cambió.
+ * @returns {Promise<boolean>} si hubo cambios que pintar
+ */
+export async function refrescarMarcaciones() {
+  if (!store.ultimaSincMarcaciones) { await syncPanel(); return true; }
+  const d = await api(`/api/marcaciones?cambiosDesde=${encodeURIComponent(store.ultimaSincMarcaciones)}`);
+  if (!d.marcaciones.length) { store.ultimaSincMarcaciones = d.servidorEn; return false; }
+  aplicarMarcaciones(fusionarMarcaciones(store.marcacionesCrudas, d.marcaciones), d.servidorEn);
+  return true;
+}
+
+/**
+ * Lo que hace el panel en el sondeo periódico y al volver a la pestaña:
+ * SIEMPRE marcaciones incrementales (son las que llegan casi en vivo desde
+ * el kiosco), y los catálogos solo si ya vencieron. Pensada para no pedir
+ * nada que no cambió.
+ * @returns {Promise<boolean>} si hubo algo que repintar
+ */
+export async function refrescoLigero() {
+  const [huboMarcaciones, huboCatalogos] = await Promise.all([
+    refrescarMarcaciones(),
+    refrescarCatalogosSiVencio(),
+  ]);
+  return huboMarcaciones || huboCatalogos;
 }
 
 export const panelCargado = () => store.cargado;
@@ -432,7 +530,7 @@ export function listArchivados() {
 // (cédula, horario, correo…) se piden una sola vez en la vida.
 export const listarRostros = (id) => api(`/api/empleados/${id}/rostros`).then((d) => d.rostros);
 
-export async function agregarRostro(id, descriptor, { forzar = false, descriptorV2 = null } = {}) {
+export async function agregarRostro(id, descriptor, { forzar = false, descriptorV2 = null, autorizacionDatos = false } = {}) {
   try {
     // fetch directo (no api()): un 409 de colisión trae `choque` con el
     // nombre y la medida, y la pantalla lo necesita para ofrecer FORZAR.
@@ -441,7 +539,7 @@ export async function agregarRostro(id, descriptor, { forzar = false, descriptor
       headers: { 'Content-Type': 'application/json' },
       // descriptor_v2 (ArcFace): la misma foto produce ambos; el servidor lo
       // usa para el chequeo de colisión y el kiosco para decidir identidad.
-      body: JSON.stringify({ descriptor, descriptor_v2: descriptorV2, forzar }),
+      body: JSON.stringify({ descriptor, descriptor_v2: descriptorV2, forzar, autorizacion_datos: autorizacionDatos }),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || d.ok === false) return { error: d.error || `Error ${r.status}`, choque: d.choque ?? null };
@@ -515,6 +613,7 @@ export async function addPerson(name, descriptor, extra = {}) {
         descriptor_facial: descriptor,
         descriptores: extra.descriptores ?? undefined,
         descriptores_v2: extra.descriptoresV2 ?? undefined,
+        autorizacion_datos: extra.autorizacionDatos,
       }),
     });
     return { id: d.empleado.id, name: d.empleado.nombre };
@@ -705,7 +804,5 @@ export async function marcarHorasPagadas(referencias, pagado) {
  */
 export async function getEventosRango(desde, hasta) {
   const d = await api(`/api/marcaciones?desde=${desde}&hasta=${hasta}`);
-  // Las correcciones ya están en memoria y no dependen del rango: se reusan
-  // en vez de pedirlas otra vez (solo aportan el flag 'corrected').
-  return construirEventos(d.marcaciones ?? [], store.audit);
+  return construirEventos(d.marcaciones ?? []);
 }

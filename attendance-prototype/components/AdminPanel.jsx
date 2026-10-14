@@ -12,7 +12,7 @@ import Link from 'next/link';
 // Todos los datos vienen de POSTGRES vía API (services/panelStore.js), con
 // las mismas formas que los services locales que reemplaza.
 import {
-  syncPanel,
+  syncPanel, refrescoLigero,
   listJourneyEvents, listCorrecciones,
   addManualEvent,
   updateEventTime,
@@ -40,7 +40,7 @@ import { emparejarMarcas, tramosDeSemana, tramosDeDia } from '../lib/calculoHora
 // cerraron. Los festivos legales se calculan aquí igual que en el servidor.
 import { resumenSemana, lunesDe, domingoDe, EXTRA_MINIMA_H } from '../lib/semanaLaboral.js';
 import { getHolidaysForYear } from 'colombian-holidays';
-import { rutaDe, tabDeRuta } from '../lib/rutasPanel.js';
+import { rutaDe, tabDeRuta, puedeAbrirSeccion, seccionPermitida } from '../lib/rutasPanel.js';
 import { haversineDistance } from '../utils/haversine.js';
 import { signOut } from '../lib/auth-client';
 // Diagnóstico GPS embebido en Ajustes (la página /gps sigue existiendo).
@@ -626,7 +626,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // Cada pantalla tiene su propia dirección (/admin/empleados,
   // /admin/ajustes/sedes…). La inicial la resuelve el servidor desde la ruta;
   // aquí solo hay que mantenerlas sincronizadas.
-  const [tab, setTabEstado] = useState(seccionInicial);
+  const [tabActual, setTabEstado] = useState(() => seccionPermitida(seccionInicial, permisos));
+  const tab = seccionPermitida(tabActual, permisos);
 
   /**
    * Cambia de pantalla Y de dirección. Sustituye al `setTab` de antes, así que
@@ -645,28 +646,35 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   const pilaTabs = useRef([]);
 
   const setTab = useCallback((t) => {
+    t = seccionPermitida(t, permisos);
     setTabEstado((actual) => {
       if (actual !== t) pilaTabs.current.push(actual);
       return t;
     });
     if (typeof window !== 'undefined') window.history.pushState(null, '', rutaDe(t));
-  }, []);
+  }, [permisos]);
 
   /** Flecha «regresar»: vuelve a la última pantalla que la persona visitó. */
   const volverAtras = useCallback(() => {
     const previa = pilaTabs.current.pop();
     if (!previa) return;
-    setTabEstado(previa);
-    if (typeof window !== 'undefined') window.history.pushState(null, '', rutaDe(previa));
-  }, []);
+    const destino = seccionPermitida(previa, permisos);
+    setTabEstado(destino);
+    if (typeof window !== 'undefined') window.history.pushState(null, '', rutaDe(destino));
+  }, [permisos]);
 
   // Botón «atrás» y «adelante»: la dirección cambia sin pasar por `setTab`,
   // así que hay que volver a leerla.
   useEffect(() => {
-    const alVolver = () => setTabEstado(tabDeRuta(window.location.pathname));
+    const alVolver = () => {
+      const solicitada = tabDeRuta(window.location.pathname);
+      const destino = seccionPermitida(solicitada, permisos);
+      setTabEstado(destino);
+      if (destino !== solicitada) window.history.replaceState(null, '', rutaDe(destino));
+    };
     window.addEventListener('popstate', alVolver);
     return () => window.removeEventListener('popstate', alVolver);
-  }, []);
+  }, [permisos]);
   const [collapsed, setCollapsed] = useState(false); // menú lateral escondido (solo PC)
 
   /**
@@ -1192,7 +1200,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
    * la pestaña Empleados, como antes) porque desde Reportes se hace clic en
    * el nombre para llegar a los datos de esa persona.
    */
-  const openEdit = (p) => setEditEmp({
+  const openEdit = (p) => permisos.empleados && setEditEmp({
     id: p.id, name: p.name, cedula: p.cedula || '', correo: p.correo || '', sede: p.sede || '',
     validarSede: p.validarSede === true,
     validarUbicacion: p.validarUbicacion === true,
@@ -1266,45 +1274,73 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // semana en curso va abierta y las demás cerradas (solo su cabecera).
   const [semanasAbiertas, setSemanasAbiertas] = useState({});
   const semanaAbierta = (lunes) => semanasAbiertas[lunes] ?? (lunes === lunesDe(todayKey()));
-  // refresh = re-sincronizar desde Postgres y re-renderizar.
-  const refrescoRef = useRef({ activo: false, pendiente: false, montado: true });
-  const refresh = useCallback(async () => {
-    const estado = refrescoRef.current;
-    if (!estado.montado) return;
-    if (estado.activo) { estado.pendiente = true; return; }
-    estado.activo = true;
-    try {
-      do {
-        estado.pendiente = false;
-        await syncPanel();
-        if (!estado.montado) return;
-        setCfg(getLaborConfig());
-        setTick((t) => t + 1);
-      } while (estado.pendiente);
-    } catch (e) {
-      console.error('No se pudo sincronizar el panel:', e.message);
-    } finally {
-      estado.activo = false;
-    }
+  // refresh = re-sincronizar TODO desde Postgres y re-renderizar. Se usa en la
+  // carga inicial y después de una acción propia del admin (crear/editar
+  // empleado, corrección, sede, horario…): esos sí cambian los catálogos, y
+  // ocurren pocas veces, así que una descarga completa no pesa.
+  const refresh = () => {
+    syncPanel()
+      .then(() => { setCfg(getLaborConfig()); setTick((t) => t + 1); })
+      .catch((e) => console.error('No se pudo sincronizar el panel:', e.message));
+  };
+  // Sondeo/avisos: SOLO marcaciones incrementales (lo que cambió desde el
+  // último refresco) + catálogos si ya vencieron (panelStore.js). Antes el
+  // sondeo volvía a descargar meses de marcaciones, empleados y correcciones
+  // cada 10 s (y, en un intento posterior de mejorarlo, cada 5 s) con la
+  // pestaña oculta incluida — eso agotó el egress gratuito de Supabase. Ahora
+  // un refresco sin cambios pesa unos pocos KB, y una llamada que ya está en
+  // curso absorbe a la que llega detrás en vez de duplicar la petición.
+  const refrescoEnCursoRef = useRef(false);
+  const refrescoPendienteRef = useRef(false);
+  const refrescoSuave = useCallback(() => {
+    if (refrescoEnCursoRef.current) { refrescoPendienteRef.current = true; return; }
+    refrescoEnCursoRef.current = true;
+    refrescoLigero()
+      .then((huboCambios) => { if (huboCambios) { setCfg(getLaborConfig()); setTick((t) => t + 1); } })
+      .catch((e) => console.error('No se pudo refrescar el panel:', e.message))
+      .finally(() => {
+        refrescoEnCursoRef.current = false;
+        if (refrescoPendienteRef.current) { refrescoPendienteRef.current = false; refrescoSuave(); }
+      });
   }, []);
 
   useEffect(() => {
-    refrescoRef.current.montado = true;
+    refresh(); // carga inicial, completa, desde la API
+    // Dos avisos de que algo cambió, los dos resueltos con un refresco
+    // LIGERO (nunca con la descarga completa): el servidor por SSE (otro
+    // navegador, o el kiosco) y este mismo navegador justo después de
+    // guardar algo (api() dispara 'panel:cambio' tras cualquier POST/PATCH/
+    // DELETE — ver panelStore.js).
     const eventos = new EventSource('/api/eventos-panel');
-    const alCambiar = () => refresh();
-    eventos.addEventListener('cambio', alCambiar);
-    window.addEventListener('panel:cambio', alCambiar); // guardados desde este navegador
-    refresh();
-    // Además, refresco silencioso cada 5 s mientras la pestaña está visible.
-    const intervalo = setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 5000);
-    return () => {
-      refrescoRef.current.montado = false;
-      clearInterval(intervalo);
-      window.removeEventListener('panel:cambio', alCambiar);
-      eventos.removeEventListener('cambio', alCambiar);
-      eventos.close();
+    eventos.addEventListener('cambio', refrescoSuave);
+    window.addEventListener('panel:cambio', refrescoSuave);
+    // Red de seguridad por si SSE se corta: el intervalo se ARMA solo con la
+    // pestaña visible, y se desarma al ocultarla — no basta con ignorar su
+    // resultado, la petición (y el egress) ya se había hecho. Al volver a la
+    // pestaña, un refresco inmediato para que las marcaciones del kiosco (u
+    // otro admin) no tarden más de un vistazo en aparecer.
+    let id = null;
+    const armar = () => {
+      if (id) clearInterval(id);
+      id = document.visibilityState === 'visible' ? setInterval(refrescoSuave, 30000) : null;
     };
-  }, [refresh]);
+    const alCambiarVisibilidad = () => {
+      if (document.visibilityState === 'visible') refrescoSuave();
+      armar();
+    };
+    armar();
+    document.addEventListener('visibilitychange', alCambiarVisibilidad);
+    window.addEventListener('focus', alCambiarVisibilidad);
+    return () => {
+      if (id) clearInterval(id);
+      eventos.removeEventListener('cambio', refrescoSuave);
+      eventos.close();
+      window.removeEventListener('panel:cambio', refrescoSuave);
+      document.removeEventListener('visibilitychange', alCambiarVisibilidad);
+      window.removeEventListener('focus', alCambiarVisibilidad);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // La guía marca "✓ Vincula el dispositivo" con la lista real: se carga al
   // abrirla (normalmente solo se carga al entrar a la pestaña Dispositivos).
@@ -1485,15 +1521,23 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // El cálculo semanal de extras y la columna Dom/Fest se eliminaron: eran
   // una segunda opinión, peor informada, sobre lo que el motor ya responde.
   const [repDatos, setRepDatos] = useState({ estado: 'inicial', eventos: [], tramos: [], error: null });
-  // Cuándo volver a pedir el reporte: NO con el sondeo de 10 s del panel (la
-  // tabla se atenuaba y quedaba sin responder a cada rato), sino al abrir, al
-  // cambiar el período, con el botón de actualizar y, de fondo, cada 5 min.
+  // Cuándo volver a pedir el reporte: NO con el sondeo del panel (la tabla se
+  // atenuaba y quedaba sin responder a cada rato), sino al abrir, al cambiar
+  // el período, con el botón de actualizar y, de fondo, cada 5 min — pero
+  // SOLO si el rango incluye HOY (un rango ya cerrado no cambia solo) y con
+  // la pestaña visible (si no, ni se arma el intervalo).
   const [repRecarga, setRepRecarga] = useState(0);
   useEffect(() => {
-    if (tab !== 'reportes') return;
-    const id = setInterval(() => setRepRecarga((n) => n + 1), 5 * 60 * 1000);
-    return () => clearInterval(id);
-  }, [tab]);
+    if (tab !== 'reportes' || !(repFrom <= todayKey() && todayKey() <= repTo)) return;
+    let id = null;
+    const armar = () => {
+      if (id) clearInterval(id);
+      id = document.visibilityState === 'visible' ? setInterval(() => setRepRecarga((n) => n + 1), 5 * 60 * 1000) : null;
+    };
+    armar();
+    document.addEventListener('visibilitychange', armar);
+    return () => { if (id) clearInterval(id); document.removeEventListener('visibilitychange', armar); };
+  }, [tab, repFrom, repTo]);
   useEffect(() => {
     if (tab !== 'reportes' || !repFrom || !repTo) return;
     let vigente = true;
@@ -2227,6 +2271,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // Cambia un flag de ubicación desde la tabla, sin abrir la ficha.
   const alternarFlag = async (p, campo) => {
+    if (!permisos.empleados) return;
     try {
       await updatePerson(p.id, { [campo]: !p[campo] });
       refresh();
@@ -2312,10 +2357,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   ].filter((t) => {
     // Cada pestaña exige lo que exigen sus rutas. Lo que no puede usar no le
     // aparece (y el servidor lo rechaza igual si entra por la URL).
-    if (t.id === 'empleados') return Boolean(permisos.empleados);
-    if (t.id === 'horarios' || t.id === 'cfg-sedes' || t.id === 'cfg-dispositivos') return Boolean(permisos.config);
-    if (t.id === 'ajustes') return Boolean(permisos.config || permisos.usuarios || permisos.cuenta);
-    return true;
+    return puedeAbrirSeccion(t.id, permisos);
   });
 
   // Pantallas que muestran el submenú de Ajustes al lado (sedes y
@@ -5757,7 +5799,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
       )}
 
       {/* Diálogo de edición de empleado (CRUD: actualizar datos no biométricos) */}
-      {editEmp && (() => {
+      {permisos.empleados && editEmp && (() => {
         // Todo lo DERIVADO se calcula una vez aquí: son consecuencias de lo que
         // se está escribiendo, y por eso se muestran como cifras al lado del
         // campo y no como una frase suelta debajo.
@@ -6033,7 +6075,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
       {/* Cajón de registro de empleado: el formulario de /admin/registro,
           sin salir de la pestaña. */}
-      {regAbierto && (
+      {permisos.empleados && regAbierto && (
         <div className="overlay right" onClick={(e) => e.target === e.currentTarget && setRegAbierto(false)}>
           <aside className="drawer reg-drawer" role="dialog" aria-modal="true" aria-label="Registrar empleado">
             <div className="drawer-head">

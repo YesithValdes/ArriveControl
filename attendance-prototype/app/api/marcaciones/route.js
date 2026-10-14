@@ -9,7 +9,7 @@
  *        permiso VER.
  */
 import { NextResponse, after } from 'next/server'
-import { registrarPaso, listarMarcaciones, guardarDireccion, acumuladoDelDia } from '../../../lib/marcaciones'
+import { registrarPaso, listarMarcaciones, marcacionesCambiadasDesde, guardarDireccion, acumuladoDelDia } from '../../../lib/marcaciones'
 import { direccionDesdeCoordenadas } from '../../../lib/geocodificar.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje, empresaDeLaPeticion } from '../../../lib/sesion'
 import { puedeEscribir } from '../../../lib/empresas.js'
@@ -116,10 +116,18 @@ export async function GET(req) {
     return NextResponse.json({ ok: false, error: estadoAMensaje(estado) }, { status: estadoAHttp(estado) })
   }
   const { searchParams } = new URL(req.url)
-  const rows = await listarMarcaciones(esquema, {
+  // Sincronización incremental del panel: solo lo que cambió desde la última
+  // vez (ver lib/marcaciones.js). Parámetro NUEVO y opcional — sin él, el
+  // comportamiento de siempre (?desde=/?hasta=/?empleado_id=) no cambia.
+  const cambiosDesde = searchParams.get('cambiosDesde')
+  if (cambiosDesde) {
+    const { marcaciones, servidorEn } = await marcacionesCambiadasDesde(esquema, cambiosDesde)
+    return NextResponse.json({ ok: true, total: marcaciones.length, marcaciones, servidorEn })
+  }
+  const { marcaciones, servidorEn } = await listarMarcaciones(esquema, {
     desde: searchParams.get('desde') ?? undefined,
     hasta: searchParams.get('hasta') ?? undefined,
     empleadoId: searchParams.get('empleado_id') ?? undefined,
   })
-  return NextResponse.json({ ok: true, total: rows.length, marcaciones: rows })
+  return NextResponse.json({ ok: true, total: marcaciones.length, marcaciones, servidorEn })
 }

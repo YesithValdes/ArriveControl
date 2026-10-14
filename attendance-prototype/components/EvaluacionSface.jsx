@@ -38,7 +38,20 @@ export default function EvaluacionSface({ api, volver = '/plataforma' }) {
     setError(null);
     setD(j);
   }, []);
-  useEffect(() => { cargar(); const id = setInterval(cargar, 30000); return () => clearInterval(id); }, [cargar]);
+  // No sondea con la pestaña oculta: se desarma el intervalo y se vuelve a
+  // armar (con un refresco inmediato) al volver a verla.
+  useEffect(() => {
+    let id = null;
+    const armar = () => {
+      if (id) clearInterval(id);
+      id = document.visibilityState === 'visible' ? setInterval(cargar, 30000) : null;
+    };
+    const alCambiarVisibilidad = () => { if (document.visibilityState === 'visible') cargar(); armar(); };
+    cargar();
+    armar();
+    document.addEventListener('visibilitychange', alCambiarVisibilidad);
+    return () => { if (id) clearInterval(id); document.removeEventListener('visibilitychange', alCambiarVisibilidad); };
+  }, [cargar]);
 
   const patch = async (cuerpo) => {
     setOcupado(true);

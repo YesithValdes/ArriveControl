@@ -2110,4 +2110,33 @@ await test('la consola tiene el mismo armazón que el panel de empresa: barra, m
   assert.match(r, /listarPagos\(\)/);
 });
 
+console.log('\n🔄 Sincronización incremental del panel (fusionarMarcaciones)');
+{
+  const { fusionarMarcaciones } = await import('../services/panelStore.js');
+  const m = (id, extra = {}) => ({ id, empleado_id: 'P1', tipo: 'entrada', ts: '2026-10-14T09:00:00-05:00', ...extra });
+
+  await test('una marcación nueva se agrega', () => {
+    assert.deepEqual(fusionarMarcaciones([], [m('a')]).map((x) => x.id), ['a']);
+  });
+  await test('una marcación que ya existía se actualiza (misma posición, datos nuevos)', () => {
+    const actuales = [m('a', { direccion: null }), m('b')];
+    const r = fusionarMarcaciones(actuales, [m('a', { direccion: 'Calle 1' })]);
+    assert.equal(r.length, 2);
+    assert.equal(r.find((x) => x.id === 'a').direccion, 'Calle 1');
+  });
+  await test('una marcación eliminada se QUITA de la copia, no se marca con una bandera', () => {
+    const actuales = [m('a'), m('b')];
+    const r = fusionarMarcaciones(actuales, [m('a', { eliminada: true })]);
+    assert.deepEqual(r.map((x) => x.id), ['b']);
+  });
+  await test('eliminar algo que no estaba en la copia no revienta', () => {
+    assert.deepEqual(fusionarMarcaciones([m('b')], [m('x', { eliminada: true })]).map((x) => x.id), ['b']);
+  });
+  await test('lo que no cambió no se toca: mismo objeto, no uno reconstruido', () => {
+    const b = m('b');
+    const r = fusionarMarcaciones([m('a'), b], [m('a', { direccion: 'Calle 1' })]);
+    assert.ok(r.find((x) => x.id === 'b') === b, 'la fila sin cambios debe ser el MISMO objeto');
+  });
+}
+
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);

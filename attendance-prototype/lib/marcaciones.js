@@ -173,8 +173,30 @@ export async function guardarDireccion(esquema, marcacionId, direccion) {
     db.query(`update marcaciones set direccion = $1 where id = $2`, [direccion, marcacionId]))
 }
 
+// Columnas comunes a listarMarcaciones y marcacionesCambiadasDesde. El correo
+// de quien corrigió viaja CON la marcación (no aparte, en /api/correcciones)
+// para que el panel pinte la insignia «corregido» sin tener que volver a
+// descargar la lista completa de correcciones en cada refresco.
+const SELECT_MARCACIONES = `
+  select m.id, m.empleado_id, e.nombre as empleado_nombre, e.cedula,
+         m.tipo, m.ts, m.ts_dispositivo, m.sede_id, s.nombre as sede_nombre, m.origen,
+         m.lat, m.lon, m.precision_m, m.direccion, (coalesce(octet_length(m.foto), 0) > 0) as tiene_foto,
+         m.eliminada, c.admin_email as corregida_por
+    from marcaciones m
+    join empleados e on e.id = m.empleado_id
+    left join sedes s on s.id = m.sede_id
+    left join lateral (
+      select admin_email from correcciones
+       where marcacion_id = m.id
+       order by ts desc limit 1
+    ) c on true`
+
 /**
  * Lista marcaciones para el panel, con nombre del empleado.
+ *
+ * También devuelve `servidorEn` (misma transacción): una carga inicial puede
+ * usarlo de una vez como cursor de arranque para `marcacionesCambiadasDesde`,
+ * sin tener que calcular uno en el navegador.
  * @param {string} esquema  el de la empresa que consulta
  * @param {{desde?:string, hasta?:string, empleadoId?:string}} f  fechas YYYY-MM-DD (día Bogotá)
  */
@@ -187,16 +209,34 @@ export async function listarMarcaciones(esquema, f = {}) {
 
   return conEmpresa(esquema, async (db) => {
     const { rows } = await db.query(
-      `select m.id, m.empleado_id, e.nombre as empleado_nombre, e.cedula,
-              m.tipo, m.ts, m.ts_dispositivo, m.sede_id, s.nombre as sede_nombre, m.origen,
-              m.lat, m.lon, m.precision_m, m.direccion, (coalesce(octet_length(m.foto), 0) > 0) as tiene_foto
-         from marcaciones m
-         join empleados e on e.id = m.empleado_id
-         left join sedes s on s.id = m.sede_id
-        where ${cond.join(' and ')}
-        order by m.ts asc`,
+      `${SELECT_MARCACIONES} where ${cond.join(' and ')} order by m.ts asc`,
       args,
     )
-    return rows
+    const { rows: n } = await db.query(`select now() as n`)
+    return { marcaciones: rows, servidorEn: n[0].n }
+  })
+}
+
+/**
+ * Marcaciones creadas, corregidas, geocodificadas o eliminadas desde
+ * `cambiosDesde` (ISO) — para que el panel sincronice solo lo que cambió en
+ * vez de volver a descargar todo en cada refresco. A diferencia de
+ * `listarMarcaciones`, SÍ incluye las eliminadas (con `eliminada: true`): el
+ * cliente las necesita para quitarlas de su copia en memoria.
+ *
+ * `servidorEn` es la hora de ESTA consulta, tomada en la MISMA transacción
+ * que leyó las filas (mismo snapshot): el próximo `cambiosDesde` debe ser ese
+ * valor, no uno calculado en el navegador, para no perder ni repetir cambios
+ * por un reloj distinto entre cliente y servidor.
+ */
+export async function marcacionesCambiadasDesde(esquema, cambiosDesde) {
+  return conEmpresa(esquema, async (db) => {
+    const { rows } = await db.query(
+      `${SELECT_MARCACIONES} where m.actualizado_en > $1 order by m.actualizado_en asc`,
+      [cambiosDesde],
+    )
+    const filas = rows.map((r) => ({ ...r, eliminada: Boolean(r.eliminada) }))
+    const { rows: n } = await db.query(`select now() as n`)
+    return { marcaciones: filas, servidorEn: n[0].n }
   })
 }
