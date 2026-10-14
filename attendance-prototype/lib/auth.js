@@ -23,6 +23,7 @@ import { Pool } from 'pg'
 // node "pelado" (ESM) y ahí la extensión es obligatoria.
 import { uuidv7 } from './uuidv7.js'
 import { asignarEmpresa } from './registro.js'
+import { accesoGoogleAndroid } from './authAndroidPlugin.js'
 
 if (!process.env.DATABASE_URL) {
   throw new Error('Falta DATABASE_URL.')
@@ -164,5 +165,5 @@ export const auth = betterAuth({
   advanced: {
     database: { generateId: () => uuidv7() },
   },
-  plugins: [admin(), nextCookies()],
+  plugins: [admin(), accesoGoogleAndroid(pool), nextCookies()],
 })

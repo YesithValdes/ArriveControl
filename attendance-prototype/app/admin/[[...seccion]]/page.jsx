@@ -17,7 +17,7 @@ import { redirect } from 'next/navigation';
 import AdminPanel from '../../../components/AdminPanel.jsx';
 import DefinirContrasena from '../../../components/DefinirContrasena.jsx';
 import { estadoAcceso, tienePermiso } from '../../../lib/sesion';
-import { tabDeSegmentos } from '../../../lib/rutasPanel.js';
+import { tabDeSegmentos, puedeAbrirSeccion } from '../../../lib/rutasPanel.js';
 import { estadoDelPlan } from '../../../lib/empresas.js';
 import { configMp } from '../../../lib/mercadopago.js';
 
@@ -66,6 +66,10 @@ export default async function AdminPage({ params }) {
     cuenta: tienePermiso(usuario, 'cuenta'),
   };
 
+  // Ocultar una pestaña no protege su URL directa ni un enlace guardado.
+  const seccionInicial = tabDeSegmentos(seccion);
+  if (!puedeAbrirSeccion(seccionInicial, permisos)) redirect('/admin');
+
   // Último paso del registro: ponerle contraseña a la app. Se pide aquí y no
   // en un ajuste escondido porque quien entró con Google NO puede abrir el
   // panel desde el celular sin ella —Google bloquea su inicio de sesión dentro
@@ -79,7 +83,7 @@ export default async function AdminPage({ params }) {
   // servidor ya conoce.
   return (
     <AdminPanel
-      seccionInicial={tabDeSegmentos(seccion)}
+      seccionInicial={seccionInicial}
       sesion={{
         nombre: usuario.nombre, email: usuario.email, rol: usuario.rol, sedeLimite,
         empresa: empresa?.nombre ?? null,

@@ -8,8 +8,10 @@
 # Nada de esto hace falta en el servidor: Vercel compila la web desde el
 # código fuente.
 
-# Proyecto Android (el APK se compila y distribuye aparte)
-android/
+# Proyecto Android (el APK se compila y distribuye aparte). Anclado a la raíz
+# a propósito: sin la barra inicial también excluía app/auth/android/, las
+# rutas del acceso Android del panel web, que no tienen nada que ver con esto.
+/android/
 
 # Compilación local de Next: el servidor hace la suya
 .next/

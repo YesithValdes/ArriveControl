@@ -7,7 +7,7 @@
  * derecha el formulario. Usuarios PROPIOS del sistema (esquema `asistencia`).
  * Aquí no se crean cuentas: las da de alta un dueño desde Ajustes → Usuarios.
  */
-import { Suspense, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { signIn, signOut, useSession } from '../../lib/auth-client'
 
@@ -43,6 +43,12 @@ function LoginForm() {
     ? 'Tu usuario no tiene acceso. Pídeselo al administrador.'
     : '')
   const [cargando, setCargando] = useState(false)
+  const [appAndroid, setAppAndroid] = useState(params.get('app') === 'android')
+
+  useEffect(() => {
+    setAppAndroid(params.get('app') === 'android'
+      || document.cookie.split(';').some((cookie) => cookie.trim() === 'arrivecontrol_app=android'))
+  }, [params])
 
   // Correo y contraseña SIEMPRE disponibles, pero como segunda opción: Google
   // arriba porque es quien verifica la identidad, y la contraseña abajo para
@@ -189,6 +195,11 @@ function LoginForm() {
             <p style={{ margin: '6px 0 0', opacity: 0.7, fontSize: 14, color: '#0f172a' }}>
               Accede al panel de asistencia
             </p>
+            {appAndroid && (
+              <p style={{ margin: '10px 0 0', fontSize: 13, lineHeight: 1.6, color: '#475467' }}>
+                Usa tu correo y contraseña. Si entras con Google, configura una contraseña desde el panel web.
+              </p>
+            )}
           </div>
 
           {/* Decirlo ANTES de que lo intente: quien llega aquí con sesión viva
@@ -233,7 +244,7 @@ function LoginForm() {
 
           {/* Un solo botón: entrar y registrarse son lo mismo — quien llega sin
               empresa recibe la suya al entrar. */}
-          <button
+          {!appAndroid && <button
             type="button"
             onClick={entrarConGoogle}
             disabled={cargando}
@@ -251,7 +262,7 @@ function LoginForm() {
               <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.4 29.9 2 24 2 15.4 2 8.1 6.9 4.4 14l7.1 5.5c1.8-5.3 6.7-8.9 12.5-8.9z" />
             </svg>
             {cargando ? 'Abriendo Google…' : 'Continuar con Google'}
-          </button>
+          </button>}
 
           {error && (
             <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: 14 }}>{error}</p>

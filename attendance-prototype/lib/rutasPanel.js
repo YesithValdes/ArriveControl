@@ -66,3 +66,16 @@ export const tabDeSegmentos = (segmentos) =>
 /** Igual, pero a partir de un `location.pathname` (para el botón «atrás»). */
 export const tabDeRuta = (pathname) =>
   tabDeSegmentos(String(pathname ?? '').replace(/^\/admin\/?/, '').split('/').filter(Boolean))
+
+/** Misma autorización para el menú, la URL directa y el historial del navegador. */
+export function puedeAbrirSeccion(tab, permisos = {}) {
+  if (['dashboard', 'asistencia', 'anomalias', 'reportes', 'historial'].includes(tab)) return true
+  if (tab === 'empleados') return permisos.empleados === true
+  if (['cfg-empresa', 'cfg-plan'].includes(tab)) return permisos.cuenta === true
+  if (tab === 'cfg-usuarios') return permisos.usuarios === true
+  if (tab === 'ajustes') return Boolean(permisos.config || permisos.usuarios || permisos.cuenta)
+  if (['horarios', 'cfg-sedes', 'cfg-dispositivos', 'cfg-reglamento', 'cfg-resumen', 'cfg-nomina', 'cfg-simulador', 'cfg-gps'].includes(tab)) return permisos.config === true
+  return false
+}
+
+export const seccionPermitida = (tab, permisos) => puedeAbrirSeccion(tab, permisos) ? tab : 'dashboard'
