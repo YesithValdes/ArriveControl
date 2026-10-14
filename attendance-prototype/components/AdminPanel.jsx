@@ -57,6 +57,7 @@ import { RegistroEmpleadoForm } from './EmployeeRegister.jsx';
 import { getDeviceKey } from '../services/kioskoApi.js';
 import PermisosInvitadoModal from './PermisosInvitadoModal.jsx';
 import ColillaPago from './ColillaPago.jsx';
+import DetalleJornada from './DetalleJornada.jsx';
 
 /** Iconos de línea (estilo Lucide, inline SVG): heredan el color del texto. */
 function Icon({ name, size = 17 }) {
@@ -1415,6 +1416,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
 
   // Drawer de detalle: línea de tiempo de marcaciones de una persona en un día.
   const [drawer, setDrawer] = useState(null); // { personId, personName, desde, hasta }
+  const [jornadaPersona, setJornadaPersona] = useState(null);
+  const puedeVerJornada = puedeInv('colaboradores:ver') && puedeInv('marcaciones:ver') && puedeInv('asistencia:reportes');
   const [evForm, setEvForm] = useState(null); // { mode:'add'|'edit', eventId?, fecha, type, time, reason }
   const [fotoVer, setFotoVer] = useState(null); // id de la marcación cuya foto se está viendo
   const [openDia, setOpenDia] = useState(null); // día expandido dentro del drawer
@@ -3583,6 +3586,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                   disabled={eliminandoPersona !== null}
                                   onClick={(e) => { e.stopPropagation(); eliminarColaborador(p); }}
                                 ><Icon name="trash" size={16} /></button>}
+                                {puedeVerJornada && <button type="button" className="btn small btn-ico" title="Ver detalle de jornada" aria-label={`Ver detalle de jornada de ${p.name}`} onClick={(e) => { e.stopPropagation(); setJornadaPersona(p); }}><Icon name="clock" size={16} /></button>}
                               </td>
                             </tr>
                           ))}
@@ -3622,6 +3626,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         ),
                         actions: <>
                           <button className="btn primary block" onClick={() => openEdit(p)}>Editar</button>
+                          {puedeVerJornada && <button type="button" className="btn btn-ico" title="Ver detalle de jornada" aria-label={`Ver detalle de jornada de ${p.name}`} onClick={(e) => { e.stopPropagation(); setJornadaPersona(p); }}><Icon name="clock" size={16} /></button>}
                           {permisos.empleados && <button className="btn btn-ico" title="permisos e incapacidades" onClick={() => setPermisoPersona(p)}><Icon name="calendar" size={16} /></button>}
                           {permisos.empleados && <button
                             type="button" className="btn btn-ico danger-btn"
@@ -6523,6 +6528,11 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
         </div>
       )}
 
+      {jornadaPersona && puedeVerJornada && (
+        <div className="overlay" onClick={e => { if (e.target === e.currentTarget) setJornadaPersona(null); }}>
+          <DetalleJornada key={jornadaPersona.id} persona={jornadaPersona} revision={tick} onVolver={() => setJornadaPersona(null)} />
+        </div>
+      )}
       {permisoPersona && <PermisosColaborador persona={permisoPersona} onClose={() => setPermisoPersona(null)} onSaved={async () => { setPermisoPersona(null); await refresh(); setRepRecarga(n => n + 1); showToast('Novedad guardada.'); }} />}
       {toast && <div className="toast show" role="status">{toast}</div>}
     </div>
