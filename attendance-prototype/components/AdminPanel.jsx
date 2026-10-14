@@ -2471,61 +2471,6 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     <div className={`admin-root${collapsed ? ' nav-collapsed' : ''}${navOpen ? ' nav-open' : ''}`}>
       <style>{CSS}</style>
 
-      {/* Los avisos van en UN contenedor: en PC ocupa su propia fila de la
-          grilla, encima del contenido. Sueltos, la grilla les inventaba una
-          fila extra bajo el menú lateral que le robaba altura a todo. */}
-      <div className="avisos">
-      {/* Suscripción vencida: el backend ya bloquea las escrituras (402); esto
-          explica POR QUÉ, antes de que la persona choque con el error. */}
-      {sesion?.plan === 'pago' && sesion?.estadoSuscripcion !== 'activa' && (
-        <div className="banner-vencida" role="alert">
-          Suscripción {sesion.estadoSuscripcion}: puedes consultar y exportar, pero no modificar.
-        </div>
-      )}
-
-      {/* Sin suscripción no se puede registrar ni marcar, así que hay que
-          decirlo arriba de todo — pero dejando claro que los datos siguen
-          ahí y se pueden exportar. */}
-      {/* En prueba: se dice cuánto queda y se ofrece suscribirse, sin
-          estorbar el trabajo. Es el aviso permanente del modelo. */}
-      {sesion?.planEstado?.enPrueba && (
-        <div className={`banner-prueba${sesion.planEstado.diasPrueba <= 1 ? ' urge' : ''}`}>
-          <span>
-            {sesion.planEstado.diasPrueba === 1
-              ? <>Tu prueba termina <b>hoy</b>.</>
-              : <>Tu prueba termina en <b>{sesion.planEstado.diasPrueba} días</b>.</>}
-            {' '}Suscríbete desde US$1 al mes para no quedarte sin registrar asistencia.
-          </span>
-          <button className="btn small" onClick={() => setTab('cfg-plan')}>Suscribirse</button>
-        </div>
-      )}
-      {/* Sin acceso: el kiosco está detenido, así que se dice sin rodeos —
-          aclarando que los datos siguen ahí. */}
-      {sesion?.planEstado && !sesion.planEstado.acceso && (
-        <div className="banner-prueba urge">
-          <span>
-            {sesion.planEstado.pruebaVencida
-              ? <>Tu prueba terminó y el kiosco dejó de registrar marcaciones.</>
-              : <>Tu suscripción venció: el kiosco no registra marcaciones.</>}
-            {' '}Tus datos siguen intactos y puedes consultarlos y exportarlos.
-          </span>
-          <button className="btn small" onClick={() => setTab('cfg-plan')}>Ver planes</button>
-        </div>
-      )}
-      {/* Los últimos días de una suscripción pagada, sin alarmar antes. */}
-      {sesion?.planEstado?.pagada && sesion.planEstado.diasRestantes != null && sesion.planEstado.diasRestantes <= 7 && (
-        <div className="banner-prueba urge">
-          <span>
-            {sesion.planEstado.diasRestantes === 1
-              ? <>Tu suscripción vence <b>hoy</b>.</>
-              : <>Tu suscripción vence en <b>{sesion.planEstado.diasRestantes} días</b>.</>}
-            {' '}Renuévala para que el kiosco siga registrando.
-          </span>
-          <button className="btn small" onClick={() => setTab('cfg-plan')}>Renovar</button>
-        </div>
-      )}
-      </div>
-
       <header className="app-header">
         {/* Las tres líneas SIEMPRE a la izquierda del todo, en cualquier
             tamaño de pantalla: en PC encogen el menú a un riel de iconos y en
@@ -2634,6 +2579,64 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
           )}
         </div>
       </header>
+
+      {/* Los avisos van en UN contenedor: en PC ocupa su propia fila de la
+          grilla, encima del contenido. Sueltos, la grilla les inventaba una
+          fila extra bajo el menú lateral que le robaba altura a todo. */}
+      <div className="avisos">
+      {/* Suscripción vencida: el backend ya bloquea las escrituras (402); esto
+          explica POR QUÉ, antes de que la persona choque con el error. */}
+      {sesion?.plan === 'pago' && sesion?.estadoSuscripcion !== 'activa' && (
+        <div className="banner-vencida" role="alert">
+          Suscripción {sesion.estadoSuscripcion}: puedes consultar y exportar, pero no modificar.
+        </div>
+      )}
+
+      {/* Sin suscripción no se puede registrar ni marcar, así que hay que
+          decirlo arriba de todo — pero dejando claro que los datos siguen
+          ahí y se pueden exportar. */}
+      {/* En prueba: se dice cuánto queda y se ofrece suscribirse, sin
+          estorbar el trabajo. Es el aviso permanente del modelo. */}
+      {sesion?.planEstado?.enPrueba && (
+        <div className="pildora-prueba" role="status">
+          <span className="pildora-punto" aria-hidden="true" />
+          <span className="pildora-largo">
+            {sesion.planEstado.diasPrueba === 1
+              ? <>Tu prueba termina <b>hoy</b></>
+              : <>Te quedan <b>{sesion.planEstado.diasPrueba} días</b> de prueba</>}
+          </span>
+          <span className="pildora-corto">
+            Prueba: <b>{sesion.planEstado.diasPrueba === 1 ? 'hoy' : `${sesion.planEstado.diasPrueba} días`}</b>
+          </span>
+          <button className="pildora-btn" onClick={() => setTab('cfg-plan')}>Suscribirse</button>
+        </div>
+      )}
+      {/* Sin acceso: el kiosco está detenido, así que se dice sin rodeos —
+          aclarando que los datos siguen ahí. */}
+      {sesion?.planEstado && !sesion.planEstado.acceso && (
+        <div className="banner-prueba urge">
+          <span>
+            {sesion.planEstado.pruebaVencida
+              ? <>Tu prueba terminó y el kiosco dejó de registrar marcaciones.</>
+              : <>Tu suscripción venció: el kiosco no registra marcaciones.</>}
+            {' '}Tus datos siguen intactos y puedes consultarlos y exportarlos.
+          </span>
+          <button className="btn small" onClick={() => setTab('cfg-plan')}>Ver planes</button>
+        </div>
+      )}
+      {/* Los últimos días de una suscripción pagada, sin alarmar antes. */}
+      {sesion?.planEstado?.pagada && sesion.planEstado.diasRestantes != null && sesion.planEstado.diasRestantes <= 7 && (
+        <div className="banner-prueba urge">
+          <span>
+            {sesion.planEstado.diasRestantes === 1
+              ? <>Tu suscripción vence <b>hoy</b>.</>
+              : <>Tu suscripción vence en <b>{sesion.planEstado.diasRestantes} días</b>.</>}
+            {' '}Renuévala para que el kiosco siga registrando.
+          </span>
+          <button className="btn small" onClick={() => setTab('cfg-plan')}>Renovar</button>
+        </div>
+      )}
+      </div>
 
       <div className={`screen${enAjustes ? ' con-submenu' : ''}`}>
         {/* Submenú de Ajustes (solo PC): como la Configuración de Windows —
@@ -6923,6 +6926,26 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .avisos .banner-prueba { margin-bottom: 0; }
 .banner-prueba.urge { background: var(--warn-soft); color: var(--warn-text); border-color: var(--warn-text); }
 .banner-prueba.urge b { color: inherit; }
+/* Prueba gratuita: píldora compacta y centrada bajo la barra azul. Ocupa
+   solo lo que mide su contenido para no estorbar. */
+.pildora-prueba {
+  align-self: center; display: inline-flex; align-items: center; gap: 8px;
+  max-width: 100%; white-space: nowrap;
+  background: #fff; color: var(--ink-2); border: 1px solid #c9d4e3;
+  border-radius: 999px; padding: 4px 4px 4px 12px; font-size: 13px;
+}
+.pildora-prueba b { color: var(--ink); font-weight: 600; }
+.pildora-punto { width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; flex: none; }
+.pildora-corto { display: none; }
+.pildora-btn {
+  border: none; cursor: pointer; border-radius: 999px; padding: 5px 12px;
+  background: var(--btn-primary); color: #fff; font: inherit; font-size: 12.5px; font-weight: 600;
+}
+.pildora-btn:hover { background: var(--btn-primary-hover); }
+@media (max-width: 600px) {
+  .pildora-largo { display: none; }
+  .pildora-corto { display: inline; }
+}
 
 /* ── Pantalla de Plan (Ajustes → Plan) ─────────────────────────────── */
 .cfg-punto {
