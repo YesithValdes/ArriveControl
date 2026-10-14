@@ -193,6 +193,10 @@ async function api(url, opts = {}) {
   }
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false) throw new Error(d.error || `Error ${r.status} en ${url}`);
+  // Guardar, editar o eliminar: el panel se vuelve a sincronizar enseguida.
+  if (opts.method && opts.method !== 'GET' && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('panel:cambio'));
+  }
   return d;
 }
 

@@ -1293,9 +1293,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     const eventos = new EventSource('/api/eventos-panel');
     const alCambiar = () => refresh();
     eventos.addEventListener('cambio', alCambiar);
-    refresh(); // única carga inicial; después solo cambios guardados
+    window.addEventListener('panel:cambio', alCambiar); // guardados desde este navegador
+    refresh();
+    // Además, refresco silencioso cada 5 s mientras la pestaña está visible.
+    const intervalo = setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 5000);
     return () => {
       refrescoRef.current.montado = false;
+      clearInterval(intervalo);
+      window.removeEventListener('panel:cambio', alCambiar);
       eventos.removeEventListener('cambio', alCambiar);
       eventos.close();
     };
