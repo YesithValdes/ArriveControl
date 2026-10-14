@@ -91,6 +91,14 @@ export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo
 
     // Anti-rebote: doble pasada en < 3 min (abs: protege relojes que retroceden).
     if (ultima && Math.abs(ahora - new Date(ultima.ts)) < ANTI_BOUNCE_MS) {
+      // Si la marcación original quedó sin foto y esta pasada sí la trae, se
+      // le asocia ahí mismo: el update avisa al panel, que muestra la cámara.
+      if (foto?.length) {
+        await client.query(
+          `update marcaciones set foto = $2 where id = $1 and coalesce(octet_length(foto), 0) = 0`,
+          [ultima.id, foto],
+        )
+      }
       return { duplicado: true, ultima }
     }
 
@@ -102,7 +110,7 @@ export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo
     const ins = await client.query(
       `insert into marcaciones (empleado_id, tipo, ts, ts_dispositivo, sede_id, origen, lat, lon, precision_m, foto)
        values ($1, $2, ${diferido && tsDispositivo ? '$9' : 'now()'}, $3, $4, ${diferido ? `'kiosco_diferido'` : `'kiosco'`}, $5, $6, $7, $8)
-       returning id, empleado_id, tipo, ts, ts_dispositivo, sede_id, origen, lat, lon, precision_m, (foto is not null) as tiene_foto`,
+       returning id, empleado_id, tipo, ts, ts_dispositivo, sede_id, origen, lat, lon, precision_m, (coalesce(octet_length(foto), 0) > 0) as tiene_foto`,
       [
         empleadoId, tipo, tsDispositivo, sedeId,
         guardaGps ? lat : null, guardaGps ? lon : null, guardaGps ? Math.round(Number(precisionM) || 0) || null : null,
@@ -181,7 +189,7 @@ export async function listarMarcaciones(esquema, f = {}) {
     const { rows } = await db.query(
       `select m.id, m.empleado_id, e.nombre as empleado_nombre, e.cedula,
               m.tipo, m.ts, m.ts_dispositivo, m.sede_id, s.nombre as sede_nombre, m.origen,
-              m.lat, m.lon, m.precision_m, m.direccion, (m.foto is not null) as tiene_foto
+              m.lat, m.lon, m.precision_m, m.direccion, (coalesce(octet_length(m.foto), 0) > 0) as tiene_foto
          from marcaciones m
          join empleados e on e.id = m.empleado_id
          left join sedes s on s.id = m.sede_id

@@ -18,7 +18,7 @@ export async function GET(req, { params }) {
   }
   const { id } = await params
   const { rows } = await conEmpresa(esquema, (db) => db.query(
-    `select foto from marcaciones where id = $1 and foto is not null`, [id],
+    `select foto from marcaciones where id = $1 and octet_length(foto) > 0`, [id],
   ))
   if (!rows[0]) return new NextResponse(null, { status: 404 })
   // La foto de una marcación no cambia nunca: se puede cachear sin revalidar.
