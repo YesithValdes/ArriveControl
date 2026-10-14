@@ -1060,15 +1060,17 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   // del día), cuál le queda corto, si le toca la entrada y cómo va su
   // suscripción. Lo decide el servidor; aquí solo se pinta.
   const [catalogo, setCatalogo] = useState(null);
+  const [errorCatalogo, setErrorCatalogo] = useState(false);
   const [correoPago, setCorreoPago] = useState('');
   const cargarCatalogo = useCallback(() => fetch('/api/pago/planes', { cache: 'no-store' })
     .then((r) => r.json())
     .then((d) => {
-      if (!d?.ok) return;
+      if (!d?.ok) throw new Error('Catálogo no disponible');
+      setErrorCatalogo(false);
       setCatalogo(d);
       setCorreoPago((c) => c || d.suscripcion?.email || sesion?.email || '');
     })
-    .catch(() => { /* sin catálogo no se ofrecen botones */ }), [sesion?.email]);
+    .catch(() => setErrorCatalogo(true)), [sesion?.email]);
   // Se pide al ABRIR la pantalla, no con cada `tick`: el catálogo cambia poco,
   // y colgarlo del reloj del panel lo hacía pedirse cada diez segundos.
   useEffect(() => {
@@ -4171,7 +4173,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               </div>
             )}
 
-            {catalogo === null && <p className="empty">Cargando planes…</p>}
+            {catalogo === null && !errorCatalogo && <p className="empty">Cargando planes…</p>}
+            {errorCatalogo && <p className="empty" role="alert">No pudimos cargar los planes. <button className="btn small" onClick={cargarCatalogo}>Reintentar</button></p>}
             {catalogo?.disponible === false && !sesion?.planEstado?.cortesia && (
               <p className="empty">Los pagos en línea todavía no están habilitados. Escríbenos y activamos tu plan.</p>
             )}
@@ -4198,47 +4201,49 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
               </div>
             )}
 
-            {catalogo?.disponible && !sesion?.planEstado?.cortesia
-              && !['autorizada', 'pausada'].includes(catalogo.suscripcion?.estado) && (
+            {catalogo?.planes?.length > 0 && (
               <>
                 {/* Oferta de entrada: el PRIMER cobro es de US$1, a quien nunca
                     ha pagado. Lo decide el servidor. */}
                 {catalogo.conEntrada && (
                   <div className="entrada">
-                    <b className="entrada-titulo">Oferta de entrada: tu primer mes a US${catalogo.precioEntrada}{catalogo.pesos?.entrada ? ` (≈ $${catalogo.pesos.entrada.cop.toLocaleString('es-CO')})` : ''}</b>
-                    <span className="entrada-resumen">Desde el segundo mes, el precio del plan, con débito automático. Cancelas cuando quieras.</span>
+                    <div className="entrada-cab"><b>🎁 Oferta de entrada, una sola vez</b><span>en cualquier plan · luego, el precio normal</span></div>
+                    <div className="entrada-mes"><span>Primer mes</span><strong>US${catalogo.precioEntrada}</strong><small>Desde el segundo mes, el precio de tu plan</small></div>
                   </div>
                 )}
 
-                <label className="sub-field" style={{ display: 'block', margin: '0 0 14px' }}>
+                {catalogo.disponible && !sesion?.planEstado?.cortesia && !['autorizada', 'pausada'].includes(catalogo.suscripcion?.estado) && <label className="sub-field" style={{ display: 'block', margin: '18px 0 24px' }}>
                   Correo de tu cuenta de Mercado Pago
                   <input type="email" value={correoPago} onChange={(ev) => setCorreoPago(ev.target.value)} autoComplete="email" disabled={pagando} />
-                </label>
+                </label>}
 
                 <div className="planes-lista">
                   {catalogo.planes.map((p) => {
                     const cop = catalogo.pesos?.planes?.[p.id]?.cop
                     return (
-                      <div key={p.id} className={`plan-tarjeta${p.sugerido ? ' sugerido' : ''}${!p.alcanza ? ' corto' : ''}`}>
-                        {p.sugerido && <span className="plan-etiqueta">Para tu tamaño</span>}
+                      <div key={p.id} className={`plan-tarjeta${p.id === 'equipo' ? ' sugerido' : ''}${!p.alcanza ? ' corto' : ''}`}>
+                        {p.id === 'equipo' && <span className="plan-etiqueta">El más elegido</span>}
                         <h3>{p.nombre}</h3>
                         <div className="plan-precio">
                           <b>US${p.precio}</b>
                           <em>/mes</em>
                         </div>
                         {cop && <span className="plan-luego">≈ ${cop.toLocaleString('es-CO')} COP al mes</span>}
-                        <span className="plan-tope">
-                          Hasta {p.empleados} colaboradores · {p.usuarios} acceso{p.usuarios === 1 ? '' : 's'} al panel
-                        </span>
+                        <p className="plan-descripcion">{p.para}.</p>
+                        <ul className="plan-beneficios">
+                          <li>Hasta <b>{p.empleados} colaboradores</b></li>
+                          <li><b>{p.usuarios} acceso{p.usuarios === 1 ? '' : 's'}</b> al panel</li>
+                          <li>Todo el producto incluido</li>
+                        </ul>
                         <button
-                          className={`btn ${p.sugerido ? 'primary' : ''} block`}
-                          disabled={pagando || !p.alcanza}
+                          className={`btn ${p.id === 'equipo' ? 'primary' : ''} block`}
+                          disabled={pagando || !p.alcanza || !catalogo.disponible || sesion?.planEstado?.cortesia || ['autorizada', 'pausada'].includes(catalogo.suscripcion?.estado)}
                           onClick={() => irAPagar(p.id)}
                           title={!p.alcanza ? `Tienes ${catalogo.empleados} empleados y este plan cubre ${p.empleados}` : undefined}
                         >
                           {!p.alcanza
                             ? `Tienes ${catalogo.empleados} colaboradores`
-                            : pagando ? 'Abriendo Mercado Pago…' : 'Suscribirme'}
+                            : sesion?.planEstado?.cortesia ? 'Cortesía activa' : catalogo.planActual === p.id ? 'Plan actual' : ['autorizada', 'pausada'].includes(catalogo.suscripcion?.estado) ? 'Débito contratado' : !catalogo.disponible ? 'Pago no disponible' : pagando ? 'Abriendo Mercado Pago…' : 'Suscribirme'}
                         </button>
                       </div>
                     )
@@ -4246,7 +4251,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                 </div>
 
                 <p className="cfg-note" style={{ marginTop: 14 }}>
-                  Débito automático mensual con Mercado Pago, sin permanencia. Precios en dólares; se cobran en pesos con la TRM
+                  <b>Todos incluyen:</b> marcación facial ilimitada, prueba de vida, varias sedes, GPS, resumen diario por correo, horas extra según la ley, reportes para nómina y API para conectar tu software. Débito automático mensual con Mercado Pago, sin permanencia. Precios en dólares; se cobran en pesos con la TRM
                   oficial del día{catalogo.pesos?.trm ? ` (hoy $${Number(catalogo.pesos.trm).toLocaleString('es-CO')} por dólar)` : ''}.
                   ¿Más de {catalogo.contactoDesde} colaboradores? <b>Escríbenos</b>.
                 </p>
@@ -6995,6 +7000,30 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .fchip.mes-op[aria-pressed="true"] small { color: inherit; }
 .entrada-resumen { font-size: 13px; color: var(--ink-2); }
 .plan-tarjeta .btn { margin-top: auto; }
+
+/* Presentación del catálogo de planes. */
+.planes-lista { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; margin: 32px 0 20px; }
+.plan-tarjeta { padding: 30px 24px 26px; border-radius: 20px; gap: 8px; }
+.plan-tarjeta h3 { font-size: 21px; }
+.plan-precio { margin: 18px 0 0; }
+.plan-precio b { font-size: 38px; }
+.plan-precio em { font-size: 16px; }
+.plan-descripcion { color: var(--muted); font-size: 14px; margin: 4px 0 8px; }
+.plan-beneficios { list-style: none; padding: 0; margin: 6px 0 28px; color: var(--ink-2); font-size: 14px; }
+.plan-beneficios li { margin: 0 0 14px; }
+.plan-beneficios li::before { content: '✓'; color: #20c997; font-weight: 800; margin-right: 12px; }
+.plan-tarjeta .btn { min-height: 54px; border-radius: 12px; }
+.entrada { position: relative; overflow: hidden; padding: 26px; border-radius: 20px; background: linear-gradient(120deg, #142b50, #214e80); color: #fff; margin: 18px 0; }
+.entrada::after { content: ''; position: absolute; width: 240px; height: 240px; border-radius: 50%; background: #8cd8d62b; right: -55px; top: -100px; pointer-events: none; }
+.entrada-cab { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; position: relative; z-index: 1; }
+.entrada-cab b { font-size: 19px; }
+.entrada-cab > span { color: #bed0e6; font-size: 14px; }
+.entrada-mes { display: flex; flex-direction: column; gap: 6px; max-width: 280px; box-sizing: border-box; margin-top: 10px; padding: 16px; border: 1px solid #ffffff38; border-radius: 14px; background: #ffffff1c; }
+.entrada-mes > span { color: #c9d7e8; font-size: 14px; font-weight: 700; }
+.entrada-mes strong { font-size: 26px; }
+.entrada-mes small { color: #a2dfce; font-size: 13px; line-height: 1.6; font-weight: 700; }
+@media (max-width: 1000px) { .planes-lista { gap: 14px; } .plan-tarjeta { padding: 26px 16px 20px; } .plan-precio b { font-size: 30px; } }
+@media (max-width: 680px) { .planes-lista { grid-template-columns: 1fr; gap: 26px; } .entrada { padding: 20px; } }
 
 /* Banner de suscripción vencida */
 .banner-vencida { background: var(--crit-soft); color: var(--crit-text); border: 1px solid var(--crit, #fca5a5); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; }
