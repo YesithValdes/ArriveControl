@@ -108,6 +108,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
   // registra la ubicación GPS de cada marcación.
   const [validarSede, setValidarSede] = useState(false);
   const [validarUbicacion, setValidarUbicacion] = useState(false);
+  const [guardarFoto, setGuardarFoto] = useState(true);
   // Horarios con nombre: elegir uno copia su franja a los campos de abajo.
   const [horarios, setHorarios] = useState(() => getHorarios());
   const [horarioId, setHorarioId] = useState('');
@@ -257,7 +258,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
       descriptoresV2: fotos.map((f) => f.descriptorV2 ?? null),
       cedula: cedulaLimpia,
       correo: correo.trim().toLowerCase() || null,
-      sede, validarSede, validarUbicacion, jornadaDias, areas,
+      sede, validarSede, validarUbicacion, guardarFoto, jornadaDias, areas,
       // Vacío o 0 = sin salario registrado, no un sueldo de cero.
       salarioMensual: Number(salarioMensual) > 0 ? Number(salarioMensual) : null,
     });
@@ -346,6 +347,23 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
                   Guarda la ubicación GPS desde donde se hace cada marcación,
                   para saber dónde estaba la persona al marcar. Aplica con o
                   sin sede.
+                </span>
+              </span>
+            </div>
+            <div className="regf-valida">
+              <label htmlFor="rf-foto">
+                ¿Guardar foto?
+                <input
+                  id="rf-foto" type="checkbox" checked={guardarFoto}
+                  onChange={(e) => setGuardarFoto(e.target.checked)}
+                />
+              </label>
+              <span className="regf-q" tabIndex={0}>
+                ?
+                <span className="regf-tip">
+                  Guarda la foto de cada marcación como evidencia de quién
+                  marcó (se borra a los 90 días). Sin marcar, marca igual
+                  pero no se guarda la foto.
                 </span>
               </span>
             </div>
@@ -481,6 +499,7 @@ export function RegistroEmpleadoForm({ alRegistrar, irAHorarios = () => { window
                 {[
                   sede && validarSede ? 'Limitada a su sede' : 'Libre: cualquier lugar',
                   validarUbicacion ? 'se registra el GPS' : 'sin registro de GPS',
+                  guardarFoto ? 'se guarda la foto' : 'sin guardar la foto',
                 ].join(', ')}
               </b>
             </div>

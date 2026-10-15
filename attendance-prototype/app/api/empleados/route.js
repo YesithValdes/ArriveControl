@@ -85,7 +85,7 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url)
   const incluirInactivos = searchParams.get('inactivos') === '1'
   const { rows: empleados } = await conEmpresa(esquema, (db) => db.query(
-    `select e.id, e.nombre, e.cedula, e.correo, e.sede_id, s.nombre as sede_nombre, e.validar_sede, e.validar_ubicacion,
+    `select e.id, e.nombre, e.cedula, e.correo, e.sede_id, s.nombre as sede_nombre, e.validar_sede, e.validar_ubicacion, e.guardar_foto,
             e.entrada_esperada, e.salida_esperada, e.almuerzo_min, e.jornada_dias, e.jornada_semanal,
             e.salario_mensual, e.activo, e.creado_en, e.avatar_en,
             (e.descriptor_facial is not null) as tiene_rostro,
@@ -183,11 +183,11 @@ export async function POST(req) {
       const descanso = c.almuerzo_min ?? (await db.query(`select descanso_min from config_laboral where id`)).rows[0]?.descanso_min ?? 60
       const { rows } = await db.query(
         `insert into empleados
-           (nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, descriptor_facial)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           (nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, descriptor_facial, guardar_foto)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          returning id, nombre, cedula, correo, sede_id, validar_sede, validar_ubicacion, entrada_esperada, salida_esperada, almuerzo_min, jornada_dias, jornada_semanal, salario_mensual, activo, creado_en`,
         [nombre, cedula, correo, c.sede_id ?? null, c.validar_sede === true, c.validar_ubicacion === true, c.entrada_esperada ?? null, c.salida_esperada ?? null,
-         descanso, jornadaDias == null ? null : JSON.stringify(jornadaDias), jornada, salario, principal],
+         descanso, jornadaDias == null ? null : JSON.stringify(jornadaDias), jornada, salario, principal, c.guardar_foto !== false],
       )
       // Misma transacción: un empleado sin sus rostros no podría marcar.
       for (let i = 0; i < listaRostros.length; i++) {

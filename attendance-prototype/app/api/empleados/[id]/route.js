@@ -31,6 +31,8 @@ const CAMPOS = {
   validar_sede: 'validar_sede',
   // Sin sede: registrar la ubicación GPS de cada marcación.
   validar_ubicacion: 'validar_ubicacion',
+  // Guardar la foto de cada marcación (dato biométrico; por defecto sí).
+  guardar_foto: 'guardar_foto',
 }
 
 /** Los campos que forman la jornada: lo que cambia al asignar un horario. */

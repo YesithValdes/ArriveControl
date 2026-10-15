@@ -45,7 +45,7 @@ export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo
   // impide que dos pasadas simultáneas se pisen.
   return conEmpresa(esquema, async (client) => {
     const emp = await client.query(
-      `select e.id, e.activo, e.nombre, e.correo, e.validar_sede, e.validar_ubicacion,
+      `select e.id, e.activo, e.nombre, e.correo, e.validar_sede, e.validar_ubicacion, e.guardar_foto,
               e.sede_id, s.nombre as sede_nombre, s.lat as sede_lat, s.lon as sede_lon, s.radio_m
          from empleados e
          left join sedes s on s.id = e.sede_id
@@ -59,6 +59,8 @@ export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo
       return { error: 'EMPLEADO_NO_ENCONTRADO' }
     }
     const persona = emp.rows[0]
+    // Sin `guardar_foto` la marcación vale igual, pero sin foto.
+    if (persona.guardar_foto === false) foto = null
 
     // LIMITAR UBICACIÓN (validar_sede): la marcación debe caer dentro del
     // radio de la sede del empleado, según el GPS del dispositivo. El margen

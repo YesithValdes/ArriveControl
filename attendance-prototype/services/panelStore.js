@@ -321,6 +321,7 @@ function aplicarCatalogos({ emp, sed, cfg, corr, hor, per }) {
     sedeId: e.sede_id || '',
     validarSede: e.validar_sede === true,
     validarUbicacion: e.validar_ubicacion === true,
+    guardarFoto: e.guardar_foto !== false,
     expectedEntry: hhmm(e.entrada_esperada),
     expectedExit: hhmm(e.salida_esperada),
     breakMinutes: e.almuerzo_min,
@@ -599,6 +600,7 @@ export async function updatePerson(id, partial) {
   if ('jornadaSemanal' in partial) body.jornada_semanal = partial.jornadaSemanal;
   if ('validarSede' in partial) body.validar_sede = partial.validarSede === true;
   if ('validarUbicacion' in partial) body.validar_ubicacion = partial.validarUbicacion === true;
+  if ('guardarFoto' in partial) body.guardar_foto = partial.guardarFoto !== false;
   // Salario: '' o null lo dejan SIN registrar (y sus horas sin valorizar).
   if ('salarioMensual' in partial) {
     const s = partial.salarioMensual;
@@ -622,6 +624,7 @@ export async function addPerson(name, descriptor, extra = {}) {
         sede_id: sede?.id ?? extra.sedeId ?? null,
         validar_sede: extra.validarSede === true,
         validar_ubicacion: extra.validarUbicacion === true,
+        guardar_foto: extra.guardarFoto !== false,
         entrada_esperada: extra.expectedEntry || null,
         salida_esperada: extra.expectedExit || null,
         almuerzo_min: extra.breakMinutes ?? null,

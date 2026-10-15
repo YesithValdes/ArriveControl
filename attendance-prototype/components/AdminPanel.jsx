@@ -1354,6 +1354,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
     id: p.id, name: p.name, cedula: p.cedula || '', correo: p.correo || '', sede: p.sede || '',
     validarSede: p.validarSede === true,
     validarUbicacion: p.validarUbicacion === true,
+    guardarFoto: p.guardarFoto !== false,
     expectedEntry: p.expectedEntry || '',
     expectedExit: p.expectedExit || '',
     breakMinutes: p.breakMinutes == null ? '' : String(p.breakMinutes),
@@ -6323,6 +6324,14 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                   </label>
                 </div>
               </section>
+                  <label className="consent">
+                    <input
+                      type="checkbox" checked={editEmp.guardarFoto}
+                      onChange={(e) => setEditEmp({ ...editEmp, guardarFoto: e.target.checked })}
+                    />{' '}
+                    Guardar foto al marcar
+                    <Q texto="Guarda la foto de cada marcación como evidencia de quién marcó (se borra a los 90 días). Desactivado, marca igual pero sin guardar la foto." />
+                  </label>
 
               {/* La jornada SIEMPRE sale de una plantilla de la pestaña
                   Horarios: aquí solo se elige, no se edita por días. El select
@@ -6417,6 +6426,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     validarUbicacion: editEmp.validarUbicacion,
                     expectedEntry: editEmp.expectedEntry,
                     expectedExit: editEmp.expectedExit,
+                    guardarFoto: editEmp.guardarFoto,
                     breakMinutes: editEmp.breakMinutes === '' ? null : Number(editEmp.breakMinutes),
                     jornadaDias: editEmp.jornadaDias,
                     jornadaSemanal: editEmp.jornadaSemanal == null ? null : editEmp.jornadaSemanal.map((h) => Number(h) || 0),
