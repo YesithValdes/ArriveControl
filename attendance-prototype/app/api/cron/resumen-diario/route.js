@@ -38,6 +38,7 @@ import { enviarResumenesDelDia, ayerEnBogota } from '../../../../lib/enviosDiari
 import { control } from '../../../../lib/db.js'
 import { tieneAcceso } from '../../../../lib/empresas.js'
 import { cerrarSalidasFaltantes } from '../../../../lib/salidasAutomaticas.js'
+import { borrarFotosVencidas } from '../../../../lib/retencionFotos.js'
 import { ajustarPorTrm } from '../../../../lib/suscripciones.js'
 
 export const runtime = 'nodejs'
@@ -74,6 +75,9 @@ export async function GET(req) {
   // (lib/salidasAutomaticas.js), así el correo ya sale con el día completo.
   // Si falla en una empresa, se anota y se sigue: el resumen no se pierde.
   const salidas = { creadas: 0, errores: [] }
+  // Fotos del registro de más de 90 días (lib/retencionFotos.js). Igual que
+  // las salidas: un fallo por empresa se anota y no frena lo demás.
+  const fotos = { borradas: 0, errores: [] }
   const { rows: empresas } = await control(
     `select id, nombre, esquema, estado, vence_en, prueba_hasta, cortesia from control.empresas`,
   )
@@ -84,12 +88,17 @@ export async function GET(req) {
     } catch (e) {
       salidas.errores.push({ empresa: empresa.nombre, error: e?.message || String(e) })
     }
+    try {
+      fotos.borradas += await borrarFotosVencidas(empresa.esquema)
+    } catch (e) {
+      fotos.errores.push({ empresa: empresa.nombre, error: e?.message || String(e) })
+    }
   }
   try {
     // Suscripciones de Mercado Pago: el monto en pesos sigue a la TRM. Un
     // fallo aquí se anota y no impide el resumen.
     const trm = await ajustarPorTrm().catch((e) => ({ error: e?.message || String(e) }))
-    r = { ...(await enviarResumenesDelDia(fecha)), salidasAutomaticas: salidas, suscripcionesTrm: trm }
+    r = { ...(await enviarResumenesDelDia(fecha)), salidasAutomaticas: salidas, fotosBorradas: fotos, suscripcionesTrm: trm }
   } catch (e) {
     fallo = e?.message || String(e)
   }
