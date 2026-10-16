@@ -2496,4 +2496,34 @@ await test('cancelar API por empresa conserva el acceso y la cortesía de las de
 
 
 
+// ── El motivo de una corrección es OPCIONAL ───────────────────────────
+console.log('\n📝 Motivo opcional');
+await test('las tres rutas que corrigen aceptan sin motivo y guardan null, pero nunca se saltan la auditoría', () => {
+  const una = leerCss(new URL('../app/api/marcaciones/[id]/route.js', import.meta.url), 'utf8');
+  const alta = leerCss(new URL('../app/api/marcaciones/manual/route.js', import.meta.url), 'utf8');
+  for (const [nombre, src] of [['[id]', una], ['manual', alta]]) {
+    assert.ok(!/El motivo es obligatorio/.test(src), `${nombre}: ya no debe rechazar por falta de motivo`);
+    assert.match(src, /String\(.*motivo.*\)\.trim\(\) \|\| null/, `${nombre}: vacío se guarda como null`);
+    assert.match(src, /insert into correcciones/, `${nombre}: la fila de auditoría sigue siendo obligatoria`);
+  }
+  // PATCH y DELETE usan la misma variable; ninguno vuelve a tocar motivo.trim().
+  assert.ok(!/motivo\.trim\(\)/.test(una) && !/motivo\.trim\(\)/.test(alta), 'sin motivo, .trim() reventaría');
+});
+await test('el panel no exige el motivo ni inventa una frase cuando no la hay', () => {
+  const panel = leerCss(new URL('../components/AdminPanel.jsx', import.meta.url), 'utf8');
+  assert.ok(!/disabled=\{!evForm\.reason\.trim\(\)\}/.test(panel), 'Guardar ya no se bloquea sin motivo');
+  assert.ok(!/Escribe el motivo del ajuste/.test(panel), 'la corrección de anomalías tampoco lo exige');
+  assert.match(panel, /Motivo <span className="libre">opcional<\/span>/, 'el campo se anuncia como opcional');
+  // El historial ya sabía mostrar la ausencia; esto lo deja fijado.
+  assert.match(panel, /c\.motivo \? <>“\{c\.motivo\}”<\/> : <em>Sin motivo<\/em>/);
+  const store = leerCss(new URL('../services/panelStore.js', import.meta.url), 'utf8');
+  for (const frase of ['Ajuste manual del administrador', 'Corrección de hora', 'Corrección de tipo', 'Marcación errónea eliminada desde el panel']) {
+    assert.ok(!store.includes(frase), `ya no se rellena con «${frase}»`);
+  }
+});
+await test('la migración quita el not null de correcciones.motivo', () => {
+  const mig = leerCss(new URL('../db/migrations/empresa/20261015120000_motivo_opcional.sql', import.meta.url), 'utf8');
+  assert.match(mig, /alter table correcciones alter column motivo drop not null/);
+});
+
 console.log(`\n${passed} pruebas pasaron.${process.exitCode ? ' (con fallos)' : ' ✅ Todo OK'}\n`);

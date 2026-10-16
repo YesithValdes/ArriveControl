@@ -1,7 +1,7 @@
 /**
  * app/api/marcaciones/[id]/route.js
- * PATCH  — corrige hora y/o tipo de una marcación (motivo obligatorio).
- * DELETE — soft-delete de una marcación errónea (motivo obligatorio, va en
+ * PATCH  — corrige hora y/o tipo de una marcación (motivo OPCIONAL).
+ * DELETE — soft-delete de una marcación errónea (motivo opcional, va en
  *          el query string: ?motivo=...).
  * Ambos dejan su fila de auditoría en `correcciones` con el antes/después,
  * en la misma transacción que el cambio.
@@ -22,7 +22,9 @@ export async function PATCH(req, { params }) {
   const { ts, tipo, motivo } = c ?? {}
   if (!ts && !tipo) return NextResponse.json({ ok: false, error: 'Nada que corregir (ts y/o tipo).' }, { status: 400 })
   if (tipo && !['entrada', 'salida'].includes(tipo)) return NextResponse.json({ ok: false, error: 'tipo inválido.' }, { status: 400 })
-  if (!String(motivo ?? '').trim()) return NextResponse.json({ ok: false, error: 'El motivo es obligatorio.' }, { status: 400 })
+  // El motivo es OPCIONAL: sin él se guarda null y el historial dice «Sin
+  // motivo». Lo que nunca falta es la fila de auditoría con quién y qué cambió.
+  const razon = String(motivo ?? '').trim() || null
 
   // `conEmpresa` abre la transacción y fija el esquema. El cambio y su fila de
   // auditoría van dentro de ella: o quedan los dos, o no queda ninguno.
@@ -48,7 +50,7 @@ export async function PATCH(req, { params }) {
       [id, usuario.id, usuario.email, accion,
        JSON.stringify({ tipo: prev.tipo, ts: prev.ts }),
        JSON.stringify({ tipo: upd.rows[0].tipo, ts: upd.rows[0].ts }),
-       motivo.trim()],
+       razon],
     )
     return { marcacion: upd.rows[0] }
   })
@@ -64,8 +66,7 @@ export async function DELETE(req, { params }) {
   if (estado !== 'OK') return NextResponse.json({ ok: false, error: 'Sin permiso.' }, { status: estado === 'SIN_SESION' ? 401 : 403 })
 
   const { id } = await params
-  const motivo = new URL(req.url).searchParams.get('motivo')
-  if (!String(motivo ?? '').trim()) return NextResponse.json({ ok: false, error: 'El motivo es obligatorio (?motivo=...).' }, { status: 400 })
+  const razon = String(new URL(req.url).searchParams.get('motivo') ?? '').trim() || null
 
   const r = await conEmpresa(esquema, async (client) => {
     const antes = await client.query(
@@ -77,7 +78,7 @@ export async function DELETE(req, { params }) {
     await client.query(
       `insert into correcciones (marcacion_id, admin_user_id, admin_email, accion, valor_anterior, motivo)
        values ($1,$2,$3,'eliminar',$4,$5)`,
-      [id, usuario.id, usuario.email, JSON.stringify(antes.rows[0]), motivo.trim()],
+      [id, usuario.id, usuario.email, JSON.stringify(antes.rows[0]), razon],
     )
     return {}
   })

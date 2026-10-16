@@ -2222,9 +2222,8 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   };
 
   // Corrección en el sitio: las MISMAS operaciones que el drawer (agregar la
-  // salida faltante o mover la hora del evento), con motivo obligatorio.
+  // salida faltante o mover la hora del evento). El motivo es opcional.
   const guardarAnomalia = async (a) => {
-    if (!anomForm.reason.trim()) { showToast('Escribe el motivo del ajuste.'); return; }
     const dia = dayKey(a.event.ts);
     const iso = new Date(`${dia}T${anomForm.time}:00-05:00`).toISOString();
     try {
@@ -2358,7 +2357,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
   }, [drawer, drawerDias, drawerPersona, cfg.holidays, cfg.weeklyHours, cfg.nocturnoInicio, cfg.nocturnoFin, cfg.modoExtra, cfg.extraMinimaMin]);
 
   const saveEvForm = async () => {
-    if (!evForm?.time || !evForm.reason.trim()) return;
+    if (!evForm?.time) return;
     const fecha = evForm.fecha || drawer.hasta;
     // Offset Bogotá EXPLÍCITO: la marcación queda en el día/hora que el admin
     // ve en pantalla, sin depender de la zona horaria del equipo.
@@ -3388,9 +3387,9 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                                     />
                                   </label>
                                   <label className="caso-motivo-l">
-                                    Motivo
+                                    Motivo <span className="libre">opcional</span>
                                     <input
-                                      className="caso-motivo" type="text" placeholder="Obligatorio"
+                                      className="caso-motivo" type="text" placeholder="Si quieres, explica por qué"
                                       value={anomForm.reason}
                                       onChange={(e) => setAnomForm({ ...anomForm, reason: e.target.value })}
                                     />
@@ -5683,7 +5682,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                         <input type="time" value={evForm.time} onChange={(e) => setEvForm({ ...evForm, time: e.target.value })} />
                       </label>
                     </div>
-                    <label className="ev-form-reason">Motivo
+                    <label className="ev-form-reason">Motivo <span className="libre">opcional</span>
                       <input
                         type="text" placeholder="Ej.: olvidó marcar la salida" value={evForm.reason}
                         onChange={(e) => setEvForm({ ...evForm, reason: e.target.value })}
@@ -5692,7 +5691,7 @@ export default function AdminPanel({ sesion = null, permisos = {}, seccionInicia
                     </label>
                     <div className="dialog-actions">
                       <button className="btn" onClick={() => setEvForm(null)}>Cancelar</button>
-                      <button className="btn primary" disabled={!evForm.reason.trim()} onClick={saveEvForm}>Guardar</button>
+                      <button className="btn primary" onClick={saveEvForm}>Guardar</button>
                     </div>
                   </div>
                 );
@@ -7366,10 +7365,10 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 
 .meses-sel { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 4px; }
 
-.planes-lista { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 16px 0 4px; }
+.planes-lista { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; margin: 32px 0 20px; }
 .plan-tarjeta {
-  display: flex; flex-direction: column; gap: 3px; position: relative; min-width: 0;
-  padding: 20px 16px 16px; border-radius: 14px;
+  display: flex; flex-direction: column; gap: 8px; position: relative; min-width: 0;
+  padding: 30px 24px 26px; border-radius: 20px;
   background: var(--surface-blanca); border: 1px solid var(--border);
 }
 .plan-tarjeta.sugerido { border-color: var(--accent); border-width: 2px; box-shadow: var(--elev-1); }
@@ -7380,14 +7379,18 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
   padding: 3px 9px; border-radius: 999px;
 }
 .plan-tarjeta h3 { margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -.01em; }
-.plan-precio { display: flex; align-items: baseline; gap: 6px; margin: 10px 0 2px; }
+.plan-precio { display: flex; align-items: baseline; gap: 6px; margin: 18px 0 0; }
 .plan-precio s { font-size: 15px; color: var(--muted); }
 .plan-precio b { font-size: 26px; font-weight: 800; letter-spacing: -.03em; }
 .plan-precio em { font-style: normal; font-size: 13px; color: var(--muted); }
 .plan-tope { font-size: 12.5px; color: var(--ink-2); margin-bottom: 16px; }
 .plan-luego { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
 /* Oferta de entrada: título, selector de meses y el resumen de lo que se paga. */
-.entrada { display: flex; flex-direction: column; gap: 10px; margin: 16px 0 4px; }
+.entrada {
+  display: flex; flex-direction: column; gap: 10px; position: relative; overflow: hidden;
+  padding: 26px; border-radius: 20px; margin: 18px 0;
+  background: linear-gradient(120deg, #142b50, #214e80); color: #fff;
+}
 .entrada-titulo { font-size: 14px; }
 .entrada .meses-sel { margin: 0; }
 .fchip.mes-op { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 14px; font-size: 13px; }
@@ -7396,11 +7399,9 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .entrada-resumen { font-size: 13px; color: var(--ink-2); }
 .plan-tarjeta .btn { margin-top: auto; }
 
-/* Presentación del catálogo de planes. */
-.planes-lista { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; margin: 32px 0 20px; }
-.plan-tarjeta { padding: 30px 24px 26px; border-radius: 20px; gap: 8px; }
+/* Presentación del catálogo de planes (la rejilla y la tarjeta se definen
+   arriba, con el resto de sus reglas). */
 .plan-tarjeta h3 { font-size: 21px; }
-.plan-precio { margin: 18px 0 0; }
 .plan-precio b { font-size: 38px; }
 .plan-precio em { font-size: 16px; }
 .plan-descripcion { color: var(--muted); font-size: 14px; margin: 4px 0 8px; }
@@ -7408,7 +7409,6 @@ html:has(.overlay), body:has(.overlay) { overflow: hidden; }
 .plan-beneficios li { margin: 0 0 14px; }
 .plan-beneficios li::before { content: '✓'; color: #20c997; font-weight: 800; margin-right: 12px; }
 .plan-tarjeta .btn { min-height: 54px; border-radius: 12px; }
-.entrada { position: relative; overflow: hidden; padding: 26px; border-radius: 20px; background: linear-gradient(120deg, #142b50, #214e80); color: #fff; margin: 18px 0; }
 .entrada::after { content: ''; position: absolute; width: 240px; height: 240px; border-radius: 50%; background: #8cd8d62b; right: -55px; top: -100px; pointer-events: none; }
 .entrada-cab { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; position: relative; z-index: 1; }
 .entrada-cab b { font-size: 19px; }

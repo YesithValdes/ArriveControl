@@ -1,0 +1,11 @@
+-- empresa/20261015120000_motivo_opcional.sql — El motivo deja de ser obligatorio.
+--
+-- Nació como `not null` para que ninguna corrección quedara sin explicación.
+-- En el uso real estorba: la mayoría de los ajustes son evidentes (la salida
+-- que nadie marcó) y exigir una frase solo producía textos vacíos de sentido
+-- —«ajuste», «ok»— que ensucian el historial sin explicar nada.
+--
+-- Lo que NO cambia: la fila de auditoría se sigue escribiendo siempre, con
+-- quién hizo el cambio, cuándo y el antes/después. Lo opcional es la frase.
+-- El historial ya muestra «Sin motivo» cuando no la hay.
+alter table correcciones alter column motivo drop not null;

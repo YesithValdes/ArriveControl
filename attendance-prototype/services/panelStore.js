@@ -502,7 +502,10 @@ export function listJourneyEvents() {
   return [...store.events].sort((a, b) => b.ts.localeCompare(a.ts));
 }
 
-// ── journeyService (mutaciones del admin — motivo OBLIGATORIO) ────────
+// ── journeyService (mutaciones del admin — el motivo es OPCIONAL) ─────
+// Sin motivo se manda cadena vacía y el servidor guarda null: el historial
+// dice «Sin motivo». Antes se rellenaba con una frase inventada («Corrección
+// de hora»), que en el historial parecía escrita por la persona.
 export async function addManualEvent(personId, personName, type, isoTs, motivo) {
   await api('/api/marcaciones/manual', {
     method: 'POST',
@@ -510,7 +513,7 @@ export async function addManualEvent(personId, personName, type, isoTs, motivo) 
       empleado_id: personId,
       tipo: type === 'in' ? 'entrada' : 'salida',
       ts: isoTs,
-      motivo: motivo || 'Ajuste manual del administrador',
+      motivo: motivo ?? '',
     }),
   });
 }
@@ -518,18 +521,18 @@ export async function addManualEvent(personId, personName, type, isoTs, motivo) 
 export async function updateEventTime(eventId, isoTs, motivo) {
   await api(`/api/marcaciones/${eventId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ ts: isoTs, motivo: motivo || 'Corrección de hora' }),
+    body: JSON.stringify({ ts: isoTs, motivo: motivo ?? '' }),
   });
 }
 
 export async function updateEventType(eventId, type, motivo) {
   await api(`/api/marcaciones/${eventId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ tipo: type === 'in' ? 'entrada' : 'salida', motivo: motivo || 'Corrección de tipo' }),
+    body: JSON.stringify({ tipo: type === 'in' ? 'entrada' : 'salida', motivo: motivo ?? '' }),
   });
 }
 
-export async function deleteEvent(eventId, motivo = 'Marcación errónea eliminada desde el panel') {
+export async function deleteEvent(eventId, motivo = '') {
   await api(`/api/marcaciones/${eventId}?motivo=${encodeURIComponent(motivo)}`, { method: 'DELETE' });
 }
 

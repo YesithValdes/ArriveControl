@@ -1,7 +1,7 @@
 /**
  * app/api/marcaciones/manual/route.js
  * POST — el ADMIN agrega una marcación manual (la salida olvidada, el día en
- * campo…). Exige motivo y deja la fila de auditoría en `correcciones`.
+ * campo…). El motivo es opcional; la fila de auditoría en `correcciones` no.
  * Marcación y auditoría van en la MISMA transacción: nunca un cambio sin rastro.
  */
 import { NextResponse } from 'next/server'
@@ -20,9 +20,7 @@ export async function POST(req) {
   if (!empleadoId || !['entrada', 'salida'].includes(tipo) || !ts) {
     return NextResponse.json({ ok: false, error: 'Faltan empleado_id, tipo (entrada|salida) o ts.' }, { status: 400 })
   }
-  if (!String(motivo ?? '').trim()) {
-    return NextResponse.json({ ok: false, error: 'El motivo es obligatorio.' }, { status: 400 })
-  }
+  const razon = String(motivo ?? '').trim() || null
 
   try {
     // La marcación y su auditoría van en la MISMA transacción, la que abre
@@ -36,7 +34,7 @@ export async function POST(req) {
       await client.query(
         `insert into correcciones (marcacion_id, admin_user_id, admin_email, accion, valor_nuevo, motivo)
          values ($1,$2,$3,'crear',$4,$5)`,
-        [ins.rows[0].id, usuario.id, usuario.email, JSON.stringify({ tipo, ts }), motivo.trim()],
+        [ins.rows[0].id, usuario.id, usuario.email, JSON.stringify({ tipo, ts }), razon],
       )
       return ins.rows[0]
     })
