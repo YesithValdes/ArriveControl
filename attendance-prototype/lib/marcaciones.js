@@ -13,8 +13,11 @@
  * pertenece la marcación.
  */
 import { conEmpresa } from './db.js'
+import { finDeJornada } from './calculoHoras.js'
 
 export const ANTI_BOUNCE_MS = 3 * 60 * 1000
+/** Desde cuántos minutos antes del fin del horario una marca tras una salida cuenta como salida. */
+export const MARGEN_SALIDA_FINAL_MIN = 60
 
 /** Distancia en metros entre dos coordenadas (haversine). */
 export function distanciaM(lat1, lon1, lat2, lon2) {
@@ -46,6 +49,7 @@ export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo
   return conEmpresa(esquema, async (client) => {
     const emp = await client.query(
       `select e.id, e.activo, e.nombre, e.correo, e.validar_sede, e.validar_ubicacion, e.guardar_foto,
+              e.jornada_dias, e.entrada_esperada, e.salida_esperada,
               e.sede_id, s.nombre as sede_nombre, s.lat as sede_lat, s.lon as sede_lon, s.radio_m
          from empleados e
          left join sedes s on s.id = e.sede_id
@@ -107,7 +111,19 @@ export async function registrarPaso({ esquema, empleadoId, sedeId, tsDispositivo
     // Alternancia con REINICIO DIARIO: solo una entrada de HOY (día Bogotá)
     // alterna a salida; cualquier otro caso arranca el día con entrada.
     const mismoDia = ultima && diaBogota(ultima.ts) === diaBogota(ahora)
-    const tipo = ultima && ultima.tipo === 'entrada' && mismoDia ? 'salida' : 'entrada'
+    let tipo = ultima && ultima.tipo === 'entrada' && mismoDia ? 'salida' : 'entrada'
+    // Salió a descanso y no marcó el regreso: si ya está en la última hora de
+    // su horario (o después), esta marca es su SALIDA, no un regreso. Si no,
+    // quedaría un «descanso» de toda la tarde y una jornada abierta. El
+    // regreso olvidado se corrige en el panel.
+    if (ultima?.tipo === 'salida' && mismoDia) {
+      const local = new Date(ahora.getTime() - 5 * 3600000)
+      const fin = finDeJornada({
+        jornadaDias: persona.jornada_dias, entradaEsperada: persona.entrada_esperada, salidaEsperada: persona.salida_esperada,
+      }, local.getUTCDay())
+      const minutos = local.getUTCHours() * 60 + local.getUTCMinutes()
+      if (fin != null && fin < 1440 && minutos >= fin - MARGEN_SALIDA_FINAL_MIN) tipo = 'salida'
+    }
 
     const ins = await client.query(
       `insert into marcaciones (empleado_id, tipo, ts, ts_dispositivo, sede_id, origen, lat, lon, precision_m, foto)
