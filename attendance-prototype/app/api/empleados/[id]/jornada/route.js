@@ -22,7 +22,7 @@ export async function GET(req, { params }) {
     if (!empleado) return null
     empleado.marcas = (await db.query(`select id, tipo, to_char(ts at time zone 'America/Bogota', 'YYYY-MM-DD') as fecha,
       (extract(hour from ts at time zone 'America/Bogota') * 60 + extract(minute from ts at time zone 'America/Bogota') + extract(second from ts at time zone 'America/Bogota') / 60)::float as minutos,
-      extract(epoch from ts)::float as epoch, extract(dow from ts at time zone 'America/Bogota')::int as dow, coalesce(octet_length(foto), 0) > 0 as "tieneFoto"
+      extract(epoch from ts)::float as epoch, extract(dow from ts at time zone 'America/Bogota')::int as dow, (coalesce(octet_length(foto), 0) > 0 and (select guardar_foto from empleados where id = $1)) as "tieneFoto"
       from marcaciones where empleado_id = $1 and not eliminada and (ts at time zone 'America/Bogota')::date between $2::date and $3::date order by ts`, [id, sumarDias(lunesDe(rango.desde), -1), sumarDias(domingoDe(rango.hasta), 1)])).rows
     empleado.permisos = (await db.query(`select to_char(inicio,'YYYY-MM-DD') as inicio, to_char(fin,'YYYY-MM-DD') as fin, tipo, descontar, to_char(hora_inicio,'HH24:MI') as hora_inicio, to_char(hora_fin,'HH24:MI') as hora_fin from permisos where empleado_id = $1 and anulado_en is null and inicio <= $3::date and fin >= $2::date`, [id, lunesDe(rango.desde), domingoDe(rango.hasta)])).rows
     // Leer un eventual tope del reglamento sin inventar uno si no está configurado.

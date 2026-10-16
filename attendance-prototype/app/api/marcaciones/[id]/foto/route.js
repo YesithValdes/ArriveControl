@@ -3,7 +3,8 @@
  *
  * GET — la foto del registro de una marcación (JPEG): el cuadro de la cámara
  *       en el momento en que el kiosco confirmó la identidad. Solo el panel,
- *       con permiso VER. 404 si la marcación no tiene foto.
+ *       con permiso VER. 404 si la marcación no tiene foto o el colaborador tiene
+ *       desactivado «Guardar foto»: la foto sigue guardada, pero no se muestra.
  */
 import { NextResponse } from 'next/server'
 import { conEmpresa } from '../../../../../lib/db.js'
@@ -18,11 +19,13 @@ export async function GET(req, { params }) {
   }
   const { id } = await params
   const { rows } = await conEmpresa(esquema, (db) => db.query(
-    `select foto from marcaciones where id = $1 and octet_length(foto) > 0`, [id],
+    `select m.foto from marcaciones m join empleados e on e.id = m.empleado_id
+      where m.id = $1 and octet_length(m.foto) > 0 and e.guardar_foto`, [id],
   ))
   if (!rows[0]) return new NextResponse(null, { status: 404 })
-  // La foto de una marcación no cambia nunca: se puede cachear sin revalidar.
+  // Se revalida en cada vista: si apagan «Guardar foto» del colaborador, la
+  // foto debe dejar de verse aunque el navegador la tuviera guardada.
   return new NextResponse(rows[0].foto, {
-    headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=604800, immutable' },
+    headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, no-cache' },
   })
 }

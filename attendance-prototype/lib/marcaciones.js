@@ -198,7 +198,7 @@ export async function guardarDireccion(esquema, marcacionId, direccion) {
 const SELECT_MARCACIONES = `
   select m.id, m.empleado_id, e.nombre as empleado_nombre, e.cedula,
          m.tipo, m.ts, m.ts_dispositivo, m.sede_id, s.nombre as sede_nombre, m.origen,
-         m.lat, m.lon, m.precision_m, m.direccion, (coalesce(octet_length(m.foto), 0) > 0) as tiene_foto,
+         m.lat, m.lon, m.precision_m, m.direccion, (e.guardar_foto and coalesce(octet_length(m.foto), 0) > 0) as tiene_foto,
          m.eliminada, c.admin_email as corregida_por
     from marcaciones m
     join empleados e on e.id = m.empleado_id
