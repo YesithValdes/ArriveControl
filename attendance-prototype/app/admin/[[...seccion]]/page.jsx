@@ -19,7 +19,8 @@ import DefinirContrasena from '../../../components/DefinirContrasena.jsx';
 import { estadoAcceso, tienePermiso } from '../../../lib/sesion';
 import { permisosInvitado } from '../../../lib/roles.js';
 import { tabDeSegmentos, puedeAbrirSeccion } from '../../../lib/rutasPanel.js';
-import { estadoDelPlan } from '../../../lib/empresas.js';
+import { cookies } from 'next/headers';
+import { estadoDelPlan, bienvenidaResuelta } from '../../../lib/empresas.js';
 import { configMp } from '../../../lib/mercadopago.js';
 
 export const metadata = {
@@ -42,7 +43,7 @@ export default async function AdminPage({ params }) {
   // es lo que impide que esto se repita (y que se forme un bucle: la pantalla
   // vive en su propia ruta fija, /admin/bienvenida, no en este comodín).
   // El soporte no: esa decisión es de la empresa, no de quien la ayuda.
-  if (estado === 'OK' && !soporte && !empresa?.bienvenida_en) redirect('/admin/bienvenida');
+  if (estado === 'OK' && !soporte && !bienvenidaResuelta(empresa, await cookies())) redirect('/admin/bienvenida');
 
   // Sin empresa no hay panel que mostrar. El superadmin va al suyo; quien
   // quedó sin empresa por un fallo del alta ve qué hacer.

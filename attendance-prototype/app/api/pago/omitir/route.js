@@ -12,7 +12,7 @@
 import { NextResponse } from 'next/server'
 import { control } from '../../../../lib/db.js'
 import { estadoAcceso, estadoAHttp, estadoAMensaje } from '../../../../lib/sesion'
-import { olvidarEmpresas } from '../../../../lib/empresas.js'
+import { olvidarEmpresas, COOKIE_BIENVENIDA } from '../../../../lib/empresas.js'
 
 export const runtime = 'nodejs'
 
@@ -28,5 +28,13 @@ export async function POST() {
     [empresa.id],
   )
   olvidarEmpresas()
-  return NextResponse.json({ ok: true })
+  // La caché de empresas vive en memoria POR INSTANCIA: `olvidarEmpresas` solo
+  // limpia la de esta. Si /admin lo atiende otra, hasta 60 s seguiría viendo
+  // `bienvenida_en` vacío y lo devolvería a la bienvenida. La cookie avisa ya.
+  const res = NextResponse.json({ ok: true })
+  res.cookies.set(COOKIE_BIENVENIDA, String(empresa.id), {
+    path: '/', httpOnly: true, sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production', maxAge: 60 * 60 * 24 * 365,
+  })
+  return res
 }

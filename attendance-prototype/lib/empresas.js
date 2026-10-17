@@ -48,6 +48,13 @@ const desdeCache = async (clave, buscar) => {
 /** Olvida lo cacheado. Llamar tras crear una empresa o cambiarle el plan. */
 export const olvidarEmpresas = () => cache.clear()
 
+/** Cookie que deja «Omitir» en la bienvenida (ver app/api/pago/omitir). */
+export const COOKIE_BIENVENIDA = 'bienvenida_omitida'
+
+/** ¿Esta empresa ya resolvió la bienvenida? Mira la BD (vía caché) y la cookie. */
+export const bienvenidaResuelta = (empresa, cookieStore) =>
+  Boolean(empresa?.bienvenida_en) || cookieStore?.get(COOKIE_BIENVENIDA)?.value === String(empresa?.id)
+
 /** @returns {Promise<object|null>} */
 export async function empresaPorId(id) {
   if (!id) return null
